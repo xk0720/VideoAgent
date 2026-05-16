@@ -1,14 +1,23 @@
 """EditorAgent — multi-step ReAct loop.
 
-References (older + 2024 successors):
+References (older → 2024 → 2025/2026):
     • **ReAct** (Yao et al., ICLR 2023) — interleaved reasoning/acting steps,
       the foundational recipe we follow.
-    • **GLANCE** (2024) — bi-loop ReAct + verify for video editing; our
+    • **GLANCE: Music-Grounded Non-Linear Video Editing** (arXiv 2604.05076,
+      2026) — bi-loop ReAct + verify for music-driven editing; our
       auto-validate-after-each-action pattern is a simplification of GLANCE's
-      inner loop (see SYSTEM_GUIDE §5.1.4).
+      inner loop (see SYSTEM_GUIDE §5.1.4). GLANCE reports +33.2% / +15.6% over
+      the strongest baseline on two task settings.
     • **FilmAgent** (HITsz-TMG, 2024) — Critique-Correct-Verify multi-agent;
       we keep CCV at the *plan* layer (Orchestrator + Director) rather than
       inside Editor so the segment-level loop stays cheap.
+    • **Sima 1.0** (arXiv 2604.07721, 2026) — 11-step documentary production
+      pipeline; informs our stage decomposition.
+    • **LongVideoAgent: Multi-Agent Reasoning with Long Videos** (arXiv
+      2512.20618, 2025) — same-name project that does long-video VQA via a
+      master+grounding+vision multi-agent loop trained with RL. Our project
+      does **editing** (Stage 3 composes a new mp4), but the master-agent
+      pattern and RL-trained step-limit budget directly inspire v0.4.
     • LangChain Core ``langchain_core.tools`` — tool-calling surface our action
       menu mirrors; not depended on in v0.1 to keep imports light.
 

@@ -1,10 +1,15 @@
 """Shot-level captioner with rolling 10-shot context.
 
-Open-source backbones (real, swap-in for v0.2 — recommended 2024-2025 picks):
-    • **Qwen2.5-VL-7B / 72B** (Alibaba, Jan 2025) — current SOTA open MLLM
-      for long-video understanding; supersedes Qwen2-VL-7B.
-      https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
-    • **InternVL2.5** (Shanghai AI Lab, Dec 2024) — strong open alternative.
+Open-source backbones (2025-2026 SOTA — recommended picks, newest first):
+    • **Qwen3-VL** (Alibaba, arXiv 2511.21631, Nov 2025) — current top open
+      MLLM family. 256K native interleaved-modality context, MoE variants
+      (30B-A3B, 235B-A22B) for diverse latency/quality trade-offs. Strong on
+      ultra-long-video needle-in-a-haystack retrieval — exactly our use case.
+      https://github.com/QwenLM/Qwen3-VL
+    • **InternVL3 / InternVL3.5** (Shanghai AI Lab, 2025) — InternVL3.5-241B-A28B
+      tops open-MLLM leaderboards; preferred when document/OCR understanding
+      matters (e.g. on-screen text inside our source videos).
+    • **Qwen2.5-VL** (Jan 2025) — earlier, smaller, still strong baseline.
     • **GPT-4o** / **Claude Sonnet 4.5** / **Gemini 2.5 Pro** — hosted MLLMs.
 
 v0.1 mock yields a deterministic templated caption so the rest of the

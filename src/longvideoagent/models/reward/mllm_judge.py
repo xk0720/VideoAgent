@@ -14,6 +14,17 @@ zero-shot judge → trained RM):
       scores; pure pairwise-preference training.
       https://huggingface.co/Skywork/Skywork-Reward-Gemma-2-27B
     • **JudgeLM / MJ-Bench** (2024) — purpose-trained judges + benchmark.
+    • **AgentPRM** (arXiv 2511.08325, late 2025) — Process Reward Model
+      specifically for LLM agents; introduces step-wise "promise" and
+      "progress" signals trained via Temporal-Difference estimation +
+      Generalized Advantage Estimation. The recommended v0.3 recipe when
+      our PreferenceLogger trajectories are rich enough.
+    • **A Survey of Process Reward Models** (arXiv 2510.08049, late 2025) —
+      good landscape of outcome-PRM vs process-PRM trade-offs.
+    • **ThinkPRM / GenPRM** (2025) — generative chain-of-thought PRMs that
+      verify each step with long-form reasoning; needs much less annotation.
+    • **VRPRM** (2025) — Visual Reasoning PRM, directly relevant since our
+      candidates are video segments not text steps.
 
 v0.1: returns a deterministic ``MockRewardModel`` style result; the prompt
 template lives in src/longvideoagent/prompts/reward_judge.txt.

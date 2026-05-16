@@ -19,6 +19,13 @@ the natural input to:
     • **GRPO**  — Group Relative Policy Optimization (Shao et al., DeepSeek-Math,
                   2024). Used in DeepSeek-V3 / R1; takes a group of candidates
                   per prompt — our (winner, losers...) tuples are exactly that.
+    • **DGPO**  — Direct Group Preference Optimization (ICLR 2026,
+                  https://github.com/Luo-Yihong/DGPO). Beats Flow-GRPO on
+                  compositional generation + human preference alignment;
+                  diffusion-RL focused but the loss generalises.
+    • "It Takes Two: Your GRPO Is Secretly DPO" (arXiv 2510.00977, 2025) —
+      proves GRPO is equivalent to contrastive DPO; means our pairwise records
+      transfer cleanly between the two recipes.
     • Bradley-Terry RM training (classic RLHF)
 
 For the cost of one extra JSONL append per non-singleton candidate set we

@@ -23,22 +23,37 @@ For each trigger we synthesise a short imperative lesson keyed on the
 relevant context (memory size, user-prompt keywords, music BPM, ...) so
 LessonBook.retrieve_relevant can surface it later.
 
-Open-source background (older + 2024-2025 successors):
-    • **Reflexion**     (Shinn et al., NeurIPS 2023) — canonical verbal self-reflection.
-    • **Self-Discover** (Zhou et al., 2024) — separation of meta-agent from
-                          base agents; the architectural precedent for keeping
-                          CriticAgent out of the execution loop.
-    • **Trace**         (Microsoft, 2024) — gradient-style optimization over
-                          agent traces; treats critique as a learnable signal.
-                          https://github.com/microsoft/Trace
-    • **rStar**         (Microsoft, 2024) + **rStar-Math** (Microsoft, Jan 2025) —
-                          self-play search-augmented reasoning with a separate
-                          verifier; analogous to our Editor + Critic split.
-    • **AFlow**         (Zhang et al., 2024) — meta-agent that designs agent
-                          workflows from past lesson sets; the v0.3 destination
-                          when our LessonBook is rich enough.
-    • **G-Eval**        (Liu et al. 2023) — structured critique prompts (we
-                          use static rules in v0.1; LLM critique slot in v0.2).
+Open-source background (older → 2024 → 2025/2026 evolution):
+    • **Reflexion**         (Shinn et al., NeurIPS 2023) — canonical verbal self-reflection.
+    • **Self-Discover**     (Zhou et al., 2024) — separation of meta-agent from
+                              base agents; architectural precedent for keeping
+                              CriticAgent out of the execution loop.
+    • **Trace**             (Microsoft, 2024) — gradient-style optimization over
+                              agent traces; treats critique as a learnable signal.
+                              https://github.com/microsoft/Trace
+    • **rStar / rStar-Math** (Microsoft, 2024 / Jan 2025) — self-play search-augmented
+                              reasoning with a separate verifier; analogous to our
+                              Editor + Critic split.
+    • **AFlow**             (Zhang et al., 2024) — meta-agent that designs agent
+                              workflows from past lesson sets; the v0.3 destination
+                              when our LessonBook is rich enough.
+    • **Multi-Agent Evolve (MAE)** (Oct 2025) — three co-evolving agents
+                              (Proposer / Solver / Judge) from one LLM, optimised
+                              by RL. Our (Director / Editor / Critic) trio is the
+                              same shape applied to long-video editing.
+    • **SELAUR — Self-Evolving LLM Agent via Uncertainty-aware Rewards**
+                            (arXiv 2602.21158, 2026) — adds disagreement
+                              uncertainty into the reward signal; we already
+                              expose ``EnsembleResult.disagreement`` for
+                              exactly this consumer.
+    • **Trajectory-Informed Memory Generation** (arXiv 2603.10600, 2026) —
+                              generates memory entries from agent trajectories;
+                              direct predecessor of our CriticAgent → LessonBook flow.
+    • **AgentPRM**          (arXiv 2511.08325, late 2025) — Process Reward Model
+                              specifically for LLM agents (step-wise promise +
+                              progress signals); when v0.3 trains a real RM,
+                              this is the recipe to follow.
+    • **G-Eval**            (Liu et al. 2023) — structured critique prompts.
 """
 from __future__ import annotations
 

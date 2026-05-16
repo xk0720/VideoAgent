@@ -8,10 +8,29 @@ aliases:
     dtype: "bfloat16"
     device: "auto"
 
-  # ── 2024-2025 SOTA open MLLMs — preferred upgrade paths ──
+  # ── 2024-2026 SOTA open MLLMs — preferred upgrade paths ──
+  # Newest first. Qwen3-VL has 256K context — preferred for long-video work.
+  qwen3-vl-8b:
+    backend: "transformers"
+    repo_id: "Qwen/Qwen3-VL-8B-Instruct"      # Alibaba, arXiv 2511.21631 (Nov 2025)
+    dtype: "bfloat16"
+    device: "auto"
+
+  qwen3-vl-30b-a3b:
+    backend: "transformers"
+    repo_id: "Qwen/Qwen3-VL-30B-A3B"          # MoE variant
+    dtype: "bfloat16"
+    device: "auto"
+
+  internvl3_5-78b:
+    backend: "transformers"
+    repo_id: "OpenGVLab/InternVL3_5-78B"      # Shanghai AI Lab, 2025
+    dtype: "bfloat16"
+    device: "auto"
+
   qwen2_5-vl-7b:
     backend: "transformers"
-    repo_id: "Qwen/Qwen2.5-VL-7B-Instruct"    # Alibaba, Jan 2025
+    repo_id: "Qwen/Qwen2.5-VL-7B-Instruct"    # Alibaba, Jan 2025 — kept as fallback
     dtype: "bfloat16"
     device: "auto"
 

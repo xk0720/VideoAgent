@@ -101,11 +101,56 @@ pytest tests/ -q                             : 87 passed in 20.77s
 scripts/run_pipeline.py with full v0.2 flags : validated@iter1, real mp4 + lessons + prefs
 ```
 
-## Conclusion
+## §F. Round 11 addendum — 2026 reference sweep
 
-Framework requirements satisfied; references are now both **grounded in source-file docstrings** and **prioritise 2024–2025 work** per user request. No regression introduced.
+**Trigger:** user instruction "所参考的工作尽量要最新的" + explicit "需要把调研拓宽到2026年".
 
-Round 11 candidates (not run yet — listed for the next cycle):
-- AFlow-style automatic agent workflow synthesis driven by LessonBook content
-- A test that pins specific reference strings to specific source files (so reference drift is caught by CI)
-- v0.2 perception extra wire-up: actually invoke Qwen2.5-VL / open_clip when the extras are installed
+**Approach:** the assistant's training data cuts off end of May 2025. Rather than fabricate 2026 work, we used WebSearch (8 targeted queries across long-video editing, multi-agent LLMs, self-improvement, video generation, MLLM, PRM, DPO successors, agentic RL) to surface real arXiv IDs + GitHub URLs. Every cite below was sourced through WebSearch in May 2026.
+
+### F.1 New 2025-2026 works added to source-file docstrings
+
+| File | New 2025-2026 cites |
+|---|---|
+| `agents/editor.py` | **LongVideoAgent** (arXiv 2512.20618, 2025) — same-name project for VQA, must-clarify relationship; **GLANCE 2026** (arXiv 2604.05076) — formal pub; **Sima 1.0** (arXiv 2604.07721) |
+| `agents/screenwriter.py` | **Multi-Agent Evolve (MAE)** (Oct 2025); **LongVideoAgent** master-with-step-limit pattern |
+| `agents/critic.py` | **Multi-Agent Evolve**; **SELAUR** (arXiv 2602.21158); **Trajectory-Informed Memory Generation** (arXiv 2603.10600); **AgentPRM** (arXiv 2511.08325) |
+| `memory/lessons.py` | **Trajectory-Informed Memory Generation**; **Awesome Self-Evolving Agents** survey |
+| `models/reward/mllm_judge.py` | **AgentPRM**; **A Survey of Process Reward Models** (arXiv 2510.08049); **ThinkPRM / GenPRM**; **VRPRM** |
+| `models/reward/ensemble.py` | **Multi-Agent Evolve**; **SELAUR** |
+| `utils/preferences.py` | **DGPO** (ICLR 2026); **"GRPO secretly DPO"** (arXiv 2510.00977) |
+| `perception/captioner.py` | **Qwen3-VL** (arXiv 2511.21631, Nov 2025); **InternVL3 / InternVL3.5** |
+| `configs/models/mllm.yaml` | Added Qwen3-VL-8B / Qwen3-VL-30B-A3B / InternVL3.5-78B aliases |
+| `configs/models/video_gen.yaml` | Added HunyuanVideo-I2V / HunyuanVideo-Avatar / Wan 2.2 aliases |
+
+### F.2 New documents
+
+| Doc | What it does |
+|---|---|
+| [`docs/REFERENCES_2024_2026.md`](./REFERENCES_2024_2026.md) | **new master table** — supersedes the 2024-2025 file; covers categories A–G (long-video editing, multi-agent, self-improvement, PRM, preference opt, MLLM, video-gen). |
+| `SYSTEM_GUIDE.md` §5.1.6 / §5.1.7 / §5.1.8 | New blocks: **LongVideoAgent (2025) — name-clash clarification**; **GLANCE 2026 formal publication**; **Sima 1.0**. |
+| `SYSTEM_GUIDE.md` §11.3 | New "2025-2026 self-loop work mapping" table showing how each of our 5 mechanisms maps to a 2025-2026 paper (LessonBook ↔ Trajectory-Informed Memory; EnsembleRM ↔ MAE / SELAUR; PreferenceLogger ↔ DGPO; CriticAgent ↔ AgentPRM; Self-Consistency ↔ rStar-Math). |
+
+### F.3 CI tightening
+
+`tests/unit/test_reference_grounding.py` now pins **40+ specific citation strings** across 15 files (was 28). Any future edit that strips a 2025-2026 reference will fail CI. Head-window bumped from 60 to 80 lines to fit the richer docstrings.
+
+### F.4 Integrity note
+
+Per the project's "no unsupported claims" rule, **every** 2025-2026 entry was retrieved via WebSearch with verifiable arXiv ID or GitHub URL. The assistant did not invent any paper title, author list, or arXiv ID. Where the assistant's training data was insufficient to summarise the cited paper's content, the docstring records only the title + venue + what the WebSearch result actually said, and explicitly avoids deeper paraphrase.
+
+### F.5 Regression check
+
+```
+pyflakes: 0 warnings
+pytest:   102 passed in 19.53s
+test_reference_grounding parametrised cases: 15 — all green
+```
+
+---
+
+## Round 12 candidates (not run — listed for next cycle)
+
+- AFlow-style automatic agent-workflow synthesis driven by LessonBook content
+- v0.2 perception extra wire-up: actually invoke Qwen3-VL / open_clip when the extras are installed
+- Reproduce the LongVideoAgent (2025) baseline on LongTVQA+ to validate the master-agent step-limit RL idea before committing to v0.4
+- Try DGPO (ICLR 2026) loss on the accumulated `preferences.jsonl` once it's non-trivial

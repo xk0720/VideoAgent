@@ -12,6 +12,11 @@ Background (older + 2024–2025 evolution):
     • **PandaLM** (Wang et al., 2024) — open judge for reproducible eval.
     • Constitutional AI (Bai et al., 2022) — multiple critiques per response;
       2024 successor: **Tülu-3** RLAIF pipeline with explicit multi-judge.
+    • **Multi-Agent Evolve (MAE)** (Oct 2025) — Proposer / Solver / **Judge**
+      triad co-evolves via RL; our 3-judge ensemble shares the Judge slot.
+    • **SELAUR** (arXiv 2602.21158, 2026) — explicitly uses judge-disagreement
+      as a learning signal; we surface ``EnsembleResult.disagreement`` for
+      exactly that downstream consumer.
 
 The idea: a single ValidatorAgent is one judge with one prompt; if it has a
 systematic bias (over-praising long candidates, under-penalising motion

@@ -25,6 +25,32 @@ aliases:
     default_fps: 24
     default_duration: 4.0
 
+  # 2025-2026 Hunyuan variants — pick by need
+  hunyuan_video_i2v:
+    backend: "omniweaving"
+    repo_id: "tencent/HunyuanVideo-I2V"       # image-to-video specialised
+    endpoint_env: "HUNYUANVIDEO_ENDPOINT"
+    supports: ["text", "first_frame"]
+    default_fps: 24
+    default_duration: 4.0
+
+  hunyuan_video_avatar:
+    backend: "omniweaving"
+    repo_id: "tencent/HunyuanVideo-Avatar"    # audio-driven character animation
+    endpoint_env: "HUNYUANVIDEO_ENDPOINT"
+    supports: ["text", "reference_images", "audio_cond"]
+    default_fps: 24
+    default_duration: 4.0
+
+  # Wan 2.2 — Alibaba MoE diffusion (2025-2026); cinematic-quality benchmark leader
+  wan_2_2:
+    backend: "wan_local"
+    repo_id: "Wan-AI/Wan2.2-T2V"
+    checkpoint_env: "WAN22_CHECKPOINT"
+    supports: ["text", "first_frame"]
+    default_fps: 24
+    default_duration: 4.0
+
   # 2024 alternative — Zhipu AI, smaller / faster, clean diffusers integration
   cogvideox:
     backend: "wan_local"            # diffusers pipeline, reuses wan client shape

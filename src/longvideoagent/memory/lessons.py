@@ -1,6 +1,6 @@
 """LessonBook — persistent cross-run reflection memory.
 
-References (older + 2024 successors — keep both):
+References (older → 2024 → 2025/2026):
     • **Reflexion** (Shinn et al., NeurIPS 2023) — canonical "verbal episodic
       memory" of past failures, retrieved on next attempt. Foundational.
     • **Trace** (Microsoft, 2024) — gradient-style optimization over agent
@@ -9,6 +9,13 @@ References (older + 2024 successors — keep both):
     • **AFlow** (Zhang et al., 2024) — meta-agent that learns agent workflows
       from past lesson sets; future direction for v0.3 if we want LessonBook
       to drive automatic graph rewrites.
+    • **Trajectory-Informed Memory Generation** (arXiv 2603.10600, 2026) —
+      generates structured memories from agent trajectories; exact methodology
+      precedent for our CriticAgent → LessonBook → next-run-injection flow.
+    • **Awesome Self-Evolving Agents** (XMU DeepLIT, 2025-2026 survey
+      https://github.com/XMUDeepLIT/Awesome-Self-Evolving-Agents) — taxonomy of
+      Model / Environment / Co-Evolution; our LessonBook + CriticAgent + Editor
+      together cover the "Model-Environment Co-Evolution" quadrant.
 
 We extend Reflexion across *runs* (not just episodes within a run):
 

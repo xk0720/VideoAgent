@@ -2,7 +2,7 @@
 
 Reference: DIRECT §4.1 "Music-Driven Structure Anchoring".
 
-v0.2 enhancement — *self-consistency sampling*. References (older + newest):
+v0.2 enhancement — *self-consistency sampling*. References (older → newest):
     • **Self-Consistency Improves CoT Reasoning** (Wang et al., ICLR 2023)
       Original recipe: sample K chains, majority-vote the answer.
     • **rStar** (Microsoft, 2024) / **rStar-Math** (Microsoft, Jan 2025) —
@@ -11,6 +11,12 @@ v0.2 enhancement — *self-consistency sampling*. References (older + newest):
       and take the modal structured field" recipe but the framing is the same.
     • **Best-of-N + verifier** (Cobbe et al., 2021; revived by **Tülu-3 BoN**,
       Allen AI 2024) — same idea, K samples scored by an RM.
+    • **Multi-Agent Evolve (MAE)** (Oct 2025) — Proposer / Solver / Judge triad
+      co-evolves via RL. ScreenwriterAgent is our Proposer; v0.3 will let the
+      Judge (ValidatorAgent) and Solver (EditorAgent) co-train.
+    • **LongVideoAgent** (arXiv 2512.20618, late 2025) — long-video master agent
+      that plans with a step limit, trained with RL to produce concise plans.
+      Our Screenwriter's structural plan is the editing analog.
 
 For Screenwriter — the highest-leverage decision in the whole pipeline —
 with ``self_consistency_k > 1`` we draw K plans at non-zero temperature
