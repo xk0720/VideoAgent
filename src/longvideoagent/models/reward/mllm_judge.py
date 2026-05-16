@@ -1,9 +1,19 @@
 """Zero-shot MLLM-as-judge reward model.
 
-Open-source backbones (selected via configs/models/mllm.yaml):
-    • Qwen2-VL  https://huggingface.co/Qwen/Qwen2-VL-7B-Instruct
-    • GPT-4o    https://openai.com
-    • Claude Sonnet vision https://www.anthropic.com
+Open-source backbones (2024–2025 SOTA — selected via configs/models/mllm.yaml):
+    • **Qwen2.5-VL-7B / 72B** (Alibaba, Jan 2025)  — preferred upgrade
+      https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
+    • **InternVL2.5** (Shanghai AI Lab, Dec 2024) — strong alternative
+    • **GPT-4o** / **Claude Sonnet 4.5** / **Gemini 2.5 Pro** — hosted MLLMs
+
+Reward-model fine-tuning recipes worth tracking for v0.3 (when we move from
+zero-shot judge → trained RM):
+    • **Tülu-3-RM** (Allen AI, Nov 2024) — full open RM training recipe
+      https://allenai.org/tulu
+    • **Skywork-Reward-Gemma-2-27B** (Skywork, Oct 2024) — top RewardBench
+      scores; pure pairwise-preference training.
+      https://huggingface.co/Skywork/Skywork-Reward-Gemma-2-27B
+    • **JudgeLM / MJ-Bench** (2024) — purpose-trained judges + benchmark.
 
 v0.1: returns a deterministic ``MockRewardModel`` style result; the prompt
 template lives in src/longvideoagent/prompts/reward_judge.txt.

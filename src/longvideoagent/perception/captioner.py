@@ -1,14 +1,18 @@
 """Shot-level captioner with rolling 10-shot context.
 
-Open-source backbones (real, swap-in for v0.2):
-    • **Qwen2-VL** (Alibaba, HF: ``Qwen/Qwen2-VL-7B-Instruct``) via ``transformers``
-    • **GPT-4o** / **Claude Sonnet** (vision) via openai/anthropic SDK
+Open-source backbones (real, swap-in for v0.2 — recommended 2024-2025 picks):
+    • **Qwen2.5-VL-7B / 72B** (Alibaba, Jan 2025) — current SOTA open MLLM
+      for long-video understanding; supersedes Qwen2-VL-7B.
+      https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
+    • **InternVL2.5** (Shanghai AI Lab, Dec 2024) — strong open alternative.
+    • **GPT-4o** / **Claude Sonnet 4.5** / **Gemini 2.5 Pro** — hosted MLLMs.
 
 v0.1 mock yields a deterministic templated caption so the rest of the
 pipeline can flow without an MLLM.
 
 The rolling-buffer trick (concat the previous K captions into the prompt
-for shot K+1) follows CineAgents (see LongVideoEditAgent_DESIGN.md §5.1).
+for shot K+1) follows CineAgents and is the same scheme used by
+**Video-of-Thought** (Fei et al., 2024) for long-video reasoning chains.
 """
 from __future__ import annotations
 

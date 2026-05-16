@@ -1,8 +1,17 @@
-"""Wan2.6 local-inference wrapper (stub).
+"""Wan2.x local-inference wrapper (stub).
 
 Open-source: https://github.com/Wan-Video. Weights distributed via Hugging Face.
 v0.1 ships only the public surface; v0.2 will load the model with
 `transformers` + `accelerate` and run T2V locally.
+
+2024–2025 alternatives behind the same interface:
+    • **Wan2.1 / Wan2.6** (Alibaba, late 2024) — current generation;
+      strong on motion + camera control.
+    • **CogVideoX-5B** (Zhipu, Aug 2024) — HuggingFace integration is
+      cleaner (``diffusers.CogVideoXPipeline``); good fallback when Wan
+      checkpoints aren't accessible.
+    • **HunyuanVideo** (Tencent, Dec 2024) — preferred when first-frame /
+      character-reference conditioning matters (see omniweaving.py).
 """
 from __future__ import annotations
 

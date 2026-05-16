@@ -4,13 +4,26 @@
 aliases:
   qwen-vl-8b-instruct:
     backend: "transformers"
-    repo_id: "Qwen/Qwen2-VL-7B-Instruct"
+    repo_id: "Qwen/Qwen2-VL-7B-Instruct"      # legacy alias, kept for back-compat
+    dtype: "bfloat16"
+    device: "auto"
+
+  # ── 2024-2025 SOTA open MLLMs — preferred upgrade paths ──
+  qwen2_5-vl-7b:
+    backend: "transformers"
+    repo_id: "Qwen/Qwen2.5-VL-7B-Instruct"    # Alibaba, Jan 2025
+    dtype: "bfloat16"
+    device: "auto"
+
+  internvl2_5-8b:
+    backend: "transformers"
+    repo_id: "OpenGVLab/InternVL2_5-8B"       # Shanghai AI Lab, Dec 2024
     dtype: "bfloat16"
     device: "auto"
 
   shotvl-3b:
     backend: "transformers"
-    repo_id: "Vchitect/ShotBench-3B"     # cinematography tagger
+    repo_id: "Vchitect/ShotBench-3B"          # cinematography tagger
     dtype: "float16"
     device: "auto"
 
@@ -21,5 +34,10 @@ aliases:
   claude-sonnet-4-5:
     backend: "anthropic"
     model: "claude-sonnet-4-5"
+
+  # Gemini 2.5 Pro — long-video understanding contender
+  gemini-2_5-pro:
+    backend: "google_genai"
+    model: "gemini-2.5-pro"
 
 mock_responses_dir: "tests/fixtures/mock_mllm/"

@@ -1,12 +1,21 @@
 """EditorAgent — multi-step ReAct loop.
 
-This is the only agent that drives tool use directly. Per segment it
-chooses among four actions until it has an accepted candidate OR the
-step budget is exhausted.
+References (older + 2024 successors):
+    • **ReAct** (Yao et al., ICLR 2023) — interleaved reasoning/acting steps,
+      the foundational recipe we follow.
+    • **GLANCE** (2024) — bi-loop ReAct + verify for video editing; our
+      auto-validate-after-each-action pattern is a simplification of GLANCE's
+      inner loop (see SYSTEM_GUIDE §5.1.4).
+    • **FilmAgent** (HITsz-TMG, 2024) — Critique-Correct-Verify multi-agent;
+      we keep CCV at the *plan* layer (Orchestrator + Director) rather than
+      inside Editor so the segment-level loop stays cheap.
+    • LangChain Core ``langchain_core.tools`` — tool-calling surface our action
+      menu mirrors; not depended on in v0.1 to keep imports light.
 
-Open-source library considered: LangChain's tool calling abstraction
-(``langchain_core.tools``); not depended on in v0.1 to keep imports light,
-but the action surface mirrors it.
+This is the only agent that drives tool use directly. Per segment it chooses
+among three actions ({retrieve, generate, fallback}) until it has an
+accepted candidate OR the step budget is exhausted; auto-validate runs
+after every retrieve/generate to keep the trajectory log clean.
 """
 from __future__ import annotations
 
@@ -37,6 +46,7 @@ class EditorAgent(BaseAgent):
         config: Optional[dict[str, Any]] = None,
         max_steps: int = 10,
         feasibility_threshold: float = 0.4,
+        preference_logger=None,
     ) -> None:
         super().__init__(
             llm_client=llm_client,
@@ -49,6 +59,9 @@ class EditorAgent(BaseAgent):
         self.validator = validator
         self.max_steps = max_steps
         self.feasibility_threshold = feasibility_threshold
+        # Optional: when set, every multi-candidate segment writes a
+        # (winner, losers) DPO/IPO-ready preference pair.
+        self.preference_logger = preference_logger
 
     def run(self, state: dict[str, Any]) -> dict[str, Any]:
         guidances: list[SegmentGuidance] = state["segment_guidances"]
@@ -146,6 +159,17 @@ class EditorAgent(BaseAgent):
 
         # Inherit segment_idx for downstream assembly.
         chosen.segment_idx = guidance.segment_idx
+
+        # Emit a (winner, losers) preference pair if we had > 1 candidate.
+        # This is free DPO/IPO training data for the v0.3 RM training step
+        # (see utils/preferences.py docstring + Rafailov et al., NeurIPS 2023).
+        if self.preference_logger is not None and len(candidates) > 1:
+            losers = [c for c in candidates if c is not chosen]
+            if losers:
+                self.preference_logger.log_pair(
+                    guidance=guidance, winner=chosen, losers=losers,
+                    judge_name=type(self.validator.reward_model).__name__,
+                )
 
         # One summary line per segment in the trajectory log — captures the
         # actual metric_scores + accept/reject decision so RL training data is

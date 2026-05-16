@@ -5,7 +5,18 @@
 
 A research-grade Python framework that takes **(1+ source videos, a natural-language editing prompt, an optional music track)** and returns a finished edit. Editing is performed by a small multi-agent system that jointly **retrieves** shots from the sources and **generates** missing shots with a video diffusion model, sharing a four-layer narrative memory (shot ⇢ event ⇢ story ⇢ character).
 
-The repository is organised around the design doc; this README only tells you how to install and run the v0.1 mock pipeline.
+The repository is organised around the design doc; this README only tells you how to install and run the v0.1 mock pipeline. For everything else, see the index below.
+
+## Where to read next
+
+| Want to ... | Open |
+|---|---|
+| just run it | this README, §Quickstart |
+| understand the data flow & the agentic-evolution / self-loop-evaluation design | [`docs/SYSTEM_GUIDE.md`](./docs/SYSTEM_GUIDE.md) ⭐ |
+| see how every section of the design doc maps to source files | [`docs/architecture_tour.md`](./docs/architecture_tour.md) |
+| know which open-source library backs which module | [`docs/dependencies.md`](./docs/dependencies.md) |
+| see the design decisions we made (and *didn't* make) | [`docs/decisions.md`](./docs/decisions.md) |
+| read the original blueprint | [`LongVideoEditAgent_DESIGN.md`](./LongVideoEditAgent_DESIGN.md) |
 
 ---
 

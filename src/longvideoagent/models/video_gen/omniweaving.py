@@ -8,6 +8,19 @@ model weights and inference code under v0.2 and either:
 
 This file is intentionally a stub — the public surface matches BaseVideoGenClient
 so EditorAgent can call it once weights are configured.
+
+2024–2025 alternatives (recommended upgrade paths):
+    • **HunyuanVideo** (Tencent-Hunyuan, Dec 2024) — same lab as OmniWeaving;
+      open weights for 13B T2V; strongest "drop-in" candidate.
+      https://github.com/Tencent-Hunyuan/HunyuanVideo
+    • **CogVideoX-5B** (Zhipu, Aug 2024) — open-weights, smaller, faster.
+      https://github.com/THUDM/CogVideo
+    • **Mochi-1** (Genmo, Oct 2024) — open T2V with multi-image conditioning.
+      https://github.com/genmoai/mochi
+    • **LTX-Video** (Lightricks, Dec 2024) — fast 2B model, good for real-time.
+      https://github.com/Lightricks/LTX-Video
+For long-edit pipelines the controllability of OmniWeaving / HunyuanVideo
+(text + first-frame + character refs + flow field) remains the best fit.
 """
 from __future__ import annotations
 

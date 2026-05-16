@@ -13,6 +13,29 @@ aliases:
     default_fps: 24
     default_duration: 4.0
 
+  # 2024-2025 upgrade — same Tencent lab, open weights, 13B T2V
+  hunyuan_video:
+    backend: "omniweaving"          # uses same client; HTTP endpoint differs
+    repo_id: "tencent/HunyuanVideo"
+    endpoint_env: "HUNYUANVIDEO_ENDPOINT"
+    supports:
+      - "text"
+      - "first_frame"
+      - "reference_images"
+    default_fps: 24
+    default_duration: 4.0
+
+  # 2024 alternative — Zhipu AI, smaller / faster, clean diffusers integration
+  cogvideox:
+    backend: "wan_local"            # diffusers pipeline, reuses wan client shape
+    repo_id: "THUDM/CogVideoX-5b"
+    checkpoint_env: "COGVIDEOX_CHECKPOINT"
+    supports:
+      - "text"
+      - "first_frame"
+    default_fps: 24
+    default_duration: 4.0
+
   wan_local:
     backend: "wan_local"            # → models.video_gen.wan_local.WanLocalClient
     repo_id: "Wan-AI/Wan2.6-T2V-14B"
@@ -26,7 +49,7 @@ aliases:
   api_veo:
     backend: "api_client"           # → models.video_gen.api_client.ApiVideoGenClient
     provider: "google_genai"
-    model: "veo-2.0"
+    model: "veo-2.0"                # Veo 2, Dec 2024 release
     supports:
       - "text"
     default_fps: 24

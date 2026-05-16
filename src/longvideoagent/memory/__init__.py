@@ -11,5 +11,9 @@ from .schema import StoreSchemas
 from .store import MemoryStore
 from .builder import build_memory_from_shots
 from .retriever import MemoryRetriever
+from .lessons import Lesson, LessonBook
 
-__all__ = ["StoreSchemas", "MemoryStore", "MemoryRetriever", "build_memory_from_shots"]
+__all__ = [
+    "StoreSchemas", "MemoryStore", "MemoryRetriever", "build_memory_from_shots",
+    "Lesson", "LessonBook",
+]

@@ -40,15 +40,17 @@ src/longvideoagent/config.py            ⇄  loader (dataclass-based, see D-012)
 src/longvideoagent/logging.py           ⇄  loguru + stdlib fallback
 src/longvideoagent/memory/              ⇄  4-file SQLite/FAISS narrative memory
 src/longvideoagent/perception/          ⇄  9 mock-first wrappers
-src/longvideoagent/agents/              ⇄  5 BaseAgent subclasses
+src/longvideoagent/agents/              ⇄  6 BaseAgent subclasses (5 online + CriticAgent post-hoc)
 src/longvideoagent/tools/               ⇄  Retrieval/Generation/Assembly/Metric
-src/longvideoagent/models/              ⇄  LLM, video-gen, reward wrappers
+src/longvideoagent/models/              ⇄  LLM, video-gen, reward wrappers (+ EnsembleRewardModel)
+src/longvideoagent/memory/              ⇄  4-file narrative memory + LessonBook (v0.2)
 src/longvideoagent/orchestration/       ⇄  graph + state + messages
 src/longvideoagent/pipeline/            ⇄  preprocess/plan/compose/run drivers
 src/longvideoagent/prompts/             ⇄  7 plain-text prompt files
+src/longvideoagent/utils/               ⇄  trajectory + preferences (DPO/IPO/KTO/SimPO/GRPO-ready) + video/audio I/O
 benchmark/                              ⇄  Mashup/CineBench adapters (v0.2)
 scripts/                                ⇄  5 CLI entry points
-tests/                                  ⇄  unit + integration
+tests/                                  ⇄  unit + integration (87 tests)
 ```
 
 ## §4 — Core data structures
@@ -80,14 +82,15 @@ Every dataclass in §4 is defined verbatim in `src/longvideoagent/types.py`:
 
 ## §6 — Agent specifications
 
-| §6.x agent | File |
-|---|---|
-| `BaseAgent` ABC | `agents/base.py` |
-| `ScreenwriterAgent` (DIRECT §4.1) | `agents/screenwriter.py` + prompt `prompts/screenwriter.txt` |
-| `DirectorAgent` (DIRECT §4.2, 3 CoT steps + feasibility) | `agents/director.py` + 3 prompts |
-| `OrchestratorAgent` (CineAgents iterative validation) | `agents/orchestrator.py` + `prompts/orchestrator_validate.txt` |
-| `EditorAgent` (multi-step ReAct) | `agents/editor.py` + `prompts/editor_summary.txt` |
-| `ValidatorAgent` (MLLM judge) | `agents/validator.py` + `prompts/reward_judge.txt` |
+| §6.x agent | File | Reference (older + 2024-2025) |
+|---|---|---|
+| `BaseAgent` ABC | `agents/base.py` | — |
+| `ScreenwriterAgent` (DIRECT §4.1) | `agents/screenwriter.py` + prompt `prompts/screenwriter.txt` | DIRECT (2024); v0.2 adds **Self-Consistency** (Wang et al., ICLR 2023) + **rStar** (Microsoft, 2024) |
+| `DirectorAgent` (DIRECT §4.2, 3 CoT steps + feasibility) | `agents/director.py` + 3 prompts | DIRECT (2024) |
+| `OrchestratorAgent` (CineAgents iterative validation) | `agents/orchestrator.py` + `prompts/orchestrator_validate.txt` | CineAgents (2024) |
+| `EditorAgent` (multi-step ReAct) | `agents/editor.py` + `prompts/editor_summary.txt` | **ReAct** (Yao et al., ICLR 2023); **GLANCE** (2024) bi-loop |
+| `ValidatorAgent` (MLLM judge) | `agents/validator.py` + `prompts/reward_judge.txt` | **G-Eval** (2023); v0.3 → **Tülu-3-RM** (Nov 2024), **Skywork-Reward** (Oct 2024), **JudgeLM** (2024) |
+| **`CriticAgent` (v0.2)** — post-hoc trajectory reviewer | `agents/critic.py` | **Reflexion** (Shinn et al., 2023); 2024 successors: **Trace** (Microsoft), **rStar** (Microsoft), **AFlow** (Zhang et al.) |
 
 ## §7 — Tool specifications
 
@@ -102,13 +105,14 @@ The six metrics m1..m6 in §7.1 are public functions in `tools/metric_tool.py`.
 
 ## §8 — Model wrappers
 
-| §8.x wrapper | File | PyPI |
+| §8.x wrapper | File | PyPI / Reference |
 |---|---|---|
 | LLM ABC | `models/llm/base.py` | `openai`, `anthropic` (lazy) |
 | OpenAI / DeepSeek / vLLM | `models/llm/openai_client.py` + `deepseek_client.py` + `vllm_local.py` | `openai` |
 | Anthropic | `models/llm/anthropic_client.py` | `anthropic` |
-| Video gen ABC + 3 backends | `models/video_gen/{base,omniweaving,wan_local,api_client}.py` | OmniWeaving repo · Wan2.6 repo · `google-genai` |
-| Reward ABC + MLLM judge | `models/reward/{base,mllm_judge}.py` | n/a (uses the LLM wrappers) |
+| Video gen ABC + 4 backends | `models/video_gen/{base,omniweaving,wan_local,api_client}.py` | **HunyuanVideo** (Dec 2024) · **CogVideoX-5B** (Aug 2024) · **Mochi-1** (Oct 2024) · **LTX-Video** (Dec 2024) · OmniWeaving · Wan2.x · **Veo 2** (Dec 2024) |
+| Reward ABC + MLLM judge | `models/reward/{base,mllm_judge}.py` | uses the LLM wrappers; v0.3 → Tülu-3-RM, Skywork-Reward |
+| **EnsembleRewardModel (v0.2)** | `models/reward/ensemble.py` | **Multi-Agent Debate** (Du et al. 2023), **DyLAN** (Liu et al. 2024), **MJ-Bench** (2024), **JudgeLM** (2024) |
 
 ## §9 — Config
 

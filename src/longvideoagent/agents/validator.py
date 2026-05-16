@@ -1,7 +1,18 @@
 """ValidatorAgent — thin wrapper around a BaseRewardModel.
 
-In v0.1 the reward model is MockRewardModel / MLLMJudge (mocked); in v0.2
-it becomes a fine-tuned EditingQualityRM (design doc §12 path B).
+References:
+    • **G-Eval** (Liu et al., 2023) — structured LLM-as-judge prompt; we
+      follow the same "score + reasons + accept/reject" output shape.
+    • **JudgeLM** (Zhu et al., 2024) — purpose-trained judge model; the
+      v0.2-v0.3 swap target once an EditingQualityRM is trained.
+    • **Tülu-3-RM** (Allen AI, Nov 2024) — open RM training recipe; the
+      reference recipe for v0.3 fine-tune.
+    • **Skywork-Reward-Gemma-2-27B** (Oct 2024) — top RewardBench score;
+      another v0.3 swap candidate.
+
+In v0.1 the reward model is MockRewardModel / EnsembleRewardModel (mocked);
+in v0.2 it becomes the same ensemble with one MLLM judge added; in v0.3
+the MLLM judge is replaced by a fine-tuned EditingQualityRM (design doc §12).
 """
 from __future__ import annotations
 

@@ -86,3 +86,58 @@ OSS library — those names are the v0.2 install targets, not optional fluff.
 **Why:** AssemblyTool writes into `tempfile.TemporaryDirectory()` which often lives on
 a different filesystem than the user-chosen output path, so `Path.replace` raises
 ``OSError: Invalid cross-device link``. `shutil.move` falls back to copy+unlink.
+
+---
+
+## 2026-05-16 (later) — v0.2 self-loop evolution decisions
+
+### D-015 · 6 agents, not 5 — CriticAgent is post-hoc and isolated
+**Why:** Self-grading bias (an agent praising its own outputs) is a known failure
+mode of Self-Refine-style loops. We keep the executor agents (Editor / Validator)
+focused on the current run and give a **separate** CriticAgent the trajectory
+scan + lesson extraction job. This mirrors Self-Discover's separation of meta-agent
+from base agents (Zhou et al., 2024) and Reflexion's actor/evaluator split.
+**Trade-off:** one extra agent in the system; but it adds zero LLM-call cost in v0.1
+(rule-based scanners) and is cheap to upgrade to an LLM-driven critic in v0.2.
+
+### D-016 · LessonBook stores **across runs**, not just **across episodes**
+**Why:** Reflexion's original setup keeps verbal memory within one task attempt.
+For evolving a long-video editing system we want lessons that persist across the
+many runs a user / pipeline does — that's where the data compounding lives.
+JSONL append-only schema makes the file simultaneously: (a) a Reflexion memory,
+(b) a future RL training set, (c) a Trace-style (Microsoft 2024) signal source.
+**Trade-off:** schema must stay stable; we document it in `memory/lessons.py` docstring.
+
+### D-017 · EnsembleRewardModel uses ≥3 mock judges with different weight vectors
+**Why:** Even in fully-mock mode we want a non-trivial disagreement signal so that
+downstream consumers (`EnsembleResult.is_active_learning_candidate(...)`) and
+tests can exercise the active-learning path. Three judges with weights drawn from
+heuristic presets (balanced / semantic-priority / motion-priority) is the minimal
+configuration that produces a meaningful variance.
+**Trade-off:** 3× the per-candidate scoring cost; but mock cost is negligible and
+real (MLLM) judges are still optional.
+
+### D-018 · PreferenceLogger schema mirrors HuggingFace `trl.DPOTrainer`
+**Why:** v0.3 RM training will be done with `trl.DPOTrainer` (or its KTO/SimPO
+variants). Matching its expected schema (`prompt` / `chosen` / `rejected`) means
+no transformation code at training time — `jq` can project our records directly.
+We also include `judge` (which RM signed off on the preference) so future
+research can study judge-induced bias.
+**Trade-off:** schema is slightly more verbose than necessary for one consumer;
+worth it because GRPO/RLOO/KTO can all be derived from the same records.
+
+### D-019 · Self-Consistency on Screenwriter only, not every agent
+**Why:** Self-consistency (Wang et al., ICLR 2023) multiplies LLM cost by K. We
+apply it only to the **highest-leverage** decision point (Screenwriter's global
+plan controls every downstream agent's input). Lower-leverage decisions (Director's
+per-section query, Editor's per-step action) don't pay back the 3× cost.
+**Trade-off:** non-Screenwriter agents remain single-sample; v0.3 can flip a per-agent
+flag if benchmark results justify it.
+
+### D-020 · Co-cite older + newer work, don't replace
+**Why:** Some users want canonical references (DIRECT, Reflexion, DPO); others
+want the latest (HunyuanVideo, Tülu-3, GRPO, rStar, Trace). Every code docstring
+and SYSTEM_GUIDE entry now lists **both** when applicable, so reviewers from either
+camp find their footing without us having to take sides. Following the user's
+"引用尽量要最新" requirement, we prioritise 2024–2025 work in `configs/` defaults
+and in the dependency map, but historical references stay for traceability.

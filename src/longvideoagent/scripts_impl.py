@@ -67,6 +67,14 @@ def run_pipeline_main() -> int:
     p.add_argument("--user-prompt", required=True, type=str)
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--trajectory-log", type=Path, default=None)
+    p.add_argument("--lesson-book", type=Path, default=None,
+                   help="Path to cross-run LessonBook JSONL (default: <cache>/lessons.jsonl)")
+    p.add_argument("--preference-log", type=Path, default=None,
+                   help="If set, log (winner, loser) pairs to this file for DPO/IPO training")
+    p.add_argument("--self-consistency-k", type=int, default=1,
+                   help="Run ScreenwriterAgent K times and majority-vote (default 1 = off)")
+    p.add_argument("--no-critic", action="store_true",
+                   help="Skip the post-run CriticAgent pass (default: run it)")
     _add_common(p)
     args = p.parse_args()
     run_pipeline(
@@ -77,6 +85,10 @@ def run_pipeline_main() -> int:
         cache_dir=args.cache_dir,
         config_path=args.config,
         trajectory_log_path=args.trajectory_log,
+        lesson_book_path=args.lesson_book,
+        preference_log_path=args.preference_log,
+        self_consistency_k=args.self_consistency_k,
+        run_critic=not args.no_critic,
         log_level=args.log_level,
     )
     return 0

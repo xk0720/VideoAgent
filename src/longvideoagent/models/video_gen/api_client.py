@@ -1,6 +1,17 @@
-"""Hosted-API video generation fallback (Veo via google-genai).
+"""Hosted-API video generation fallback (Veo 2 via google-genai).
 
 Open-source SDK wrapped: **google-genai**  https://github.com/google/genai-python
+
+Current API target (Dec 2024 release):
+    • **Veo 2** — text-to-video API on Google AI Studio / Vertex AI.
+      Higher fidelity than Veo 1; supports 8-second clips at 720p.
+
+Other 2024–2025 hosted-API options behind the same interface (each needs
+its own SDK + key):
+    • **Sora 2** (OpenAI, late 2024) — when an API becomes generally available.
+    • **Kling 2.0** (Kuaishou, 2024) — strong open-API option.
+    • **Runway Gen-3 Alpha** — popular for editor workflows.
+
 v0.1 stub — actual call happens once GOOGLE_API_KEY is set.
 """
 from __future__ import annotations
