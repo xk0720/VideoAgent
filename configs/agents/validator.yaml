@@ -1,0 +1,10 @@
+# ValidatorAgent — reward model (zero-shot MLLM judge in v0.1, fine-tuned RM in v0.2).
+role: validator
+prompt_path: "src/longvideoagent/prompts/reward_judge.txt"
+llm_alias: "validator"              # multimodal; resolved via configs/models/mllm.yaml
+temperature: 0.0
+max_tokens: 400
+output_schema:
+  score: "float [1, 10]"
+  reasons: "list[str] (>=1 if score < 6)"
+  accepted: "bool"

@@ -1,0 +1,47 @@
+# ──────────────────────────────────────────────────────────────────────────
+# LongVideoEditAgent — v0.1 mock-pipeline minimum (CPU-only, no GPU needed)
+# Each line below has been verified to be a real PyPI package.
+# Heavy/optional backends live in pyproject.toml [project.optional-dependencies]
+# so they don't bloat first-time install. Run `pip install -e .[all]` for full.
+# ──────────────────────────────────────────────────────────────────────────
+
+# ── Hard requirements (used unconditionally by v0.1) ──
+numpy>=1.24
+PyYAML>=6.0
+python-dotenv>=1.0
+opencv-python>=4.8            # used by utils.video_io for frame extraction
+Pillow>=10.0
+
+# ── Soft requirements (modules fall back to pure-numpy / stdlib when missing) ──
+scipy>=1.10                   # tools.metric_tool — Wasserstein / Spearman; numpy fallback exists
+loguru>=0.7                   # logging.py — stdlib logging fallback exists
+rich>=13.0                    # scripts_impl viz; plain-text fallback exists
+ffmpeg-python>=0.2.0          # convenience wrapper around ffmpeg; subprocess fallback exists
+tenacity>=8.2                 # LLM call retry/backoff (loaded only on first real LLM call)
+tqdm>=4.66                    # progress bars in long preprocessing runs
+pydantic>=2.5                 # OPTIONAL — config.py uses dataclasses; pydantic is for v0.2 strict mode
+
+# ── Testing ──
+pytest>=7.4
+pytest-mock>=3.12
+
+# ──────────────────────────────────────────────────────────────────────────
+# Optional — uncomment as you wire real models in v0.2.
+# ──────────────────────────────────────────────────────────────────────────
+# scenedetect[opencv]>=0.6.3   # PySceneDetect       — perception.shot_detector
+# open_clip_torch>=2.24        # CLIP                — perception.feature_extractor
+# torch>=2.1                   # backbone for vision/LLM
+# torchvision>=0.16            # ships RAFT          — perception.flow_extractor
+# librosa>=0.10                # audio analysis      — utils.audio_io
+# soundfile>=0.12
+# decord>=0.6                  # fast video frame reading
+# transformers>=4.40           # Qwen-VL / ShotVL    — perception.captioner / cinematography
+# faiss-cpu>=1.7.4             # vector index        — memory.store
+# insightface>=0.7.3           # face IDs            — perception.character_id
+# easyocr>=1.7                 # subtitle OCR        — perception.dialogue_matcher
+# allin1>=1.1                  # music structure     — perception.music_analyzer
+# openai>=1.30                 # LLM backend         — models.llm.openai_client
+# anthropic>=0.30              # LLM backend         — models.llm.anthropic_client
+# langgraph>=0.2               # multi-agent graph   — orchestration.graph
+# langchain-core>=0.3
+# google-genai>=0.3            # Veo API fallback    — models.video_gen.api_client

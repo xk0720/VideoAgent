@@ -1,0 +1,37 @@
+# Video generation backends. EditorAgent picks one via configs/default.yaml::compose.generation.backend.
+
+aliases:
+  omniweaving:
+    backend: "omniweaving"          # → models.video_gen.omniweaving.OmniWeavingClient
+    repo_id: "Tencent-Hunyuan/OmniWeaving"
+    endpoint_env: "OMNIWEAVING_ENDPOINT"
+    supports:
+      - "text"
+      - "first_frame"
+      - "last_frame"
+      - "reference_images"          # multi-image character anchor — critical for our pipeline
+    default_fps: 24
+    default_duration: 4.0
+
+  wan_local:
+    backend: "wan_local"            # → models.video_gen.wan_local.WanLocalClient
+    repo_id: "Wan-AI/Wan2.6-T2V-14B"
+    checkpoint_env: "WAN_LOCAL_CHECKPOINT"
+    supports:
+      - "text"
+      - "first_frame"
+    default_fps: 24
+    default_duration: 4.0
+
+  api_veo:
+    backend: "api_client"           # → models.video_gen.api_client.ApiVideoGenClient
+    provider: "google_genai"
+    model: "veo-2.0"
+    supports:
+      - "text"
+    default_fps: 24
+    default_duration: 4.0
+
+mock_settings:
+  enabled_env: "LVA_MOCK_VIDEO_GEN"
+  fixture_dir: "tests/fixtures/mock_video_gen/"   # one tiny mp4 returned per call

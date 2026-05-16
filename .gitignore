@@ -1,0 +1,33 @@
+# ─ Python ─
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# ─ Environment ─
+.env
+.envrc
+
+# ─ Editors / OS ─
+.idea/
+.vscode/
+.DS_Store
+
+# ─ Caches & runtime outputs ─
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+outputs/
+*.jsonl
+*.faiss
+*.npz
+
+# ─ Local data ─
+data/
+**/fixtures/*.mp4
+!tests/fixtures/.gitkeep

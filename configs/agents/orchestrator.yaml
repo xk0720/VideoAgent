@@ -1,0 +1,14 @@
+# OrchestratorAgent — narrative-coherence validator (CineAgents-style iterative loop).
+# Receives (GlobalStructuralPlan, [SegmentGuidance], NarrativeMemory) and emits
+# (passed: bool, feedback: list[str]). Loops with DirectorAgent until passed or max_iterations.
+role: orchestrator
+prompt_path: "src/longvideoagent/prompts/orchestrator_validate.txt"
+llm_alias: "orchestrator"
+temperature: 0.1
+max_tokens: 1200
+require_json: true
+checks:
+  - "grounding_in_memory"           # every semantic_query must have ≥3 plausible shots
+  - "section_coverage"              # every music section must have ≥1 segment
+  - "pacing_sanity"                 # rhythmic_pacing matches section duration
+  - "no_duplicate_queries"

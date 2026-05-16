@@ -1,0 +1,25 @@
+# Multimodal LLMs used as captioner / cinematography tagger / reward judge.
+# Loaded via HuggingFace `transformers` (Qwen-VL, ShotVL) or OpenAI/Anthropic for hosted variants.
+
+aliases:
+  qwen-vl-8b-instruct:
+    backend: "transformers"
+    repo_id: "Qwen/Qwen2-VL-7B-Instruct"
+    dtype: "bfloat16"
+    device: "auto"
+
+  shotvl-3b:
+    backend: "transformers"
+    repo_id: "Vchitect/ShotBench-3B"     # cinematography tagger
+    dtype: "float16"
+    device: "auto"
+
+  gpt-4o:
+    backend: "openai"
+    model: "gpt-4o-2024-11-20"
+
+  claude-sonnet-4-5:
+    backend: "anthropic"
+    model: "claude-sonnet-4-5"
+
+mock_responses_dir: "tests/fixtures/mock_mllm/"

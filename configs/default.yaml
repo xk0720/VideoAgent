@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────
+# LongVideoEditAgent — root config.
+# Loaded by src/longvideoagent/config.py (pydantic v2). Every field has a
+# typed model; runtime overrides (CLI flags, env vars) are merged on top.
+# ─────────────────────────────────────────────────────────────────────
+
+project_name: "longvideoagent"
+cache_root: "./.cache"
+output_root: "./outputs"
+random_seed: 42
+
+# ─── Stage 1 · perception ────────────────────────────────────────────
+preprocess:
+  shot_detector:
+    name: "pyscenedetect"             # backed by scenedetect package; mock in v0.1
+    threshold: 27.0
+    min_scene_len: 15                 # frames
+  feature_extractor:
+    name: "clip-vit-base-patch32"     # via open_clip_torch or transformers
+    stride: 4
+    embed_dim: 512
+  flow_extractor:
+    name: "raft-large"                # torchvision.models.optical_flow.raft_large
+    spatial_pool: 8
+  saliency:
+    name: "u2net"                     # https://github.com/xuebinqin/U-2-Net
+  captioner:
+    name: "qwen-vl-8b-instruct"       # via transformers + AutoModel
+    buffer_size: 10                   # rolling shot-caption context
+    max_new_tokens: 128
+  cinematography:
+    name: "shotvl-3b"                 # Vchitect/ShotBench on HF
+  music_analyzer:
+    name: "allin1"                    # https://github.com/mir-aidj/all-in-one
+  character_id:
+    detector: "insightface"           # https://github.com/deepinsight/insightface
+    fallback: "solider"
+    cluster_threshold: 0.6
+  dialogue:
+    ocr_engine: "easyocr"             # https://github.com/JaidedAI/EasyOCR
+    voiceprint: "wespeaker"           # https://github.com/wenet-e2e/wespeaker
+  parallel:
+    num_workers: 4                    # processes for feature extraction
+
+# ─── Stage 2 · planning (multi-agent) ────────────────────────────────
+plan:
+  max_iterations: 5
+  models:
+    screenwriter: "deepseek-v3"
+    director: "deepseek-v3"
+    orchestrator: "claude-sonnet-4-5"
+  use_langgraph: true                 # v0.1 uses a Python state-machine fallback
+                                      # with the same node names — flip to true
+                                      # once langgraph is installed.
+
+# ─── Stage 3 · compose (Editor ReAct loop) ───────────────────────────
+compose:
+  editor_model: "claude-sonnet-4-5"
+  validator_model: "qwen-vl-8b-instruct"
+  max_editor_steps: 10
+  retrieval:
+    beam_width: 3
+    sliding_stride: 4
+    top_k_pool: 200                   # CLIP shortlist before beam search
+  generation:
+    enabled: true
+    backend: "omniweaving"            # one of: omniweaving | wan_local | api_veo
+    fallback_threshold: 0.4
+    duration_default: 4.0             # seconds; overridable per segment
+  metric_weights:                     # default; per-heuristic overrides live in heuristics/presets.yaml
+    m1_prompt: 0.20
+    m2_seg_consistency: 0.15
+    m3_motion_continuity: 0.20
+    m4_framing: 0.15
+    m5_beat_sync: 0.15
+    m6_energy: 0.15
+  validator_threshold: 6.0            # 1-10 scale from MLLM judge
+
+# ─── Assembly (always real ffmpeg) ───────────────────────────────────
+assembly:
+  output_codec: "libx264"
+  output_pix_fmt: "yuv420p"
+  output_fps: 30
+  crossfade_duration: 0.0             # seconds; 0 disables transitions
+  music_volume: 0.85
+  loglevel: "error"
+
+# ─── Trajectory logging ─────────────────────────────────────────────
+trajectory:
+  enabled: true
+  format: "jsonl"
+  redact_large_tensors: true          # don't dump numpy arrays into the log
+
+# ─── Mock switches (CPU-only v0.1) ──────────────────────────────────
+# When a backend is in mock=true mode the wrapper returns deterministic
+# dummy data of the right shape, so the rest of the pipeline can run.
+mocks:
+  perception: true
+  llm: true
+  video_gen: true
+  reward: true

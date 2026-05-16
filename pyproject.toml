@@ -1,0 +1,110 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "longvideoagent"
+version = "0.1.0"
+description = "Instruction-driven long-video editing agent (DIRECT/FilmAgent/MovieAgent/GLANCE-inspired hybrid retrieval+generation pipeline)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "VideoAgent contributors" }]
+
+# ── Core runtime dependencies (v0.1 scaffold; everything heavy is optional) ──
+# We intentionally keep this list small. v0.1 can run end-to-end with only
+# these CPU-friendly packages because all perception / MLLM / video-gen calls
+# are mocked. Real model backends live behind optional extras below.
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",                 # Wasserstein, Spearman for retrieval metrics
+    "PyYAML>=6.0",
+    "pydantic>=2.5",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+    "rich>=13.0",
+    "tenacity>=8.2",
+    "tqdm>=4.66",
+    "ffmpeg-python>=0.2.0",        # AssemblyTool — real ffmpeg wrapper
+    "opencv-python>=4.8",          # frame I/O for utils.video_io
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+# ── Real model backends (skip for v0.1 mock pipeline) ──
+perception = [
+    "scenedetect[opencv]>=0.6.3",  # PySceneDetect — shot segmentation
+    "open_clip_torch>=2.24",       # CLIP embeddings
+    "torch>=2.1",
+    "torchvision>=0.16",           # ships RAFT optical flow
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "decord>=0.6",
+    "transformers>=4.40",          # Qwen-VL, ShotVL, etc.
+    "faiss-cpu>=1.7.4",            # vector index for narrative memory
+    "insightface>=0.7.3",          # face embeddings
+    "easyocr>=1.7",                # subtitle OCR
+]
+music = [
+    "allin1>=1.1",                 # mir-aidj/all-in-one music structure
+    "librosa>=0.10",
+]
+llm = [
+    "openai>=1.30",                # OpenAI + DeepSeek (OpenAI-compatible) + vLLM (OpenAI-compatible)
+    "anthropic>=0.30",
+]
+orchestration = [
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+]
+video_gen = [
+    # OmniWeaving / Wan2.6 are loaded via transformers + custom code; no pypi pin needed.
+    # API fallbacks:
+    "google-genai>=0.3",           # Veo via Gemini API
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-mock>=3.12",
+    "pytest-cov>=4.1",
+    "mypy>=1.8",
+    "ruff>=0.4",
+    "ipykernel>=6.29",
+]
+all = [
+    "longvideoagent[perception,music,llm,orchestration,video_gen,dev]",
+]
+
+[project.scripts]
+lva-preprocess  = "longvideoagent.cli:preprocess_main"
+lva-build-memory = "longvideoagent.cli:build_memory_main"
+lva-run         = "longvideoagent.cli:run_pipeline_main"
+lva-eval        = "longvideoagent.cli:eval_main"
+lva-viz         = "longvideoagent.cli:viz_trajectory_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+longvideoagent = ["prompts/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: heavy tests that download real models or call paid APIs",
+    "integration: end-to-end pipeline tests",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]  # we handle line length cosmetically
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true

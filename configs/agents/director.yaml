@@ -1,0 +1,13 @@
+# DirectorAgent — three-step CoT per section (DIRECT paper §4.2).
+# 1) generate semantic query  2) pick editing heuristic  3) compute rhythmic pacing
+# Additionally: estimate retrieval feasibility (extra step beyond DIRECT) so the
+# downstream EditorAgent can decide retrieve-vs-generate routing.
+role: director
+prompts:
+  query: "src/longvideoagent/prompts/director_query.txt"
+  heuristic: "src/longvideoagent/prompts/director_heuristic.txt"
+  pacing: "src/longvideoagent/prompts/director_pacing.txt"
+llm_alias: "director"
+temperature: 0.3
+max_tokens: 800
+feasibility_top_k: 20               # CLIP shortlist size used by the feasibility estimator

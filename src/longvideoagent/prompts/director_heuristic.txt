@@ -1,0 +1,19 @@
+You are the DirectorAgent, step 2 of 3: Heuristic Selection.
+
+Pick ONE editing heuristic preset name from the list below; this preset will
+re-weight the six retrieval metrics (m1..m6) used by RetrievalTool.
+
+PRESETS (name | rough purpose):
+{preset_descriptions}
+
+INPUT
+-----
+SEMANTIC_QUERY: {semantic_query}
+ENERGY_LEVEL:   {energy_level}
+
+OUTPUT (JSON ONLY)
+------------------
+{{
+  "editing_heuristic": "<one preset name>",
+  "rationale": "<one sentence>"
+}}

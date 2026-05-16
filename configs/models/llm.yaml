@@ -1,0 +1,37 @@
+# LLM model registry. Each alias is referenced from configs/agents/*.yaml::llm_alias.
+# Backend choices map to src/longvideoagent/models/llm/*.py wrappers.
+
+aliases:
+  screenwriter:
+    backend: "deepseek"             # → models.llm.deepseek_client.DeepSeekClient
+    model: "deepseek-chat"
+    temperature: 0.4
+    max_tokens: 1500
+
+  director:
+    backend: "deepseek"
+    model: "deepseek-chat"
+    temperature: 0.3
+    max_tokens: 800
+
+  orchestrator:
+    backend: "anthropic"            # → models.llm.anthropic_client.AnthropicClient
+    model: "claude-sonnet-4-5"
+    temperature: 0.1
+    max_tokens: 1200
+
+  editor:
+    backend: "anthropic"
+    model: "claude-sonnet-4-5"
+    temperature: 0.2
+    max_tokens: 1200
+
+  validator:
+    backend: "openai"               # → models.llm.openai_client.OpenAIClient (multimodal route)
+    model: "gpt-4o-mini"
+    temperature: 0.0
+    max_tokens: 400
+
+# Mock fixtures used when configs.default.yaml::mocks.llm == true.
+# A canned response is returned for each alias so unit/integration tests run hermetically.
+mock_responses_dir: "tests/fixtures/mock_llm/"

@@ -1,0 +1,33 @@
+# Perception backends. Loaded by src/longvideoagent/perception/*. v0.1 uses mock=true everywhere.
+
+clip:
+  backend: "open_clip"              # https://github.com/mlfoundations/open_clip
+  model_name: "ViT-B-32"
+  pretrained: "openai"
+  device: "cpu"
+  embed_dim: 512
+
+raft:
+  backend: "torchvision"            # torchvision.models.optical_flow.raft_large
+  weights: "Raft_Large_Weights.C_T_SKHT_V2"
+  device: "cpu"
+
+u2net:
+  backend: "u2net_repo"             # cloned weights from https://github.com/xuebinqin/U-2-Net
+  checkpoint_env: "U2NET_CHECKPOINT"
+  device: "cpu"
+
+insightface:
+  backend: "insightface_app"        # insightface.app.FaceAnalysis
+  model: "buffalo_l"
+  device: "cpu"
+  det_thresh: 0.5
+
+allin1:
+  backend: "allin1"                 # https://github.com/mir-aidj/all-in-one
+  device: "cpu"
+
+easyocr:
+  backend: "easyocr"
+  languages: ["en", "zh"]
+  device: "cpu"

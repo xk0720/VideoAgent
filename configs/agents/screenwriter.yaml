@@ -1,0 +1,8 @@
+# ScreenwriterAgent — DIRECT paper Sec 4.1 "Music-Driven Structure Anchoring".
+# Produces a GlobalStructuralPlan from (NarrativeMemory.summary(), user_prompt, MusicProfile).
+role: screenwriter
+prompt_path: "src/longvideoagent/prompts/screenwriter.txt"
+llm_alias: "screenwriter"           # resolved via configs/models/llm.yaml
+temperature: 0.4
+max_tokens: 1500
+require_json: true                  # parse output as JSON (GlobalStructuralPlan)

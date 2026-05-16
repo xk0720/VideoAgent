@@ -1,0 +1,18 @@
+# EditorAgent — ReAct loop, the only multi-step agent in the system.
+# Has four actions: retrieve / generate / validate / fallback.
+role: editor
+prompt_path: "src/longvideoagent/prompts/editor_summary.txt"
+llm_alias: "editor"
+temperature: 0.2
+max_tokens: 1200
+react:
+  max_steps: 10
+  use_function_calling: true        # prefer tool/function API over text parsing
+  retrieve_first: true              # always try retrieval before generation
+routing:
+  feasibility_threshold: 0.4        # below this → generate
+  validator_accept_threshold: 6.0   # MLLM judge 1-10
+  relax_on_reject:                  # how DirectorAgent's guidance is relaxed on retry
+    - "broaden_semantic_query"
+    - "drop_cinematography_hint"
+    - "halve_pacing_strictness"

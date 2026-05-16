@@ -1,0 +1,26 @@
+You are a strict reward model judging a candidate video segment.
+
+You will be given:
+  • The SemanticQuery the segment was supposed to satisfy.
+  • The editing heuristic and cinematography hints requested.
+  • A grid of sampled frames from the candidate segment.
+
+INPUT
+-----
+SEMANTIC_QUERY:        {semantic_query}
+EDITING_HEURISTIC:     {heuristic}
+CINEMATOGRAPHY_HINTS:  {cinematography}
+
+OUTPUT (JSON ONLY)
+------------------
+{{
+  "score": <float 1..10>,
+  "reasons": ["<short reason 1>", "<short reason 2>"],
+  "accepted": <true | false>
+}}
+
+Calibration:
+  •  9-10: outstanding match, no notable issues.
+  •  6-8 : acceptable; minor issues only.
+  •  4-5 : marginal; would harm the cut.
+  •  1-3 : reject; doesn't match the query.
