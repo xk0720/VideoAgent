@@ -1,0 +1,6 @@
+
+Relevant Papers:
+
+1. LongVideoAgent: Multi-Agent Reasoning with Long Videos
+2. Sima 1.0: A Collaborative Multi-Agent Framework for Documentary Video Productions
+3. Skill-SD: Skill-Conditioned Self-Distillation for Multi-turn LLM Agents
