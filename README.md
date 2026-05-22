@@ -17,6 +17,12 @@ The repository is organised around the design doc; this README only tells you ho
 | know which open-source library backs which module | [`docs/dependencies.md`](./docs/dependencies.md) |
 | see the design decisions we made (and *didn't* make) | [`docs/decisions.md`](./docs/decisions.md) |
 | read the original blueprint | [`LongVideoEditAgent_DESIGN.md`](./LongVideoEditAgent_DESIGN.md) |
+| **plan v0.3–v0.5 agentic-RL training** (with 2026 references) | [`docs/AGENTIC_RL_PROPOSAL.md`](./docs/AGENTIC_RL_PROPOSAL.md) ⭐ |
+| **run the v0.3 RL scaffold today** (mock backend, CPU only) | [`training/README.md`](./training/README.md) — branch `rl-integration` |
+| **summary of what the `rl-integration` branch added** | [`docs/RL_BRANCH_SUMMARY.md`](./docs/RL_BRANCH_SUMMARY.md) |
+| **why & how we add On-Policy Distillation (v0.4.1)** | [`docs/ON_POLICY_DISTILLATION_ANALYSIS.md`](./docs/ON_POLICY_DISTILLATION_ANALYSIS.md) ⭐ |
+| see the 2024–2026 reference map per module | [`docs/REFERENCES_2024_2026.md`](./docs/REFERENCES_2024_2026.md) |
+| see what each audit round verified | [`docs/AUDIT_REPORT.md`](./docs/AUDIT_REPORT.md) |
 
 ---
 

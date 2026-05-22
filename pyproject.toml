@@ -75,21 +75,27 @@ all = [
 ]
 
 [project.scripts]
-lva-preprocess  = "longvideoagent.cli:preprocess_main"
+lva-preprocess   = "longvideoagent.cli:preprocess_main"
 lva-build-memory = "longvideoagent.cli:build_memory_main"
-lva-run         = "longvideoagent.cli:run_pipeline_main"
-lva-eval        = "longvideoagent.cli:eval_main"
-lva-viz         = "longvideoagent.cli:viz_trajectory_main"
+lva-run          = "longvideoagent.cli:run_pipeline_main"
+lva-eval         = "longvideoagent.cli:eval_main"
+lva-viz          = "longvideoagent.cli:viz_trajectory_main"
+# RL training entry points (rl-integration branch)
+lva-train-rm     = "training.scripts.cli:train_rm_main"
+lva-train-sft    = "training.scripts.cli:train_sft_main"
+lva-train-kto    = "training.scripts.cli:train_kto_main"
+lva-train-grpo   = "training.scripts.cli:train_grpo_main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["longvideoagent*", "training*"]
 
 [tool.setuptools.package-data]
 longvideoagent = ["prompts/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-ra --strict-markers"
 markers = [
     "slow: heavy tests that download real models or call paid APIs",

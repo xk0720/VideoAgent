@@ -43,6 +43,12 @@ EXPECTED_CITATIONS: list[tuple[str, list[str]]] = [
     ("src/longvideoagent/models/video_gen/omniweaving.py", ["HunyuanVideo", "CogVideoX"]),
     ("src/longvideoagent/models/video_gen/api_client.py", ["Veo 2"]),
     ("src/longvideoagent/perception/captioner.py",       ["Qwen3-VL", "InternVL3"]),
+    # OPD (Round 14, branch rl-integration) ───────────────────────────
+    ("training/stages/distill.py",                       ["GKD", "2306.13649",
+                                                          "Thinking Machines",
+                                                          "OPSD", "2601.18734",
+                                                          "REOPOLD", "2603.11137",
+                                                          "Rethinking OPD", "2604.13016"]),
 ]
 
 
