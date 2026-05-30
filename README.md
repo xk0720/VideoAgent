@@ -17,6 +17,9 @@ The repository is organised around the design doc; this README only tells you ho
 | know which open-source library backs which module | [`docs/dependencies.md`](./docs/dependencies.md) |
 | see the design decisions we made (and *didn't* make) | [`docs/decisions.md`](./docs/decisions.md) |
 | read the original blueprint | [`LongVideoEditAgent_DESIGN.md`](./LongVideoEditAgent_DESIGN.md) |
+| **see an honest accounting of what 14 rounds actually delivered** | [`docs/CRITICAL_REVIEW.md`](./docs/CRITICAL_REVIEW.md) ⭐ |
+| **the differentiated framework: Cut · Score · Arc** | [`docs/CSA_FRAMEWORK.md`](./docs/CSA_FRAMEWORK.md) ⭐ |
+| see the v0.2 baseline measurement plan (hybrid claim probe) | [`docs/BASELINE_v0_2.md`](./docs/BASELINE_v0_2.md) |
 | **plan v0.3–v0.5 agentic-RL training** (with 2026 references) | [`docs/AGENTIC_RL_PROPOSAL.md`](./docs/AGENTIC_RL_PROPOSAL.md) ⭐ |
 | **run the v0.3 RL scaffold today** (mock backend, CPU only) | [`training/README.md`](./training/README.md) — branch `rl-integration` |
 | **summary of what the `rl-integration` branch added** | [`docs/RL_BRANCH_SUMMARY.md`](./docs/RL_BRANCH_SUMMARY.md) |

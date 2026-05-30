@@ -73,8 +73,10 @@ class GenerationTool(BaseTool):
         metric_scores = self._estimate_metrics(
             has_first_frame=first_frame is not None,
             has_flow=flow is not None,
+            has_refs=bool(refs),
             beats=neighbor_context.get("beats", []),
             cut_time_s=neighbor_context.get("expected_start_time_s", 0.0),
+            previous_source=neighbor_context.get("previous_source"),
         )
         return EditingSegment(
             segment_idx=guidance.segment_idx,
@@ -92,15 +94,57 @@ class GenerationTool(BaseTool):
     def _estimate_metrics(
         has_first_frame: bool,
         has_flow: bool,
-        beats: Iterable[float],
-        cut_time_s: float,
+        has_refs: bool = False,
+        beats: Iterable[float] = (),
+        cut_time_s: float = 0.0,
+        previous_source: str | None = None,
     ) -> dict[str, float]:
+        """Mock metric synthesis — honest about how anchor quality flows in.
+
+        v0.2 honesty fix (see ``docs/BASELINE_v0_2.md``): we used to return
+        flat 0.50 for m4 and a narrow 0.50→0.75 spread for m2/m3 regardless
+        of ``previous_source``. That made R→G and G→G boundaries
+        indistinguishable, which collapses the hybrid-vs-alternation
+        distinction the framework's core claim depends on. We now:
+
+            • give m2/m3 a wider spread between "real anchor" and "no anchor"
+            • let m4 reflect whether character_refs were actually passed
+            • discount when the anchor itself was synthesised (G→G chain)
+
+        These are still mock numbers — the *real* test is when a real
+        video-gen backend (OmniWeaving / HunyuanVideo) replaces the
+        ``MockVideoGenClient``. But the spread is enough that B can now
+        detect whether the routing decision matters at all.
+        """
+        # Anchor quality multiplier: 1.0 (came from retrieval = real source frames),
+        # 0.70 (came from generation = chain of synth), 0.50 (no anchor).
+        if previous_source == "retrieval":
+            anchor_quality = 1.0
+        elif previous_source == "generation":
+            anchor_quality = 0.70
+        else:
+            anchor_quality = 0.50
+
+        # m2 (segment consistency) — anchor is half of this; the other half
+        # is whether the generator was given anchor inputs at all.
+        m2_base = 0.85 if has_first_frame else 0.30
+        m2 = m2_base * anchor_quality + (1.0 - anchor_quality) * 0.30
+
+        # m3 (motion continuity) — flow field is needed AND it has to come from
+        # a real source. Without flow, mock generator has no chance.
+        m3_base = 0.80 if has_flow else 0.25
+        m3 = m3_base * anchor_quality + (1.0 - anchor_quality) * 0.25
+
+        # m4 (framing) — character references discipline framing; the anchor
+        # quality is less load-bearing here than m2/m3.
+        m4 = (0.70 if has_refs else 0.40) * (0.7 + 0.3 * anchor_quality)
+
         return {
-            "m1": 0.75,                                            # text-conditioned ⇒ good prior
-            "m2": 0.75 if has_first_frame else 0.50,               # neighbour anchor helps
-            "m3": 0.70 if has_flow else 0.45,                      # explicit flow condition helps
-            "m4": 0.50,                                            # no saliency until v0.2
-            "m5": m5_beat_sync(cut_time_s, beats) if beats else 0.50,
+            "m1": 0.75,                                  # text-conditioned ⇒ good prior
+            "m2": float(round(m2, 4)),
+            "m3": float(round(m3, 4)),
+            "m4": float(round(m4, 4)),
+            "m5": m5_beat_sync(cut_time_s, list(beats)) if beats else 0.50,
             "m6": 0.50,
         }
 

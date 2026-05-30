@@ -157,8 +157,184 @@ class MetricTool(BaseTool):
         }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Arc-level judge (CSA framework, R16) — see docs/CSA_FRAMEWORK.md §4
+#
+# Operates on the *whole* EditingScript, not on individual segments. This
+# is the minimum implementation of the Arc judge slot — a heuristic that
+# is good enough to:
+#   (a) produce different scores for the same script under a permutation
+#       (i.e. C4 falsification holds; ordering matters);
+#   (b) compose with the existing m1..m6 (which judge at the Cut scale);
+#   (c) be replaceable by a long-context MLLM (Qwen3-VL / InternVL3) when
+#       real backends arrive.
+# ─────────────────────────────────────────────────────────────────────
+
+
+def arc_coherence(script, arc_context=None) -> dict[str, float]:
+    """Compute Arc-level (whole-script) coherence sub-scores.
+
+    Returns a dict with these keys (each in [0, 1]):
+
+    * ``arc_progression``     — does the sequence of validator scores trace
+                                 the intended arc shape (rise / climax /
+                                 resolution)? Falls back to checking that
+                                 scores aren't a flat line if no
+                                 intended_arc is given.
+    * ``arc_energy_match``    — does the script's m6 trajectory match the
+                                 intended ``energy_curve``? Defaults to a
+                                 trivial 0.5 if no curve given.
+    * ``arc_character_cover`` — fraction of expected_characters that
+                                 actually appear in any retrieval segment.
+                                 1.0 if no expectation set.
+    * ``arc_continuity``      — fraction of adjacent segments that satisfy
+                                 m2 (segment consistency) above a threshold.
+                                 This is the only sub-score that's
+                                 *order-sensitive* — it's the C4
+                                 falsification handle.
+    * ``arc_overall``         — weighted mean of the four above.
+
+    Reference: docs/CSA_FRAMEWORK.md §1 challenge C4. This is a heuristic
+    placeholder for what a real long-context MLLM judge will eventually
+    do. The heuristic is deliberately rule-based so it cannot drift with
+    LLM stochasticity; it produces stable numbers for tests.
+    """
+    from ..types import ArcContext, EditingScript
+
+    if not isinstance(script, EditingScript) or not script.segments:
+        return {"arc_progression": 0.5, "arc_energy_match": 0.5,
+                "arc_character_cover": 1.0, "arc_continuity": 0.5,
+                "arc_overall": 0.5}
+
+    segs = script.segments
+    n = len(segs)
+
+    # ── arc_progression ──────────────────────────────────────────────
+    vals = [float((s.metric_scores or {}).get("validator", 5.0)) for s in segs]
+    intended = (arc_context.intended_arc if arc_context else []) or []
+    if intended:
+        # Map intended arc names to expected normalized energy levels.
+        weights = {
+            "setup": 0.4, "rising": 0.6, "climax": 0.95,
+            "falling": 0.6, "resolution": 0.5,
+            "build": 0.5, "drop": 0.95, "outro": 0.4,
+            "verse": 0.5, "chorus": 0.9, "intro": 0.4, "bridge": 0.65,
+        }
+        # Sample the expected trajectory at len(segs) points.
+        if len(intended) == 1:
+            target = [weights.get(intended[0], 0.5)] * n
+        else:
+            ts_int = [i / max(1, len(intended) - 1) for i in range(len(intended))]
+            ts_seg = [i / max(1, n - 1) for i in range(n)]
+            target: list[float] = []
+            for t in ts_seg:
+                # Piecewise linear over the intended arc.
+                k = 0
+                while k + 1 < len(ts_int) and ts_int[k + 1] < t:
+                    k += 1
+                if k + 1 >= len(ts_int):
+                    target.append(weights.get(intended[-1], 0.5))
+                else:
+                    a, b = weights.get(intended[k], 0.5), weights.get(intended[k + 1], 0.5)
+                    frac = (t - ts_int[k]) / max(1e-9, ts_int[k + 1] - ts_int[k])
+                    target.append(a * (1 - frac) + b * frac)
+        # Normalise validator scores to [0, 1] (they're on a 1..10 scale).
+        observed = [max(0.0, min(1.0, (v - 1.0) / 9.0)) for v in vals]
+        diffs = [abs(o - t) for o, t in zip(observed, target)]
+        arc_progression = 1.0 - sum(diffs) / max(1, len(diffs))
+    else:
+        # No intended arc — fall back to "is the validator trajectory not
+        # constant?". A flat trajectory means the script makes no shape.
+        if n <= 1:
+            arc_progression = 0.5
+        else:
+            mean = sum(vals) / n
+            var = sum((v - mean) ** 2 for v in vals) / n
+            # Map variance ∈ [0, 16] (validator ∈ [1,10] so max var ≈ 20) to [0, 1].
+            arc_progression = float(max(0.0, min(1.0, var / 8.0)))
+
+    # ── arc_energy_match ──────────────────────────────────────────────
+    if arc_context and arc_context.energy_curve:
+        # Compare segment m6 (energy correspondence with music) to the
+        # piecewise-linear energy curve at each segment's normalised time.
+        m6s = [float((s.metric_scores or {}).get("m6", 0.5)) for s in segs]
+        diffs2 = []
+        for i, m6 in enumerate(m6s):
+            ts = i / max(1, n - 1)
+            target_e = _piecewise_interp(arc_context.energy_curve, ts)
+            diffs2.append(abs(m6 - target_e))
+        arc_energy_match = 1.0 - sum(diffs2) / max(1, len(diffs2))
+    else:
+        arc_energy_match = 0.5
+
+    # ── arc_character_cover ──────────────────────────────────────────
+    expected = set(arc_context.expected_characters) if arc_context else set()
+    if not expected:
+        arc_character_cover = 1.0
+    else:
+        # We only see character_ids on retrieval segments (mock generation
+        # doesn't claim a character). A real-backend version would parse
+        # generated frames.
+        seen: set[str] = set()
+        for s in segs:
+            if s.source == "retrieval":
+                # EditingSegment doesn't carry character_ids directly; the
+                # heuristic uses shot_ids as a proxy for distinct identities.
+                # The real version would look up Shot.character_ids in memory.
+                for sid in s.shot_ids:
+                    seen.add(sid)
+        # Tolerant overlap: any expected character whose id substring shows
+        # up in any seen shot_id counts as covered.
+        covered = sum(
+            1 for c in expected
+            if any(c in sid for sid in seen)
+        )
+        arc_character_cover = covered / max(1, len(expected))
+
+    # ── arc_continuity (order-sensitive — C4 falsification handle) ────
+    if n <= 1:
+        arc_continuity = 1.0
+    else:
+        m2s = [float((s.metric_scores or {}).get("m2", 0.5)) for s in segs[1:]]
+        # Threshold-fraction: how many adjacencies have m2 > 0.5?
+        arc_continuity = sum(1 for x in m2s if x > 0.5) / len(m2s)
+
+    # ── arc_overall ──────────────────────────────────────────────────
+    overall = 0.35 * arc_progression \
+              + 0.20 * arc_energy_match \
+              + 0.15 * arc_character_cover \
+              + 0.30 * arc_continuity
+
+    return {
+        "arc_progression": float(max(0.0, min(1.0, arc_progression))),
+        "arc_energy_match": float(max(0.0, min(1.0, arc_energy_match))),
+        "arc_character_cover": float(max(0.0, min(1.0, arc_character_cover))),
+        "arc_continuity": float(max(0.0, min(1.0, arc_continuity))),
+        "arc_overall": float(max(0.0, min(1.0, overall))),
+    }
+
+
+def _piecewise_interp(curve: list[tuple[float, float]], t: float) -> float:
+    """Piecewise-linear interpolation of a (time ∈ [0,1], energy) curve at t."""
+    if not curve:
+        return 0.5
+    pts = sorted(curve, key=lambda x: x[0])
+    if t <= pts[0][0]:
+        return pts[0][1]
+    if t >= pts[-1][0]:
+        return pts[-1][1]
+    for i in range(len(pts) - 1):
+        x0, y0 = pts[i]
+        x1, y1 = pts[i + 1]
+        if x0 <= t <= x1:
+            frac = (t - x0) / max(1e-9, x1 - x0)
+            return y0 * (1 - frac) + y1 * frac
+    return pts[-1][1]
+
+
 __all__ = [
     "MetricTool",
     "m1_prompt_relevance", "m2_segment_consistency", "m3_motion_continuity",
     "m4_framing", "m5_beat_sync", "m6_energy_correspondence",
+    "arc_coherence",
 ]

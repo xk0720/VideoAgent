@@ -228,7 +228,17 @@ class EditorAgent(BaseAgent):
                               metric_scores={"validator": 1.0}, accepted_by_validator=False)
 
     def _derive_neighbor_context(self, seg: EditingSegment, memory: NarrativeMemory) -> dict[str, Any]:
-        # v0.1: just return whatever ShotFeatures the last retrieved shot exposes.
+        """Build the neighbor context passed into the next segment's tool calls.
+
+        ``previous_source`` is the v0.2 honesty fix referenced in
+        ``docs/BASELINE_v0_2.md``. It lets GenerationTool report metric_scores
+        that *honestly* reflect what anchor it had to work with:
+            * "retrieval" → genuine source-video frame is the anchor (best)
+            * "generation" → anchor is itself synthesised (degraded)
+            * None → no anchor at all (worst)
+        Without this, mock-pipeline scores for G after R look identical to
+        scores for G after G, which makes the hybrid claim untestable.
+        """
         if seg.source == "retrieval" and seg.shot_ids:
             shot = memory.shots.get(seg.shot_ids[-1])
             if shot and shot.features is not None:
@@ -236,8 +246,19 @@ class EditorAgent(BaseAgent):
                     "end_frame": None,                        # v0.2 will store an actual ndarray
                     "end_flow": shot.features.end_flow,
                     "character_anchors": shot.character_ids,
+                    "previous_source": "retrieval",
                 }
-        return {"end_frame": None, "end_flow": None, "character_anchors": []}
+        if seg.source == "generation":
+            # Generated segment can still propagate *something* — the mock
+            # backend doesn't render real flow but a downstream consumer can
+            # at least know the chain is "G after G".
+            return {
+                "end_frame": None, "end_flow": None,
+                "character_anchors": [],
+                "previous_source": "generation",
+            }
+        return {"end_frame": None, "end_flow": None, "character_anchors": [],
+                "previous_source": None}
 
 
 __all__ = ["EditorAgent"]
