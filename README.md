@@ -11,12 +11,16 @@ The repository is organised around the design doc; this README only tells you ho
 
 | Want to ... | Open |
 |---|---|
-| just run it | this README, §Quickstart |
+| just run it (laptop smoke test) | this README, §Quickstart |
+| **run it on a server with real footage (CutClaw-style data layout + batch manifest)** | [`docs/SERVER_RUN.md`](./docs/SERVER_RUN.md) ⭐ |
 | understand the data flow & the agentic-evolution / self-loop-evaluation design | [`docs/SYSTEM_GUIDE.md`](./docs/SYSTEM_GUIDE.md) ⭐ |
 | see how every section of the design doc maps to source files | [`docs/architecture_tour.md`](./docs/architecture_tour.md) |
 | know which open-source library backs which module | [`docs/dependencies.md`](./docs/dependencies.md) |
 | see the design decisions we made (and *didn't* make) | [`docs/decisions.md`](./docs/decisions.md) |
 | read the original blueprint | [`LongVideoEditAgent_DESIGN.md`](./LongVideoEditAgent_DESIGN.md) |
+| **see an honest accounting of what 14 rounds actually delivered** | [`docs/CRITICAL_REVIEW.md`](./docs/CRITICAL_REVIEW.md) ⭐ |
+| **the differentiated framework: Cut · Score · Arc** | [`docs/CSA_FRAMEWORK.md`](./docs/CSA_FRAMEWORK.md) ⭐ |
+| see the v0.2 baseline measurement plan (hybrid claim probe) | [`docs/BASELINE_v0_2.md`](./docs/BASELINE_v0_2.md) |
 
 ---
 

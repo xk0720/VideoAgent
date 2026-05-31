@@ -89,6 +89,35 @@ a different filesystem than the user-chosen output path, so `Path.replace` raise
 
 ---
 
+## 2026 (B-phase) — measurement decisions
+
+### D-021 · Mock `_estimate_metrics` honesty fix — `previous_source` propagation
+**Why:** A pre-condition for the B (`docs/BASELINE_v0_2.md`) baseline experiment
+to mean anything. Up to v0.2 the mock `GenerationTool._estimate_metrics` returned
+narrow, flat values (m2/m3 spread 0.25, m4 hard 0.50) regardless of what the
+previous segment was. That made R→G and G→G boundaries indistinguishable in
+metric_scores — which collapses the whole hybrid claim down to "did we sometimes
+pick generate?" and makes B's verdict structurally unable to distinguish hybrid
+from alternation.
+**What changed:** `EditorAgent._derive_neighbor_context` now also writes the
+previous segment's `source` into `neighbor_context["previous_source"]`. The
+`GenerationTool._estimate_metrics` reads it and multiplies m2/m3 by an
+``anchor_quality`` factor (1.0 if prev was retrieval, 0.70 if prev was
+generation, 0.50 if none). m4 also picks up the so-far-unused `has_refs` signal
+the run() method had been computing.
+**Trade-off:** the absolute numbers are still mock — they're not perceptual
+ground truth. But they now *respond to the architectural distinction* the
+design doc claims matters, which is the minimum the baseline experiment needs
+to be a real probe rather than an exercise. The real test is still wiring a
+real video-gen backend (OmniWeaving / HunyuanVideo); this fix is the smallest
+intervention that lets B yield an interpretable answer before that happens.
+**Files touched:** `src/longvideoagent/agents/editor.py`,
+`src/longvideoagent/tools/generation_tool.py`,
+`tests/unit/test_generation_metrics.py` (added 2 new tests pinning the
+ordering R→G > G→G > none→G on m2/m3, and the refs→m4 lift).
+
+---
+
 ## 2026-05-16 (later) — v0.2 self-loop evolution decisions
 
 ### D-015 · 6 agents, not 5 — CriticAgent is post-hoc and isolated

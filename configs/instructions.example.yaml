@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────────
+# LongVideoEditAgent — manifest of editing samples (R19).
+#
+# Inspired by CutClaw's `resource/{video,audio,subtitle}` layout
+# (https://github.com/GVCLab/CutClaw), but extended with the CSA framework's
+# Arc-level context (`intended_arc`, `expected_characters`, `energy_curve`)
+# from `docs/CSA_FRAMEWORK.md`, and with a hybrid retrieve+generation knob
+# (`generation.*`) because we are *not* retrieval-only.
+#
+# Each item in `samples:` produces exactly one output mp4 + one JSONL
+# trajectory + one per-sample report.json.
+#
+# Run with:
+#     python scripts/server_run.py --manifest configs/instructions.example.yaml
+#     python scripts/server_run.py --manifest configs/instructions.example.yaml --only dark_knight_demo
+#
+# All paths are relative to the repo root unless absolute.
+# Anything missing falls back to `configs/default.yaml` defaults.
+# ─────────────────────────────────────────────────────────────────────
+
+# (Optional) global defaults applied to every sample unless the sample overrides.
+defaults:
+  cache_root: "./.cache"
+  output_root: "./outputs/server_run"
+  log_level: "INFO"
+  run_critic: true
+  self_consistency_k: 1
+  # Dotted overrides forwarded into pydantic Config.
+  # Example: lower the generation fallback threshold globally.
+  # config_overrides:
+  #   compose.generation.fallback_threshold: 0.3
+  #   plan.max_iterations: 3
+
+samples:
+
+  # ── Example 1: retrieval-only montage ────────────────────────────
+  - name: tiny_clip_smoke
+    description: |
+      Smoke-test sample that runs entirely on the auto-generated fixture
+      video. Use this to verify a server install works end-to-end before
+      pointing the runner at real footage.
+    sources:
+      - tests/fixtures/tiny_clip.mp4
+    audio: null                       # No music → MusicProfile defaults to bpm=120 mock.
+    subtitle: null
+    instruction: "Make a 4-second high-energy montage."
+    arc:                              # CSA Arc context (R16). All fields optional.
+      intended_arc: [rising, climax, resolution]
+      expected_characters: []
+      energy_curve: [[0.0, 0.3], [0.6, 0.9], [1.0, 0.5]]
+    generation:
+      enabled: false                  # mock GenerationTool stays off → R-only regime
+      fallback_threshold: -1.0
+    output:
+      mp4: outputs/server_run/tiny_clip_smoke.mp4
+      trajectory: outputs/server_run/tiny_clip_smoke.trajectory.jsonl
+      report: outputs/server_run/tiny_clip_smoke.report.json
+
+  # ── Example 2: hybrid retrieve+gen, CutClaw-style movie+music ─────
+  - name: dark_knight_demo
+    description: |
+      Demonstrates the CutClaw-style (movie, song, instruction) triple but
+      with our hybrid retrieve+generation pathway. Drop the actual
+      `The_Dark_Knight.mkv` into data/videos/ on the server before running.
+    sources:
+      - data/videos/The_Dark_Knight.mkv
+    audio: data/audio/Way_Down_We_Go.mp3
+    subtitle: null
+    instruction: "Joker's crazy that wants to change the world."
+    arc:
+      intended_arc: [setup, rising, climax, falling, resolution]
+      expected_characters: [joker, batman]
+      energy_curve: [[0.0, 0.3], [0.5, 0.85], [1.0, 0.55]]
+    generation:
+      enabled: true                   # OmniWeaving wrapper must be configured.
+      fallback_threshold: 0.4         # default; override per sample if you must
+    config_overrides:
+      compose.editor_model: "claude-sonnet-4-5"
+      compose.validator_threshold: 6.0
+      plan.models.screenwriter: "deepseek-v3"
+      preprocess.parallel.num_workers: 8
+    output:
+      mp4: outputs/server_run/dark_knight_demo.mp4
+      trajectory: outputs/server_run/dark_knight_demo.trajectory.jsonl
+      report: outputs/server_run/dark_knight_demo.report.json
+
+  # ── Example 3: minimal sample (most fields fall back to defaults) ─
+  - name: minimal
+    sources: [data/videos/example.mp4]
+    instruction: "Make a 10-second cinematic establishing sequence."
+    # All other fields default. The runner will pick output paths
+    # under defaults.output_root and write a JSON report next to the mp4.

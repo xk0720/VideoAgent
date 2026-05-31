@@ -238,6 +238,80 @@ class EditingScript:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# CSA framework primitives (R16) — see docs/CSA_FRAMEWORK.md
+#
+# These two dataclasses are the minimum representation needed to talk
+# about editing decisions at the Cut and Arc *scales* — not the segment
+# scale that the v0.2 ``SegmentGuidance`` / ``EditingSegment`` operate
+# at. ``SegmentGuidance`` answers "what should this segment do"; the
+# new primitives answer:
+#     CutEvent     — "what happens at this single cut point"
+#     ArcContext   — "what is the whole script doing as a story"
+# The Score scale doesn't need a new dataclass — it lives on
+# ``MusicProfile.beats`` already and is operated on by the existing
+# ``MetricTool.m5_beat_sync`` plus the new ``tools/metric_tool.py::
+# arc_coherence(...)`` that uses ``ArcContext`` to compute a whole-
+# script-level quality score.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class CutEvent:
+    """A single cut on the editing timeline — the **local** decision primitive.
+
+    Different from ``EditingSegment``: a CutEvent records *what's chosen at this
+    cut*, not *what the resulting segment contains*. The same EditingSegment
+    can be the product of multiple CutEvents (e.g. an inner re-cut), and a
+    CutEvent doesn't need a chosen candidate yet — it can be in the "decided
+    not yet implemented" state.
+
+    Fields are deliberately small. The candidate field is a Literal that
+    includes ``"no_op"`` — the Arc judge needs to see *gaps* in the timeline
+    when neither retrieval nor generation could satisfy intent.
+    """
+
+    cut_idx: int
+    at_time_s: float                              # absolute timeline time
+    intent: str = ""                              # short structured-text intent (placeholder for C3)
+    candidate_source: Literal["retrieval", "generation", "no_op"] = "retrieval"
+    candidate_id: Optional[str] = None            # shot_id or gen_video_path
+    realised_duration: float = 0.0
+    # Cut-level metric snapshot — same family as m1..m6 but recorded at
+    # cut-time rather than segment-time.
+    local_scores: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class ArcContext:
+    """The **whole-script** narrative shape — the Arc scale's primary representation.
+
+    This is *not* a complete representation of editorial intent (challenge C3
+    in ``docs/CSA_FRAMEWORK.md`` is explicit that nobody has solved that).
+    What it is: a named slot, with enough structure to compute a
+    non-degenerate Arc-level coherence score, that replaces the v0.2 habit of
+    representing whole-script intent as the single string ``user_prompt``.
+
+    The fields are minimal on purpose. They are sufficient to write an
+    initial ``arc_coherence`` that fails on shuffled scripts — see
+    ``tests/unit/test_arc_coherence.py``.
+    """
+
+    user_prompt: str
+    # An ordered list of intended *narrative beats* — not music beats. e.g.
+    # ["setup", "rising", "climax", "falling", "resolution"] for a montage,
+    # or just ["build", "drop"] for a chorus highlight. Empty → "no shape claimed".
+    intended_arc: list[str] = field(default_factory=list)
+    # Tonal trajectory hints — a coarse mapping of the script's intended
+    # emotional energy through time. Each entry is (relative_time ∈ [0,1],
+    # energy ∈ [0,1]). If empty, Arc judge falls back to checking m6 energy
+    # correspondence with music.
+    energy_curve: list[tuple[float, float]] = field(default_factory=list)
+    # Characters that should appear (referenced by Character.character_id).
+    # Used by Arc judge to flag missing protagonists.
+    expected_characters: list[str] = field(default_factory=list)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Agent trajectory log
 # ─────────────────────────────────────────────────────────────────────
 
