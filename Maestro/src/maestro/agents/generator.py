@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..models.video_gen import BaseVideoGenClient, MockVideoGenClient
-from ..types import AssetMemory, CandidateClip, Checklist, ShotSpec
+from ..types import CandidateClip, Checklist, ShotSpec
 from .base import BaseAgent
 
 

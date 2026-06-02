@@ -1,10 +1,6 @@
 from maestro.agents.director import DirectorAgent
 from maestro.agents.plan_validator import PlanValidatorAgent
-from maestro.planning.event_graph import (
-    build_event_graph,
-    fill_relations,
-    validate_event_graph,
-)
+from maestro.planning.event_graph import build_event_graph, validate_event_graph
 from maestro.types import (
     AssetMemory,
     EventEdge,

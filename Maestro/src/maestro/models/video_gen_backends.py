@@ -36,6 +36,34 @@ from ..physics.control_render import ControlSpec, load_control_spec
 from .video_gen import BaseVideoGenClient
 
 
+def _compose_prompt(prompt: str, spec: Optional[ControlSpec]) -> str:
+    """Fold physics interaction hints into the text prompt."""
+    if spec and spec.interaction_hints:
+        return prompt + " | physics: " + "; ".join(spec.interaction_hints)
+    return prompt
+
+
+def build_conditioning(
+    prompt: str,
+    control_signal: Optional[Path],
+    first_frame: Optional[Path],
+    reference_images: Optional[list[Path]],
+) -> dict:
+    """Shared C1/C2/E1 wiring point for all real backends.
+
+    control_signal → physics ControlSpec (C1); first_frame → I2V anchor (C2);
+    reference_images → identity/style anchors (E1). Each backend maps this bundle
+    onto its own conditioning API.
+    """
+    spec = load_control_spec(control_signal)
+    return {
+        "prompt": _compose_prompt(prompt, spec),
+        "control": spec,
+        "first_frame": first_frame,
+        "reference_images": reference_images or [],
+    }
+
+
 # ─────────────────────────────────────────────────────────────
 # OmniWeaving — preferred local backend (multi-condition native)
 # ─────────────────────────────────────────────────────────────
@@ -77,21 +105,14 @@ class OmniWeavingClient(BaseVideoGenClient):
         seed: int = 0,
     ) -> Path:
         self._ensure_loaded()
-        spec: Optional[ControlSpec] = load_control_spec(control_signal)  # C1 bridge
-        # TODO(v0.2): map spec.tracks_2d → motion/drag control; first_frame → I2V
-        # anchor; reference_images → identity anchors; spec.interaction_hints →
-        # appended physics prompt. Then run the pipeline and write `out_path`.
-        #   frames = self._pipe(prompt=self._compose(prompt, spec), num_frames=...,
-        #                       image=first_frame, ref_images=reference_images,
-        #                       control=self._to_control_tensor(spec), seed=seed)
+        inputs = build_conditioning(prompt, control_signal, first_frame, reference_images)
+        # TODO(v0.2): run the pipeline with `inputs` and write `out_path`, e.g.
+        #   frames = self._pipe(prompt=inputs["prompt"], image=inputs["first_frame"],
+        #                       ref_images=inputs["reference_images"],
+        #                       control=inputs["control"], num_frames=int(duration*fps),
+        #                       seed=seed)
         #   write_video(out_path, frames, fps)
-        raise NotImplementedError
-
-    @staticmethod
-    def _compose(prompt: str, spec: Optional[ControlSpec]) -> str:
-        if spec and spec.interaction_hints:
-            return prompt + " | physics: " + "; ".join(spec.interaction_hints)
-        return prompt
+        raise NotImplementedError(f"OmniWeaving generate() not wired; inputs={list(inputs)}")
 
     def supported_conditions(self) -> set[str]:
         return {"control_signal", "first_frame", "reference_images"}
@@ -121,12 +142,12 @@ class WanClient(BaseVideoGenClient):
         reference_images: Optional[list[Path]] = None,
         seed: int = 0,
     ) -> Path:
-        spec = load_control_spec(control_signal)  # noqa: F841  (C1 bridge; use in TODO)
-        # TODO(v0.2): load Wan pipeline; use first_frame as I2V anchor and spec as
-        # motion control; write `out_path`.
+        inputs = build_conditioning(prompt, control_signal, first_frame, reference_images)
+        # TODO(v0.2): load Wan pipeline; use inputs["first_frame"] as I2V anchor and
+        # inputs["control"] as motion control; write `out_path`.
         raise RuntimeError(
             "WanClient not wired yet. Set models.video_gen.weights_path (or "
-            "$WAN_WEIGHTS) and implement generate()."
+            f"$WAN_WEIGHTS) and implement generate(); inputs={list(inputs)}"
         )
 
     def supported_conditions(self) -> set[str]:
@@ -160,10 +181,10 @@ class VeoApiClient(BaseVideoGenClient):
     ) -> Path:
         if not self.api_key:
             raise RuntimeError("VeoApiClient needs $VEO_API_KEY (or config api_key).")
-        spec = load_control_spec(control_signal)
-        prompt = OmniWeavingClient._compose(prompt, spec)  # fold physics into prompt
-        # TODO(v0.2): call the hosted endpoint, poll, download result to out_path.
-        raise NotImplementedError
+        inputs = build_conditioning(prompt, control_signal, first_frame, reference_images)
+        # TODO(v0.2): call the hosted endpoint with inputs["prompt"] (physics folded
+        # in) + inputs["first_frame"], poll, download the result to out_path.
+        raise NotImplementedError(f"Veo generate() not wired; inputs={list(inputs)}")
 
     def supported_conditions(self) -> set[str]:
         return {"first_frame"}  # control_signal only via prompt hint

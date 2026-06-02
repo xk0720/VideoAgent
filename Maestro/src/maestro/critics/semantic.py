@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..models.mllm import BaseMLLMClient, MockMLLMClient
-from ..types import AssetMemory, CandidateClip, ChecklistItem, ShotSpec
+from ..types import ChecklistItem
 from .base import BaseCritic
 
 

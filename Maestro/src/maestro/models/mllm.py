@@ -7,9 +7,8 @@ improvement. Real VLM (Qwen-VL / GPT-4o) plugs in behind the same interface.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
-from ..types import CandidateClip, PhysFailureMode, PhysicsVerdict, ShotSpec
+from ..types import CandidateClip, PhysicsVerdict, ShotSpec
 from ..physics.failure_modes import detect_expected_modes, suggest_intervention
 
 
