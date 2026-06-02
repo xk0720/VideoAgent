@@ -1,10 +1,12 @@
 name: tests
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Temporarily disabled — tests are run on the server instead of CI.
+  # To re-enable, uncomment the push / pull_request triggers below.
   workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
 
 jobs:
   pytest:
