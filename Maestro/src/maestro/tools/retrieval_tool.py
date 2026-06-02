@@ -22,6 +22,8 @@ from .base import BaseTool
 
 class RetrievalTool(BaseTool):
     name = "retrieve_assets"
+    category = "retrieval"
+    description = "Look up identity / style / source-shot references from AssetMemory (E1)."
 
     def __init__(self, asset_memory: AssetMemory):
         self.memory = asset_memory

@@ -18,6 +18,9 @@ from ..types import EditingScript
 
 class AssemblyTool(BaseTool):
     name = "assemble"
+    category = "editing"
+    description = "Concatenate clips into a single mp4 via ffmpeg, optionally with music."
+    side_effects = True
 
     def run(
         self,

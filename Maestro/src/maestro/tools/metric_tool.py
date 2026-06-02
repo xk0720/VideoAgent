@@ -17,6 +17,8 @@ from ..types import AssetMemory, CandidateClip, PhysFailureMode, ShotSpec
 
 class MetricTool(BaseTool):
     name = "compute_metrics"
+    category = "metric"
+    description = "Score a CandidateClip on m1/m2/p1/p2/id1/m5/aesthetic and weighted_total."
 
     def __init__(self, weights: Optional[dict[str, float]] = None):
         # p2_sketch_consistency (C6) is the closed-loop check: did the generator

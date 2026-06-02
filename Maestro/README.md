@@ -114,26 +114,36 @@ Maestro/
 
 ---
 
-## Quickstart (v0.1 — CPU, no keys)
+## Quickstart (v0.2.2 — CPU, no keys)
 
 ```bash
 cd Maestro
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt           # numpy, pyyaml, pytest
+pip install -e '.[server]'                # core + fastapi/uvicorn/pydantic
+# (or `pip install -r requirements.txt` for the same set)
 
-# smoke test
+# unit + integration tests
 pytest -q
 
-# run the pipeline end-to-end (mock models)
-python scripts/run_pipeline.py \
+# single-shot generation (mock models, CPU)
+maestro run-once \
   --prompt "a ball is thrown and bounces; a person runs through a city" \
-  --music data/track.mp3 \
-  --image data/hero.png \
-  --output outputs/demo.mp4
+  --music data/track.mp3 --image data/hero.png \
+  -o outputs/demo.mp4
+
+# operator's healthcheck — verify the box is wired right
+maestro smoke
+
+# bring up the FastAPI server (UniVA-compatible /health)
+maestro serve --host 0.0.0.0 --port 8000
+curl http://localhost:8000/health
 ```
 
-CLI flags: `--prompt` (required), `--source` (0+ source videos), `--image` (0+
-reference images), `--music`, `--output`, `--config`.
+The `maestro` command is registered by `pyproject.toml`'s `[project.scripts]`,
+so `pip install -e .` is enough to get it on PATH — no `PYTHONPATH` gymnastics.
+
+CLI flags (`run-once`): `--prompt` (required), `--source` (0+ source videos),
+`--image` (0+ reference images), `--music`, `--output`, `--config`.
 
 ### Outputs
 | File | Meaning |
@@ -147,6 +157,80 @@ reference images), `--music`, `--output`, `--config`.
 v0.1 mocks every heavy model so the *orchestration* is testable on CPU. The loop,
 metrics, physics verdicts, planning validation, report and logs are all real; only
 the pixel-producing step is a stub. To get real video, do v0.2 below.
+
+---
+
+## Tool library (UniVA-inspired, v0.2.2)
+
+Every tool self-describes via `BaseTool.spec` and registers with the in-process
+`ToolRegistry` (`maestro.tools.default_registry()`). Borrowed *pattern* from
+UniVA's MCP tool servers (arXiv:2511.08521) without the wire protocol.
+
+| Category | Tools | Purpose |
+|---|---|---|
+| **analysis**   | `video_probe`, `frame_extract`, `caption` | inspect / extract / describe assets before generation |
+| **generation** | `audio_gen` (+ neural T2V via `models/video_gen_backends.py`) | synthesize new media |
+| **editing**    | `assemble`, `video_concat`, `image_ops` | ffmpeg/PIL deterministic transforms |
+| **tracking**   | `detect_objects` | object/identity bboxes for grounding |
+| **metric**     | `compute_metrics` | the C3 quantitative scorer |
+| **physics**    | (sketch + sim wrappers; see `physics/`) | the C1 differentiation core |
+| **retrieval**  | `retrieve_assets` (constructed per run) | E1 grounding lookup |
+
+Every tool degrades gracefully when its optional system dep (ffmpeg, PIL) is
+absent — sandbox-runs always produce valid `Path` outputs so the higher loop
+keeps converging.
+
+### Plan ↔ Act
+Maestro's planning agents (Screenwriter / Director / PhysicsPlanner / Refiner)
+are domain-specialized **plan** agents. `ActAgent` is the generic **executor**
+mirroring UniVA's Act side: it takes a list of `ToolCall(name, args, kwargs)`,
+routes each through the registry, and writes a `tool_call` event into the
+trajectory. Plan→Act is now a uniform, observable handoff:
+
+```python
+from maestro.agents import ActAgent, ToolCall
+plan = [
+    ToolCall("video_probe", args=["src.mp4"]),
+    ToolCall("caption", args=["src.mp4"]),
+    ToolCall("detect_objects", kwargs={"media": "src.mp4", "query": "hero ball"}),
+]
+results = ActAgent().run(plan)   # each call logged with category + status
+```
+
+---
+
+## Server (production-ready shim)
+
+Same `/health` shape as UniVA's `univa_server.py` so existing orchestrators
+(k8s liveness, docker-compose healthchecks) just work.
+
+```bash
+maestro serve --host 0.0.0.0 --port 8000
+# or: uvicorn maestro.server:app --host 0.0.0.0 --port 8000
+```
+
+| Endpoint | Method | Body / Purpose |
+|---|---|---|
+| `/health`   | GET  | `{status, service, version, n_tools}` — liveness probe |
+| `/tools`    | GET  | machine-readable manifest of every registered tool's `spec` |
+| `/generate` | POST | `{prompt, source_videos?, images?, music?}` → enqueues a job, returns `job_id` |
+| `/jobs/{id}` | GET  | poll job state (`queued/running/done/error`), output path, report |
+
+Jobs run in an in-process `ThreadPoolExecutor` (v0.2.2; v0.3 swaps for
+Redis/Celery — the interface in `server.JobStore` is stable for the upgrade).
+
+### Docker (CPU-friendly)
+
+```bash
+docker build -t maestro:0.2.2 .
+docker run --rm -p 8000:8000 maestro:0.2.2
+curl http://localhost:8000/health
+```
+
+The image is `python:3.11-slim + ffmpeg` (no GPU dep). `HEALTHCHECK` hits
+`/health` so k8s & docker-compose probe out-of-the-box. v0.3 GPU image: swap
+the base to `nvidia/cuda:12.4.0-runtime-ubuntu22.04` and add torch in a
+separate stage — application contract above does NOT change.
 
 ---
 
@@ -297,7 +381,26 @@ install `Maestro/requirements.txt`, and run `Maestro/tests`.
   point API keys / GPU are needed (see `.env.example`). The orchestration,
   self-improvement loop, physics grounding and evaluation harness do not change
   between v0.1 and v0.2 — only the model wrappers do.
-- **v0.2.1** (current) deepens the agentic paradigm itself, *without* model
+- **v0.2.2** (current) — *UniVA borrowing for breadth*. Same six core innovations
+  preserved; pulls in UniVA-style infrastructure to make the framework
+  server-deployable:
+  - **ToolRegistry** with 7-category taxonomy (analysis / generation / editing /
+    tracking / physics / metric / retrieval). 9 default tools self-register;
+    every tool exposes a `spec` for discovery.
+  - **ActAgent** — UniVA's Act-side dual-agent executor. Takes
+    `list[ToolCall]`, routes through the registry, logs every call.
+  - **FastAPI server** (`maestro serve`) — UniVA-compatible `/health` +
+    `/tools` manifest + `/generate` job submission + `/jobs/{id}` polling.
+    Optional dep — graceful degradation when fastapi is absent.
+  - **CLI** (`maestro {smoke,serve,run-once}`) registered via
+    `pyproject.toml [project.scripts]`. `maestro smoke` is the one-command
+    operator healthcheck.
+  - **Dockerfile** (`python:3.11-slim + ffmpeg`, `HEALTHCHECK` on `/health`)
+    for "upload to server and run" literally.
+  - Tests: 54 passed (CPU, ~0.6s). 8 new tools tests + 4 server tests +
+    ActAgent Plan→Act handoff test.
+
+- **v0.2.1** deepens the agentic paradigm itself, *without* model
   changes:
   - **C5 HSI** — generation-time self-improvement is now hierarchical
     (Tier 0 keyframe edit → Tier 1 physics-sketch replan → Tier 2 spec rewrite
@@ -314,5 +417,7 @@ install `Maestro/requirements.txt`, and run `Maestro/tests`.
     `escalations`, and the trajectory log adds `replan_sketch` / `refine_spec`
     actions when HSI escalates.
 
-  Tests: `pytest -q` → **35 passed** (CPU, ~0.1s). See
-  `tests/unit/test_hsi_and_consistency.py`.
+  Tests: `pytest -q` → **35 passed** (CPU, ~0.1s) at v0.2.1; →
+  **54 passed** (CPU, ~0.6s) at v0.2.2 with the new tool/server tests. See
+  `tests/unit/test_hsi_and_consistency.py` (v0.2.1) and
+  `tests/unit/test_tools_and_act.py` + `test_server.py` (v0.2.2).

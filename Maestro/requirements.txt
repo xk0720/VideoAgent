@@ -1,3 +1,14 @@
-numpy>=1.23
-pyyaml>=6.0
-pytest>=7.0
+# Core (always required; mock pipeline + tests + server run with just these)
+numpy>=1.23,<3.0
+pyyaml>=6.0,<7.0
+
+# Test / dev
+pytest>=7.0,<9.0
+
+# Server (optional — only needed if you run `python -m maestro.cli serve`)
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27,<1.0
+pydantic>=2.5,<3.0
+
+# Image ops (optional — image_ops degrades gracefully if missing)
+pillow>=10.0,<12.0

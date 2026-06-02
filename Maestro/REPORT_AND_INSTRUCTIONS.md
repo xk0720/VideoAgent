@@ -460,7 +460,42 @@ maestro/
 
 ## 第四部分 · 版本演进 (changelog)
 
-### v0.2.1（当前）· paradigm 深化、零模型改动
+### v0.2.2（当前）· UniVA 借鉴：广度补齐 + 服务器化、零创新点改动
+对照 **UniVA — Universal Video Agent**（arXiv:2511.08521 / github.com/univa-agent/univa）的 4 个值得借鉴的 pattern，把"广度"补上但保留 Maestro 的"深度"（C1-C6 完全不动）：
+
+| UniVA pattern | Maestro 对应实现 | 文件 |
+|---|---|---|
+| MCP tool servers + 自描述工具 | `tools/base.py:ToolRegistry/ToolSpec/BaseTool.spec`；in-process，不上 wire 协议 | `src/maestro/tools/base.py` |
+| Analysis / Generation / Editing / Tracking 四类工具 taxonomy | 在 UniVA 的 4 类基础上加 Maestro 自己的 `physics/metric/retrieval` 三类，共 7 类 | 同上 |
+| Plan / Act dual-agent | 新 `ActAgent`：吃 `list[ToolCall]`、走 registry、写 `tool_call` 进 trajectory | `src/maestro/agents/act.py` |
+| `univa_server.py` + `/health` | FastAPI server（`/health` 兼容 UniVA shape + `/tools` 工具清单 + `/generate` 异步 job + `/jobs/{id}`） | `src/maestro/server.py` |
+
+新增的 9 个内置工具：
+
+| 名 | 类别 | 说明 | 真后端 hook |
+|---|---|---|---|
+| `video_probe` | analysis | duration / fps / 分辨率 | ffprobe；缺则启发式 |
+| `frame_extract` | analysis | 抽指定时间戳的帧 | ffmpeg；缺则写 placeholder |
+| `caption` | analysis | 图/视频 → 自然语言描述 | v0.3：Qwen-VL |
+| `detect_objects` | tracking | bbox + label + score | v0.3：Grounding-DINO/SAM |
+| `image_ops` | editing | resize / crop | PIL；缺则文件拷贝 |
+| `video_concat` | editing | 多片段 → 单 mp4 | ffmpeg；缺则 manifest |
+| `assemble` | editing | 高阶拼接 + 音乐 + transition | 既有，加 category 标注 |
+| `audio_gen` | generation | TTS / 音乐 / SFX | v0.3：Bark/MusicGen |
+| `compute_metrics` | metric | metric 套件（m1/m2/p1/p2/id1/m5/aesthetic） | 既有，加 category |
+
+可部署组件：
+- **`maestro` CLI**：`smoke`（健康检查）/ `serve`（启 FastAPI）/ `run-once`（批量生成），由 `pyproject.toml [project.scripts]` 注册到 PATH。
+- **`server.py`**：`/health` + `/tools` + `/generate` + `/jobs/{id}`；jobs 跑在 `ThreadPoolExecutor`（v0.3 → Redis/Celery，interface 稳定）。fastapi 是 optional dep，缺则 server 模块 import 不崩，只是无法 `create_app()`。
+- **`Dockerfile`**：`python:3.11-slim + ffmpeg`；`HEALTHCHECK` 命中 `/health`；k8s/compose 探活开箱即用。GPU 升级路径在文件注释里。
+- **`requirements.txt`** 锁版本 + 拆 optional extras（`server` / `image` / `all`）。
+- **`.env.example`** 扩到 server / sandbox / 真后端 keys 全列。
+
+测试：`pytest -q` → **54 passed**（CPU，~0.6s）。新加 `tests/unit/test_tools_and_act.py`（11 项工具 + Plan→Act handoff）+ `tests/unit/test_server.py`（4 项；fastapi 缺则自动 skip 整文件）。
+
+> 设计取舍：**不**移植 MCP 的 wire 协议（v0.2.2 单 replica in-process 用不上），**不**移植 UniVA 前端（隔离关注点）。只取它的"工具自描述 + 4 类 taxonomy + Plan/Act 抽象 + FastAPI shape"四件套，这是真正让框架"完善 + server 化"的核心。
+
+### v0.2.1 · paradigm 深化、零模型改动
 不改 mock 模型，专门把"自改进 paradigm + 物理 grounding"做深，对应 §4 的 C5/C6：
 
 - **C5 HSI 多档升级**：`pipeline/generate_loop.py` 重写为 Tier 0/1/2/3 escalation；
