@@ -47,6 +47,31 @@ class DirectorAgent(BaseAgent):
         )
         return specs
 
+    def refine_spec(self, spec: ShotSpec, hint: str) -> ShotSpec:
+        """HSI Tier-2: rewrite a ShotSpec at GENERATION time given a critic-derived hint.
+
+        Distinct from `revise()` (plan-time, fixes ungroundable refs). This one is
+        called when local keyframe edits AND physics-sketch replanning both failed
+        to satisfy the Verifier: we widen scope by biasing cinematography toward
+        more stable physics (slower, wider) and append the hint to the prompt. The
+        prompt mutation persists across subsequent revisions.
+        """
+        low_hint = (hint or "").lower()
+        if any(k in low_hint for k in ("slow", "motion", "speed")):
+            spec.cinematography.shot_movement = "static"
+        if any(k in low_hint for k in ("wide", "context", "frame")):
+            spec.cinematography.shot_scale = "long"
+        if hint and "plan-fix:" not in spec.prompt:
+            spec.prompt = f"{spec.prompt} | plan-fix: {hint}"
+        self._log(
+            "refine_spec",
+            {"shot_idx": spec.shot_idx, "hint": hint[:80]},
+            {"new_prompt": spec.prompt[:160],
+             "movement": spec.cinematography.shot_movement,
+             "scale": spec.cinematography.shot_scale},
+        )
+        return spec
+
     def revise(self, spec: ShotSpec, asset_memory: AssetMemory, issues: list[str]) -> ShotSpec:
         """Correct a flagged ShotSpec (FilmAgent Critique-Correct-Verify, 'Correct').
 

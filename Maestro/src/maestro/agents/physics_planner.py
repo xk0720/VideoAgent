@@ -28,3 +28,33 @@ class PhysicsPlannerAgent(BaseAgent):
             },
         )
         return spec
+
+    def replan(
+        self, spec: ShotSpec, cache_dir: Path, fps: int = 8, strictness: float = 0.6
+    ) -> ShotSpec:
+        """HSI Tier-1: rebuild the sketch with tighter physics (slower velocities).
+
+        Higher strictness < 1.0 scales initial velocities down so the simulated
+        trajectory is gentler, which gives the conditional generator an easier
+        target. Returns the same spec with `physics_sketch` swapped in place so
+        callers' references stay valid.
+        """
+        new_sketch = build_physics_sketch(
+            spec, Path(cache_dir), fps=fps, simulator=self.simulator
+        )
+        for ent in new_sketch.entities:
+            vx, vy, vz = ent.init_velocity
+            ent.init_velocity = (vx * strictness, vy * strictness, vz * strictness)
+        # Re-simulate with the dampened velocities so control_signal matches.
+        sig_path = Path(cache_dir) / f"sketch_shot{spec.shot_idx:03d}_strict.json"
+        new_sketch.control_signal = self.simulator.simulate(
+            new_sketch.entities, new_sketch.interactions, spec.duration, fps, sig_path
+        )
+        spec.physics_sketch = new_sketch
+        self._log(
+            "replan_sketch",
+            {"shot_idx": spec.shot_idx, "strictness": strictness},
+            {"control_signal": str(new_sketch.control_signal),
+             "entities": [(e.name, e.init_velocity) for e in new_sketch.entities]},
+        )
+        return spec

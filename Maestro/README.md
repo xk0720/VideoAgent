@@ -21,7 +21,7 @@ event-graph: see `REPORT_AND_INSTRUCTIONS.md`. End-to-end data flow & config: se
 
 ---
 
-## Four core innovations
+## Six core innovations
 
 1. **Physics as a first-class citizen (C1)** — a *sketch layer* (lightweight
    simulation → trajectory/control signal that conditions the generator) plus a
@@ -29,12 +29,32 @@ event-graph: see `REPORT_AND_INSTRUCTIONS.md`. End-to-end data flow & config: se
    collision / fluid / object-permanence / deformation / conservation) to specific
    frames, each mapped to an executable fix.
 2. **Keyframe-level local self-improvement (C2)** — M3's "checklist → local edit →
-   monotonic Verifier → escape hatch", extended from images to video. No
-   VISTA-style whole-segment regeneration.
+   monotonic Verifier → escape hatch", extended from images to video.
 3. **Self-loop = multi-agent review × metric suite (C3)** — a `ReviewBoard` of
    critics drives a quantitative, non-black-box loop.
 4. **Cross-task experience memory (C4)** — a `LessonLibrary` distills failures +
    fixes and injects them into future plans ("gets better the more you use it").
+5. **Hierarchical Self-Improvement (C5, v0.2.1 NEW)** — adaptive *scope*
+   escalation across three tiers. The loop tries the cheapest repair first and
+   only widens scope when needed:
+   - **Tier 0** local keyframe edit (M3-style)
+   - **Tier 1** rebuild the physics sketch with stricter constraints
+     (slower trajectories → easier target for the generator)
+   - **Tier 2** Director rewrites the `ShotSpec` (cinematography + prompt) —
+     bounded VISTA-style replan
+   - **Tier 3** escape hatch (drop the worst remaining defect)
+
+   Verifier's monotonic-improvement rule applies at every tier; we never accept
+   a regression. After any acceptance the next revision restarts at Tier 0 —
+   cost-amortized adaptive scope. **This fills the gap between VISTA (always
+   whole-segment) and M3 (always local patch).**
+6. **Closed-loop Sketch↔Video consistency (C6, v0.2.1 NEW)** — a dedicated
+   `PhysicsConsistencyCritic` cross-checks that the rendered clip actually
+   *followed* the sketch the generator was conditioned on. Divergences surface
+   as a `CONSERVATION`-mode verdict and feed the same self-improvement loop.
+   This makes the physics layer **bidirectional** — sim is no longer just an
+   input but also a verification reference. Reported as a separate
+   `p2_sketch_consistency` metric.
 
 Plus: GEST-style event-graph IR, a plan-level Validate→Correct loop, VISTA
 bidirectional tournament selection, and asset-retrieval grounding (see
@@ -49,9 +69,13 @@ Inputs (prompt + optional video/image/music)
   └─ Stage 0  Understand   → AssetMemory (shots / identities / styles / music)
   └─ Stage 1  Plan          → Screenwriter → Director → PhysicsPlanner
                               + PlanValidator (Validate→Correct loop)  → ShotSpec[]
-  └─ Stage 2  Generate + Self-Improve Loop  (per shot)
-                Generator → Tournament → ReviewBoard(4 critics) → Verifier
-                → Refiner (keyframe-local edit + local regen) ↺  + LessonLibrary
+  └─ Stage 2  Generate + Hierarchical Self-Improve Loop (HSI, per shot)
+                Generator → Tournament → ReviewBoard(5 critics) → Verifier
+                if not accepted →  Tier 0 keyframe edit (Refiner)
+                              →    Tier 1 physics-sketch replan (PhysicsPlanner)
+                              →    Tier 2 spec rewrite (Director.refine_spec)
+                              →    Tier 3 escape hatch  ↺
+                LessonLibrary distills the actually-resolved failure mode
   └─ Stage 3  Assemble (ffmpeg, graceful fallback) → demo.mp4 + report + trajectory
 ```
 
@@ -79,8 +103,8 @@ Maestro/
 │   │   └── video_gen_backends.py    #   OmniWeaving / Wan / Veo skeletons
 │   ├── agents/                      # screenwriter director physics_planner
 │   │                                #   plan_validator generator verifier refiner
-│   ├── critics/                     # semantic physics consistency rhythm
-│   │                                #   + board + tournament
+│   ├── critics/                     # semantic physics physics_consistency (C6)
+│   │                                #   consistency rhythm + board + tournament
 │   ├── tools/                       # metric_tool assembly_tool retrieval_tool
 │   ├── orchestration/state.py       # run state
 │   ├── pipeline/                    # understand plan generate_loop assemble run
@@ -115,9 +139,9 @@ reference images), `--music`, `--output`, `--config`.
 | File | Meaning |
 |---|---|
 | `outputs/demo.mp4` | the assembled video — **v0.1 = placeholder text file** |
-| `outputs/demo.report.json` | per-shot revision count, convergence, score history, final metrics |
-| `outputs/demo.trajectory.jsonl` | every agent decision (state/action/observation) |
-| `outputs/lessons.jsonl` | cross-task experience memory (C4) |
+| `outputs/demo.report.json` | per-shot revision count, convergence, score history, **HSI `tier_used` / `escalations`**, final metrics (incl. `p2_sketch_consistency`) |
+| `outputs/demo.trajectory.jsonl` | every agent decision (state/action/observation) including `replan_sketch` / `refine_spec` when HSI escalates |
+| `outputs/lessons.jsonl` | cross-task experience memory (C4) — keyed on the *actually resolved* failure mode |
 
 ### Why no pixels yet
 v0.1 mocks every heavy model so the *orchestration* is testable on CPU. The loop,
@@ -144,11 +168,18 @@ plan:
 compose:
   fps: 8
   n_candidates: 2       # tournament pool per shot (E3)
-  max_revisions: 5      # self-improvement rounds cap (C2)
-  k_retries: 2          # per-revision retries before escape hatch
+  max_revisions: 5      # self-improvement rounds cap (C2/C5)
+  k_retries: 2          # per-revision retries WITHIN each HSI tier (C5)
 
-metrics:
-  weights: {m1_semantic, m2_temporal, p1_physics, id1_identity, m5_rhythm, aesthetic}
+metrics:                # 7 dims; weighted_total drives Verifier's monotonic check
+  weights:
+    m1_semantic: 0.22
+    m2_temporal: 0.13
+    p1_physics:  0.22   # native physics-failure modes (C1 critic layer)
+    p2_sketch_consistency: 0.10   # closed-loop sketch verify (C6, v0.2.1)
+    id1_identity: 0.13
+    m5_rhythm:   0.10
+    aesthetic:   0.10
 
 physics:
   simulator: mock              # v0.2: mujoco / newton / particle-sim
@@ -156,8 +187,10 @@ physics:
 ```
 
 Tuning intuition: quality↑ → raise `compose.max_revisions` / `n_candidates`
-(slower); physics↑ → raise `metrics.weights.p1_physics`, lower
-`physics.acceptance_severity`. Any value is overridable via `--config your.yaml`.
+(slower); native physics↑ → raise `metrics.weights.p1_physics`, lower
+`physics.acceptance_severity`; sketch-tracking↑ → raise
+`metrics.weights.p2_sketch_consistency`. Any value is overridable via
+`--config your.yaml`.
 
 ---
 
@@ -258,8 +291,28 @@ install `Maestro/requirements.txt`, and run `Maestro/tests`.
 
 ## Status
 
-v0.1 = scaffold, all heavy models mocked, CPU-only. v0.2 swaps mocks for real
-models (OmniWeaving/Wan/Veo · Qwen-VL · DeepSeek/GPT/Claude · MuJoCo/Newton) behind
-the same wrapper ABCs — at that point API keys / GPU are needed (see `.env.example`).
-The orchestration, self-improvement loop, physics grounding and evaluation harness
-do not change between v0.1 and v0.2 — only the model wrappers do.
+- **v0.1** = scaffold, all heavy models mocked, CPU-only.
+- **v0.2** swaps mocks for real models (OmniWeaving/Wan/Veo · Qwen-VL ·
+  DeepSeek/GPT/Claude · MuJoCo/Newton) behind the same wrapper ABCs — at that
+  point API keys / GPU are needed (see `.env.example`). The orchestration,
+  self-improvement loop, physics grounding and evaluation harness do not change
+  between v0.1 and v0.2 — only the model wrappers do.
+- **v0.2.1** (current) deepens the agentic paradigm itself, *without* model
+  changes:
+  - **C5 HSI** — generation-time self-improvement is now hierarchical
+    (Tier 0 keyframe edit → Tier 1 physics-sketch replan → Tier 2 spec rewrite
+    → Tier 3 escape). Verifier's monotonic-improvement rule still applies at
+    every tier.
+  - **C6 Sketch↔Video consistency** — a new `PhysicsConsistencyCritic` flags
+    rendered clips that diverge from the sketch's predicted trajectory; the
+    physics layer is now bidirectional. Surfaces as `p2_sketch_consistency`.
+  - **Logic hardening** — `ReviewBoard.recompute_metrics` refreshes scores
+    after the escape hatch so the Verifier's next comparison is honest;
+    `LessonLibrary` now distills from the *actually resolved* failure mode
+    rather than `expected_modes[0]`.
+  - **Observability** — the JSON report now includes per-shot `tier_used` and
+    `escalations`, and the trajectory log adds `replan_sketch` / `refine_spec`
+    actions when HSI escalates.
+
+  Tests: `pytest -q` → **35 passed** (CPU, ~0.1s). See
+  `tests/unit/test_hsi_and_consistency.py`.

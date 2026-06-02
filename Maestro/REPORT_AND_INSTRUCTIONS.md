@@ -44,9 +44,9 @@
 - **空白④｜评审缺"可定位→可执行"的桥**。现有物理 benchmark 能打分/标 glitch（VideoPhy-2/PhyGenBench/Physics-IQ 显示 SOTA 物理合理性仅 ~22–24%，守恒律/因果最弱），但 agent 拿到分数后只能笼统改 prompt——**缺"哪条物理定律在第几帧违反 → 映射到哪个具体生成干预"的机制**。
 - **空白⑤｜多模态素材 grounding 浅**。素材输入大多停在"参考图喂给生成器"，缺"用户素材 → 结构化资产记忆 → 跨镜头身份/风格/音乐结构一致性"的统一机制（而这恰是旧 VideoAgent 仓库已有积累的强项）。
 
-### 4. Maestro 的差异化创新点（核心 4 + 增强 4）
+### 4. Maestro 的差异化创新点（核心 6 + 增强 4）
 
-> 设计哲学一句话：**把 M3 的"局部精修单调改进"范式扩展到 video，把 Event-Graph 的"硬物理约束"降维成 training-free 的物理 critic + 草图层，把 VISTA 的"多维 critic 迭代"接上一个跨任务沉淀的经验记忆——三者空白的交集，就是 Maestro。**
+> 设计哲学一句话：**把 M3 的"局部精修单调改进"范式扩展到 video，把 Event-Graph 的"硬物理约束"降维成 training-free 的物理 critic + 草图层，把 VISTA 的"多维 critic 迭代"接上一个跨任务沉淀的经验记忆，再在生成层引入 *adaptive scope* 的 HSI 多档升级、把物理草图升级为前向控制 + 后向一致性的双向闭环——这些空白的交集，就是 Maestro。**
 
 **核心创新（必须做）**
 
@@ -65,6 +65,27 @@
 - **C4 · 跨任务经验记忆（capability-level self-improvement）**
   - 一个 **Lesson/Constraint Library**：把每轮"物理/一致性失败 + 成功修法 + 触发条件"沉淀成可检索条目；新生成任务在规划阶段检索相关 lesson，提前注入约束（"涉及倒水→强制流体连续性检查 + 降速 prompt"）。
   - 这让自改进从"任务内一次性"升级为"越用越好"，是所有现有框架都没有的"能力级"而非"工作流级"自提升。
+  - **v0.2.1 修正**：沉淀的 mode 不再固定写 `expected_modes[0]`，而是取**初始 verdict 集合 − 终态 verdict 集合 − escape-hatch 集合**——即真正被本轮修复的 mode，避免 lesson 库被"挂名"条目污染。
+
+- **C5 · Hierarchical Self-Improvement (HSI) — adaptive scope 多档升级（v0.2.1 新增）**
+  - 现状：VISTA 永远整段重生（昂贵），M3 永远局部 patch（scope 受限），二者中间没人填。Reflexion/Self-Refine 只在单一 scope 内迭代。
+  - Maestro 的 HSI：生成层把自改进拆成 **由便宜到昂贵的多档**，由 critic 给出的失败信号驱动 *按需升级 scope*：
+
+    | tier | 动作 | 借鉴 | cost 量级 |
+    |---|---|---|---|
+    | 0 | Refiner 选定关键帧 → image-edit → 用作 first-frame 做局部 regen | M3 | ⭐（一次 image edit + 一次 local I2V） |
+    | 1 | PhysicsPlanner.replan 把 sketch 的初速降到 0.55x → 重出 control signal → regen | C1 草图层 | ⭐⭐（重出 control + regen） |
+    | 2 | Director.refine_spec：cinematography 降速放宽 + prompt 注入 `plan-fix:<worst hint>` → regen | VISTA prompt rewrite | ⭐⭐⭐（rewrite spec + regen） |
+    | 3 | escape hatch：丢弃最严重 verdict 并刷新 metric | M3 escape | ⭐ |
+
+  - **每档**都跑 `k_retries` 次，**每次**都过 Verifier 单调改进闸（任一档失败到下一档，决不接受退化候选）；接受候选后**复位到 Tier 0**，下一轮再从最便宜档开始（cost-amortized）。
+  - report 里的 `tier_used` / `escalations` 暴露这一动态档位行为，trajectory 里能看到 `replan_sketch` / `refine_spec` action。这是相对 VISTA/M3 的实质性 paradigm 扩展。
+
+- **C6 · 物理草图 ↔ 视频 闭环一致性（v0.2.1 新增）**
+  - 现状：Maestro v0.1/v0.2 把 sketch 的 `control_signal` 单向喂给生成器，但**没人验过生成 clip 是否真的跟了草图的轨迹**。VISTA 用 VLM 评一句"physical commonsense"（无中间物理参考可比），Event-Graph 用引擎直接渲染（牺牲真实度）。
+  - Maestro 的 PhysicsConsistencyCritic：把 sketch 同时当成**前向控制信号**和**后向验证基准**。生成 clip 后估其隐含运动（v0.2.1 mock：读生成器写的元数据；v0.3：跑 optical flow / point tracking 还原轨迹）与 sketch 轨迹对比；divergence 超阈值就发一条 `CONSERVATION`-mode verdict 进 Review Board，驱动 HSI 修正。
+  - MetricTool 拆出 `p1_physics`（原生失败模式）vs **`p2_sketch_consistency`**（草图跟随度），让"生成器忽略了我的物理控制"这一具体失败可单独诊断和加权，而不是和原生物理违例混为一谈。
+  - 这把 sketch 层从单向控制升级为**双向 grounding**——是当前没人做的差异化点。
 
 **增强创新（强烈建议，差异化加分）**
 
@@ -241,34 +262,68 @@ class AgentStep:
 
 ### 10. Self-Improving 闭环（Stage 2 伪码，框架灵魂）
 
+**v0.2.1 起为 HSI 多档（C5）**：
+
 ```
 for shot in shot_specs:
-    best = None
-    # 初始候选(草图条件下生成多个)
-    candidates = GeneratorAgent.generate(shot, n=cfg.n_candidates)
-    best = Tournament.select(candidates)        # E3 双向消偏选优
-    review(best)                                # 跑 Review Board → checklist + verdicts + metrics
+    # 初始候选（在草图条件 + identity refs 下出多个）
+    candidates = [GeneratorAgent.generate(shot, seed=s) for s in range(n_candidates)]
+    for c in candidates: ReviewBoard.review(c)      # critic + metric_tool
+    best = Tournament.select(candidates)            # E3 双向消偏选优
+    initial_modes = {v.mode for v in best.physics_verdicts}    # snapshot 给 C4 用
 
-    for r in range(cfg.max_revisions):          # C2 局部精修循环
-        failed = best.checklist.failed_items + best.physics_verdicts
-        if not failed: break                    # 全过 → 收敛
+    for r in range(1, max_revisions + 1):
+        if board.all_passed(best): break
 
-        actions = RefinerAgent.plan(failed)     # 可定位 → 可执行
-        for item in failed:
-            for k in range(cfg.K_retries):      # M3 逐项重试
-                cand = apply(actions[item], best)  # 关键帧局部编辑 or 局部 regen
-                if VerifierAgent.is_better(cand, best, ref=shot):  # 单调改进
-                    best = cand; break
-            else:
-                mark_skipped(item)              # escape hatch 防死循环
+        accepted = None
 
-    Lesson.distill(best, failed_history) → LessonLibrary.add()   # C4 沉淀
+        # ── Tier 0 · keyframe-level 局部精修 (M3-style, 最便宜) ──
+        plan = RefinerAgent.plan(best)
+        for k in range(k_retries):
+            ff = ImageEdit.edit(best.keyframes[plan.kf_idx], plan.edit_instr)
+            cand = Generator.generate(shot, first_frame=ff, extra_prompt=plan.extra)
+            ReviewBoard.review(cand)
+            if VerifierAgent.is_better(cand, best):    # 单调改进硬约束
+                accepted = cand; break
+
+        # ── Tier 1 · 物理草图加严（重出 control signal） ──
+        if accepted is None and physics_planner:
+            PhysicsPlanner.replan(shot, strictness=0.55)
+            for k in range(k_retries):
+                cand = Generator.generate(shot)
+                ReviewBoard.review(cand)
+                if VerifierAgent.is_better(cand, best):
+                    accepted = cand; break
+
+        # ── Tier 2 · ShotSpec 重写（VISTA-style 但局限于本镜头） ──
+        if accepted is None and director:
+            Director.refine_spec(shot, hint=worst_verdict.intervention)
+            for k in range(k_retries):
+                cand = Generator.generate(shot)
+                ReviewBoard.review(cand)
+                if VerifierAgent.is_better(cand, best):
+                    accepted = cand; break
+
+        # ── Tier 3 · escape hatch（防死循环） ──
+        if accepted is None:
+            escape_hatch(best)                          # 丢一个最严重 verdict
+            board.recompute_metrics(best)               # ★ 修陈旧 metric: 让 Verifier 下一轮比较用最新分
+        else:
+            best = accepted                              # 接受后下一 revision 重新从 Tier 0 开始
+
+    Lesson.distill(initial_modes − final_modes − skipped)  # ★ C4: 用实际被修复的 mode
+    LessonLibrary.add(spec.prompt, fix, failure_mode)
     script.append(best)
 
 assemble(script, music) → output.mp4 + metric_report + trajectory
 ```
 
-停止条件：所有 checklist 项 pass/skip，或达 `max_revisions`，或最优连续 m 轮不变(early-stop)。
+设计要点：
+- **adaptive scope**：失败才升级，便宜档优先，cost-amortized。
+- **monotonic 贯穿全档**：Verifier 在每一档每一次重试都把关，不会因为换档而放水。
+- **接受后复位 Tier 0**：下一轮 revision 从最便宜档重新开始（不锁档），避免被一次困难带高 cost。
+- **Tier 1/2 为可选依赖**：`generate_shot(..., physics_planner=None, director=None)` 时直接退化为单档 M3 模式，向后兼容。
+- 停止条件：所有 checklist 项 pass/skip、达 `max_revisions`、或最优连续 m 轮不变(early-stop)。
 
 ### 11. Metric 套件设计（C3 的量化基础）
 
@@ -280,9 +335,11 @@ assemble(script, music) → output.mp4 + metric_report + trajectory
 - `m4` 构图/取景一致性：显著性分布距离（旧）
 - `m5` beat-cut 同步：剪点与节拍距离（旧）
 - `m6` 能量对应：运动幅度与音乐 RMS 相关（旧）
-- **`p1` 物理合理性**(新)：PhyGenEval 式分层 VLM，按失败模式加权惩罚
+- **`p1` 物理合理性 — 原生失败模式**(C1)：PhyGenEval 式分层 VLM，按失败模式加权惩罚；只看 PENETRATION/GRAVITY/COLLISION/FLUID/OBJECT_PERMANENCE/DEFORMATION verdict
+- **`p2` 物理一致性 — 草图跟随度**(C6, v0.2.1 新增)：PhysicsConsistencyCritic 比较生成 clip 的隐含轨迹 vs 草图预测轨迹；只看 CONSERVATION verdict。和 p1 分开报，让"生成器没听草图的话"这类失败可独立诊断
 - **`id1` 身份一致性**(新)：跨帧/跨镜头 face/object embedding 方差
-每项可在 `configs/metrics.yaml` 配权重；不同镜头类型用不同 preset（沿用旧 heuristic presets 思路）。
+
+每项可在 `configs/default.yaml` 的 `metrics.weights` 改权重；不同镜头类型用不同 preset（沿用旧 heuristic presets 思路）。
 
 ### 12. 工具层 `tools/`
 
@@ -398,3 +455,32 @@ maestro/
 ---
 
 *本文为 Maestro 项目的总纲。下一步：经你确认创新点与架构后，按第 15 节优先级生成 v0.1 脚手架代码。*
+
+---
+
+## 第四部分 · 版本演进 (changelog)
+
+### v0.2.1（当前）· paradigm 深化、零模型改动
+不改 mock 模型，专门把"自改进 paradigm + 物理 grounding"做深，对应 §4 的 C5/C6：
+
+- **C5 HSI 多档升级**：`pipeline/generate_loop.py` 重写为 Tier 0/1/2/3 escalation；
+  新增 `agents/physics_planner.py:replan` 和 `agents/director.py:refine_spec`；
+  `SelfImproveResult` 多出 `tier_used` / `escalations`，report 同步暴露。
+- **C6 Sketch↔Video 一致性 critic**：新建 `critics/physics_consistency.py`；
+  `tools/metric_tool.py` 拆 `p1_physics` / `p2_sketch_consistency`；默认权重重平衡。
+- **逻辑硬化**：
+  - `critics/board.py:recompute_metrics` 让 escape hatch 后 Verifier 的对比基准刷新到最新。
+  - `pipeline/generate_loop.py:_distill_lesson` 沉淀的 mode = `初始 verdict 集 − 终态 verdict 集 − escaped`，不再盲取 `expected_modes[0]`。
+- **测试**：新增 `tests/unit/test_hsi_and_consistency.py`（7 项），全套 `pytest -q` 35 通过、CPU < 0.2s。
+- **向后兼容**：`generate_shot(physics_planner=None, director=None)` 自动退化为 v0.1 单档行为。
+
+### v0.2 · 真模型 backend 骨架 + plan-level 自改进
+- `models/video_gen_backends.py`：OmniWeaving / Wan / Veo 客户端骨架（同一 `generate(...)` 契约）。
+- `physics/control_render.py`：sketch JSON → backend-agnostic `ControlSpec`，让一套 sketch 喂多种 backend。
+- `planning/event_graph.py`：GEST-style IR + `validate_event_graph`，executable-by-construction。
+- `agents/plan_validator.py`：plan-stage Critique-Correct-Verify，把不可 ground 的 ShotSpec 拦在生成前。
+- `critics/tournament.py`：VISTA-style 双向消偏 binary tournament。
+- `tools/retrieval_tool.py`：identity / style / 源 shot 检索 → 给 generator 当 reference。
+
+### v0.1 · CPU-only mock-first scaffold
+§7–§16 描述的最小可跑闭环：types → memory → physics 模块 → agent ABC → critics → loop → assemble → tests。所有重模型 mock，CPU 跑通 end-to-end，pytest 全绿。

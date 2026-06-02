@@ -33,3 +33,20 @@ class ReviewBoard:
 
     def all_passed(self, clip: CandidateClip) -> bool:
         return not clip.checklist.failed_items and not clip.physics_verdicts
+
+    def recompute_metrics(
+        self,
+        clip: CandidateClip,
+        spec: ShotSpec,
+        asset_memory: Optional[AssetMemory] = None,
+        fps: int = 8,
+    ) -> CandidateClip:
+        """Refresh metric scores in-place WITHOUT re-running critics.
+
+        Used after the escape hatch mutates `physics_verdicts` / `checklist` so
+        the Verifier's next monotonic check compares against an up-to-date total.
+        Skipping the critic pass is intentional — re-running PhysicsCritic would
+        regenerate the verdict we just escape-hatched.
+        """
+        clip.metric_scores = self.metric_tool.run(clip, spec, asset_memory, fps)
+        return clip

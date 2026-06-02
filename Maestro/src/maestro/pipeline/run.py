@@ -19,6 +19,7 @@ from ..config import Config
 from ..critics.board import ReviewBoard
 from ..critics.consistency import ConsistencyCritic
 from ..critics.physics import PhysicsCritic
+from ..critics.physics_consistency import PhysicsConsistencyCritic
 from ..critics.rhythm import RhythmCritic
 from ..critics.semantic import SemanticCritic
 from ..critics.tournament import Tournament
@@ -67,6 +68,7 @@ def build_components(
         critics=[
             SemanticCritic(mllm=mllm, logger=trajectory),
             PhysicsCritic(mllm=mllm, logger=trajectory),
+            PhysicsConsistencyCritic(logger=trajectory),  # C6: closed-loop sketch verify
             ConsistencyCritic(logger=trajectory),
             RhythmCritic(logger=trajectory),
         ],
@@ -133,6 +135,8 @@ def run_maestro(
             spec, comp.board, comp.generator, comp.refiner, comp.verifier,
             cache_dir, asset_memory=asset_memory, lesson_library=comp.lesson_library,
             image_edit=comp.image_edit, tournament=comp.tournament, retrieval=retrieval,
+            physics_planner=comp.physics_planner,  # HSI Tier-1 (C5)
+            director=comp.director,                 # HSI Tier-2 (C5)
             fps=fps,
             n_candidates=int(gen_cfg.get("n_candidates", 2)),
             max_revisions=int(gen_cfg.get("max_revisions", 5)),
@@ -159,6 +163,8 @@ def run_maestro(
                 "score_history": [round(s, 4) for s in r.score_history],
                 "final_metrics": r.clip.metric_scores,
                 "skipped_items": r.clip.skipped_items,
+                "tier_used": r.tier_used,        # HSI tier per revision (C5)
+                "escalations": r.escalations,
             }
             for r in results
         ],
