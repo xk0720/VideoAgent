@@ -1,0 +1,45 @@
+project_name: "maestro"
+cache_root: "./.cache"
+output_root: "./outputs"
+
+# ── Models (v0.1 all mock; set backend in v0.2) ──
+models:
+  llm:
+    name: "mock-llm"          # v0.2: deepseek-v3 / claude / gpt / vllm-local
+  mllm:
+    name: "mock-mllm"         # v0.2: qwen-vl judge/critic
+  video_gen:
+    name: "mock-video-gen"    # v0.2: omniweaving / wan / veo-api
+    # weights_path: "/data/ckpts/omniweaving"   # for local backends
+    # device: "cuda"
+  image_edit:
+    name: "mock-image-edit"   # v0.2: qwen-image-edit
+
+# ── Planning ──
+plan:
+  n_shots: 3
+  max_shots: 6
+  shot_duration: 3.0
+  max_plan_iters: 3          # plan-level Validate->Correct loop cap
+
+# ── Generation + self-improve loop ──
+compose:
+  fps: 8
+  n_candidates: 2             # tournament pool (E3)
+  max_revisions: 5            # cap on self-improve rounds (C2)
+  k_retries: 2               # per-revision retries before escape hatch
+
+# ── Metric suite (C3). weighted_total drives Verifier's monotonic check ──
+metrics:
+  weights:
+    m1_semantic: 0.25
+    m2_temporal: 0.15
+    p1_physics: 0.25         # physics is first-class (C1)
+    id1_identity: 0.15
+    m5_rhythm: 0.10
+    aesthetic: 0.10
+
+# ── Physics ──
+physics:
+  simulator: "mock"           # v0.2: mujoco / newton / particle-sim
+  acceptance_severity: 0.30   # below this, a failure mode is considered resolved
