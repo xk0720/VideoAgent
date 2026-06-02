@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from ..agents.act import ActAgent
 from ..agents.director import DirectorAgent
 from ..agents.generator import GeneratorAgent
 from ..agents.physics_planner import PhysicsPlannerAgent
@@ -46,6 +47,7 @@ class MaestroComponents:
     generator: GeneratorAgent
     refiner: RefinerAgent
     verifier: VerifierAgent
+    act: ActAgent                            # UniVA Plan→Act executor (v0.2.2)
     board: ReviewBoard
     tournament: Tournament
     lesson_library: LessonLibrary
@@ -83,6 +85,7 @@ def build_components(
         generator=GeneratorAgent(video_gen=video_gen, logger=trajectory),
         refiner=RefinerAgent(llm=llm, logger=trajectory),
         verifier=VerifierAgent(llm=llm, logger=trajectory),
+        act=ActAgent(llm=llm, logger=trajectory),  # routes tool_call via registry
         board=board,
         tournament=Tournament(judge=mllm),
         lesson_library=LessonLibrary(lesson_path),
@@ -112,8 +115,12 @@ def run_maestro(
 
     comp = build_components(config, trajectory, lesson_path)
 
-    # Stage 0
-    asset_memory = build_asset_memory(source_videos, images, music, cache_dir, cfg)
+    # Stage 0 — material understanding routes through the UniVA-style tool
+    # registry via the ActAgent so the trajectory captures the Plan→Act handoff
+    # (`tool_call` events for probe / caption / detect_objects).
+    asset_memory = build_asset_memory(
+        source_videos, images, music, cache_dir, cfg, act_agent=comp.act,
+    )
     log.info("AssetMemory: %s", asset_memory.summarize())
     retrieval = RetrievalTool(asset_memory)
 

@@ -16,8 +16,11 @@ citizen**.
   interfaces to get real pixels. This README tells you exactly how.
 
 Design rationale & differentiation vs UniVA / VideoAgent / ViMax / VISTA / M3 /
-event-graph: see `REPORT_AND_INSTRUCTIONS.md`. End-to-end data flow & config: see
-`DATAFLOW.md`. Incremental modules & citations: see `IMPROVEMENTS.md`.
+event-graph: see `REPORT_AND_INSTRUCTIONS.md`. **Side-by-side comparison vs
+UniVA / CutClaw / VISTA / M3 / VideoAgent / ViMax / Event-Graph with measured
+effect of each Maestro innovation: see `COMPARISON.md`.** End-to-end data flow
+& config: see `DATAFLOW.md`. Incremental modules & citations: see
+`IMPROVEMENTS.md`.
 
 ---
 
