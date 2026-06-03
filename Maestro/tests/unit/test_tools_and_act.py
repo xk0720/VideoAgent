@@ -173,3 +173,30 @@ def test_act_agent_keeps_going_after_a_failed_call(tmp_path: Path):
     ]
     results = act.run(plan)
     assert [r.ok for r in results] == [False, True]
+
+
+def test_sandbox_refuses_side_effecting_tools(tmp_path: Path, monkeypatch):
+    """MAESTRO_SANDBOX=1 must reject tools whose spec.side_effects=True
+    (documented in `.env.example`). Read-only tools still go through.
+    """
+    import os
+    monkeypatch.setenv("MAESTRO_SANDBOX", "1")
+    act = ActAgent()
+    # Side-effecting: audio_gen writes a file → refused.
+    res = act.call(ToolCall(name="audio_gen",
+                            kwargs={"prompt": "x", "out_path": tmp_path / "x.mp3"}))
+    assert not res.ok
+    assert "sandbox" in res.error.lower()
+    # Read-only: caption has no side_effects → allowed.
+    res = act.call(ToolCall(name="caption", args=["/data/x.png"]))
+    assert res.ok
+
+
+def test_sandbox_off_by_default(tmp_path: Path, monkeypatch):
+    """Default behavior (no env var set) must allow side-effecting calls so
+    production pipelines aren't crippled."""
+    monkeypatch.delenv("MAESTRO_SANDBOX", raising=False)
+    act = ActAgent()
+    res = act.call(ToolCall(name="audio_gen",
+                            kwargs={"prompt": "x", "out_path": tmp_path / "x.mp3"}))
+    assert res.ok

@@ -23,11 +23,25 @@ list of ToolCalls and shipped through ActAgent for unified logging.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..tools.base import ToolRegistry, default_registry
 from .base import BaseAgent
+
+
+def _sandbox_enabled() -> bool:
+    """Honor the `MAESTRO_SANDBOX` env var (documented in `.env.example`).
+
+    Sandbox mode: refuse to invoke tools whose `spec.side_effects=True` — useful
+    for untrusted plan executions, CI smoke runs, demo boxes. Off by default
+    so production pipelines (which legitimately need ffmpeg / file writes)
+    are not crippled. Read at call time so an operator can toggle without
+    restart.
+    """
+    val = os.getenv("MAESTRO_SANDBOX", "0").strip().lower()
+    return val in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -69,6 +83,16 @@ class ActAgent(BaseAgent):
                       {"name": tc.name, "args": tc.args, "kwargs": tc.kwargs},
                       {"ok": False, "error": str(e)})
             return ToolResult(name=tc.name, ok=False, error=str(e))
+        # Sandbox gate (cf. .env.example MAESTRO_SANDBOX). A side-effecting
+        # tool (writes files, calls a paid API) is refused with a clear error
+        # so the caller can downgrade or abort — never silently dropped.
+        if _sandbox_enabled() and getattr(tool.spec, "side_effects", False):
+            err = (f"sandbox: refusing side-effecting tool '{tc.name}' "
+                   f"(MAESTRO_SANDBOX=1)")
+            self._log("tool_call",
+                      {"name": tc.name, "args": tc.args, "kwargs": tc.kwargs},
+                      {"ok": False, "error": err, "sandbox": True})
+            return ToolResult(name=tc.name, ok=False, error=err)
         try:
             value = tool.run(*tc.args, **tc.kwargs)
             obs = {"ok": True, "category": tool.category}

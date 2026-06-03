@@ -258,3 +258,41 @@ def test_public_surface_imports_in_fresh_interpreter():
     info = json.loads(r.stdout.strip().splitlines()[-1])
     assert info["agents_ok"] and info["critics_ok"]
     assert info["tool_count"] >= 9     # all v0.2.2 default tools registered
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5) scripts/run_pipeline.py exposes EVERY innovation in stdout
+# ─────────────────────────────────────────────────────────────────────────────
+def test_pipeline_script_exposes_every_innovation_in_stdout(tmp_path: Path):
+    """The demo entry script must surface evidence of C1-C6 + UniVA wiring
+    in a single run's stdout. Locks the operator-visible contract so future
+    refactors of the script don't silently drop a column."""
+    repo = Path(__file__).resolve().parents[2]
+    src_video = tmp_path / "src.mp4"; src_video.write_text("mock")
+    img = tmp_path / "hero.png"; img.write_text("mock")
+    out = tmp_path / "demo.mp4"
+    r = subprocess.run(
+        [sys.executable, str(repo / "scripts/run_pipeline.py"),
+         "--prompt", "a ball is thrown and bounces off a wall",
+         "--source", str(src_video),
+         "--image", str(img),
+         "--output", str(out)],
+        capture_output=True, text=True, timeout=30, env=_subproc_env(),
+    )
+    assert r.returncode == 0, r.stderr
+    s = r.stdout
+    # UniVA-style tool manifest banner
+    assert "UniVA-style registry" in s
+    assert "analysis" in s and "tracking" in s
+    # Per-shot panel: every innovation tag must appear
+    for marker in (
+        "(C5)",                      # HSI tier_used + escalations
+        "p1(C1)",                    # native physics
+        "p2(C6)",                    # sketch consistency
+        "Lessons learned (C4)",      # cross-task memory
+    ):
+        assert marker in s, f"stdout missing marker {marker!r}"
+    # Trajectory action distribution reveals load-bearing agents
+    for action in ("review", "generate", "plan_fix", "verify",
+                   "build_sketch", "tool_call", "validate_plan"):
+        assert action in s, f"stdout missing action {action!r}"

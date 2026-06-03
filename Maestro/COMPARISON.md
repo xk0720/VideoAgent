@@ -173,7 +173,39 @@ innovation holds end-to-end. All four checks are in
 | **Server boots under real uvicorn** (not TestClient) | Subprocess `python -m maestro.cli serve --port <free>` → poll `GET /health` → assert UniVA-compatible JSON | ✓ — boots in <5 s, `/health` returns `status=ok, service=maestro, n_tools≥7` |
 | **No import-time side effects, no circular imports** | Fresh subprocess `python -c "import …"` of the full public surface (10 agents, 9 tools, server, pipeline) | ✓ — clean import in fresh interpreter |
 
-**Final test count: 58 passed in 1.21 s** (CPU only, no GPU, no API keys).
+**Test count after v0.2.2 deep paths: 58 passed in 1.21 s.**
+
+## 4c. Internal-component audits (v0.2.2 follow-up)
+
+Properties that don't surface as end-to-end pass/fail but silently rot the
+framework if they regress. In `tests/integration/test_internal_audits.py`.
+
+| Property under test | What we check | Outcome |
+|---|---|---|
+| **Embeddings deterministic + L2-normalized** | `embed_text(s) == embed_text(s)`; `‖v‖₂ = 1` for non-empty input | ✓ |
+| **Embeddings safe on empty input** | `cosine(embed_text(""), v) == 0` (no NaN) | ✓ |
+| **Embeddings rank semantic overlap higher** | `cos(q,near) − cos(q,far) > 0.1` for English same-domain text | ✓ — verifies LessonLibrary.retrieve actually picks relevant lessons (not just deterministic noise) |
+| **Cosine in [0,1] for BoW vectors** | non-negative buckets → bounded cosine | ✓ |
+| **Tournament neutralizes position bias** | a "first-arg always wins" judge → bidirectional swap yields a tie (bias cancelled), not a spurious win | ✓ — proves the VISTA-style debias actually de-biases, not just claims to |
+| **Tournament picks the strongest under an honest judge** | argmax-by-weighted_total across arbitrary list positions | ✓ |
+| **C1 control_signal plumbed sketch → generator metadata** | the mock generator writes `control_signal=<path>` into the output file — required for C6 critic to read | ✓ — C6's lifeline verified |
+| **No control_signal recorded when sketch absent** | the metadata explicitly says `control_signal=None`, the cue for C6 to stay silent | ✓ |
+| **PlanValidator CCV converges** | a plan with `id_real + id_ghost` refs runs through `plan_shots` with `max_plan_iters=3`; after Validate→Correct→Verify the bogus ref is gone and the second validate pass succeeds | ✓ — proves the plan-level self-improvement loop actually self-improves, not just runs |
+
+**Test count after internal audits: 67 passed.**
+
+## 4d. Cross-cutting fixes uncovered during the audit
+
+| Bug found by the audit | Fix | Why it matters |
+|---|---|---|
+| `.env.example` promises `MAESTRO_SANDBOX=1` to refuse side-effecting tools, but no code honored it | `ActAgent.call` now checks the env var and refuses tools whose `spec.side_effects=True` with a clear error (read-only tools still go through) | An operator following `.env.example` was running un-sandboxed despite asking for sandbox; documented promise now matches behavior |
+| `embeddings.embed_text` collapsed an entire Chinese prompt to one hash bucket (regex `\w+` swallowed all CJK as one token) — C4 LessonLibrary retrieval for CJK users degenerated to literal-string matching | Mixed tokenizer: ASCII/Latin via `[A-Za-z0-9_]+`, CJK Han / Hiragana / Katakana / Hangul **per character** | Bilingual prompts (the user's actual usage) now retrieve relevant lessons; verified by `test_embedding_cjk_per_character_tokenization` |
+| `scripts/run_pipeline.py` (the demo entry script) did not surface HSI `tier_used` / `escalations`, `p2_sketch_consistency`, `tool_call` events, or the tool registry banner | rewrote stdout panel to expose every innovation; `tests/integration/test_deep_paths.py::test_pipeline_script_exposes_every_innovation_in_stdout` locks the contract | An operator running one demo command can now visually verify C1-C6 + UniVA wiring without grepping the JSON report |
+
+**Final test count: 72 passed in 1.55 s** (CPU, no GPU, no API keys).
+12/12 connectivity + 4/4 deep paths + 9/9 internal audits + 3 cross-cutting
+fixes (each with regression-locking test) — every load-bearing property of
+the design is now verified.
 
 ---
 
