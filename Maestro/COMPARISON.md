@@ -202,10 +202,40 @@ framework if they regress. In `tests/integration/test_internal_audits.py`.
 | `embeddings.embed_text` collapsed an entire Chinese prompt to one hash bucket (regex `\w+` swallowed all CJK as one token) — C4 LessonLibrary retrieval for CJK users degenerated to literal-string matching | Mixed tokenizer: ASCII/Latin via `[A-Za-z0-9_]+`, CJK Han / Hiragana / Katakana / Hangul **per character** | Bilingual prompts (the user's actual usage) now retrieve relevant lessons; verified by `test_embedding_cjk_per_character_tokenization` |
 | `scripts/run_pipeline.py` (the demo entry script) did not surface HSI `tier_used` / `escalations`, `p2_sketch_consistency`, `tool_call` events, or the tool registry banner | rewrote stdout panel to expose every innovation; `tests/integration/test_deep_paths.py::test_pipeline_script_exposes_every_innovation_in_stdout` locks the contract | An operator running one demo command can now visually verify C1-C6 + UniVA wiring without grepping the JSON report |
 
-**Final test count: 72 passed in 1.55 s** (CPU, no GPU, no API keys).
-12/12 connectivity + 4/4 deep paths + 9/9 internal audits + 3 cross-cutting
-fixes (each with regression-locking test) — every load-bearing property of
-the design is now verified.
+**Test count after v0.2.2: 72 passed.**
+
+## 4e. v0.3 — Memory + Skill (C7 + C8)
+
+Adds two more innovations on top of C1-C6 without touching the model layer.
+See `RESEARCH_MEMORY_SKILL.md` for the survey + design rationale.
+
+| Innovation | What it does | Distinguishing axis vs prior work |
+|---|---|---|
+| **C7 PhysicsTyped SkillLibrary** | distills "compiled shot recipes" when HSI converges at Tier 0 with non-trivial initial severity (≥ 0.5); retrieves by `PhysFailureMode` signature × text cosine; couples each skill to its lessons | Voyager / SkillWeaver / SkillFoundry distil by env reward / rehearsal repeatability and retrieve by text — none use **Verifier-monotonic acceptance** as the distillation signal nor **physical-mode signature** as the retrieval key |
+| **C8 Multi-Layer Memory** | 6 tiers — Working / Episodic (+ replay) / Semantic (A-MEM-extended LessonLibrary) / Procedural (= C7) / Entity (cross-run) / Preference; `MultiLayerMemory` façade with cross-tier associative query | A-MEM operates on semantic memory only; VideoMemory's Dynamic Memory Bank is per-run; Me-Agent has preference + working only — Maestro is the first to combine *all six* and tie them through a HippoRAG-style associative graph |
+
+### v0.3 deep-path verification
+
+| Property under test | Outcome |
+|---|---|
+| SkillLibrary distillation rule (Tier-0 + severity ≥ 0.5 + converged) | ✓ — `test_skill_distill_when_tier0_converges_on_nontrivial_severity` |
+| Skill JSONL persistence roundtrip | ✓ |
+| Skill distill is idempotent and EMA-updates `perf_score` | ✓ |
+| Typed retrieval prefers physical-signature match over text-only | ✓ — direct contrast with Voyager-style retrieval |
+| Skill lifecycle: evicts perf < 0.4 with uses > 5 | ✓ |
+| EntityStore cross-run reuse — Day 2's "hero" gets Day 1's entity_id | ✓ |
+| PreferenceStore JSON roundtrip + lazy user creation | ✓ |
+| EpisodicStore appends + retrieves similar past tasks | ✓ |
+| Episodic retrieval down-weights diverged (escalated) runs | ✓ |
+| A-MEM bidirectional lesson linking on related-add | ✓ |
+| Lesson idempotence reconfirms confidence | ✓ |
+| MultiLayerMemory associative query lights up ≥ 2 tiers | ✓ |
+| **E2E run distills a skill + writes episodic trace** | ✓ |
+| **Round 2 of same prompt retrieves the round-1 skill (closed loop)** | ✓ |
+| **Episodic store finds the prior run for a semantically-close prompt** | ✓ |
+
+**Final test count: 90 passed in 1.48 s** (CPU, no GPU, no API keys).
+18 new v0.3 tests, 0 regressions on v0.2.2's 72.
 
 ---
 

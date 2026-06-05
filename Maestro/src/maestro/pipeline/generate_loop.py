@@ -42,6 +42,7 @@ from ..agents.verifier import VerifierAgent
 from ..critics.board import ReviewBoard
 from ..critics.tournament import Tournament
 from ..memory.lesson_library import LessonLibrary
+from ..memory.skill_library import SkillLibrary
 from ..models.image_edit import BaseImageEditClient, MockImageEditClient
 from ..physics.failure_modes import suggest_intervention
 from ..tools.retrieval_tool import RetrievalTool
@@ -57,6 +58,9 @@ class SelfImproveResult:
     gen_calls: int = 0
     tier_used: list[int] = field(default_factory=list)   # tier per revision (C5)
     escalations: int = 0                                  # # times we went past Tier 0
+    initial_severity_max: float = 0.0                     # snapshot for C7 distill
+    distilled_skill_id: str = ""                          # C7 — empty if no distill
+    distilled_lesson_id: str = ""                         # C4 — what was saved
 
 
 def _tournament_select(candidates: list[CandidateClip]) -> CandidateClip:
@@ -236,6 +240,8 @@ def generate_shot(
     retrieval: Optional[RetrievalTool] = None,
     physics_planner: Optional[PhysicsPlannerAgent] = None,   # enables Tier 1 (C5)
     director: Optional[DirectorAgent] = None,                # enables Tier 2 (C5)
+    skill_library: Optional[SkillLibrary] = None,            # C7 (v0.3)
+    task_id: str = "",                                       # for episodic tagging
     fps: int = 8,
     n_candidates: int = 2,
     max_revisions: int = 5,
@@ -259,8 +265,13 @@ def generate_shot(
     best = tournament.select(candidates, spec) if tournament else _tournament_select(candidates)
 
     # Snapshot the initial physics-failure-mode set so lesson distillation can
-    # later report which modes were ACTUALLY resolved (C4 fix).
+    # later report which modes were ACTUALLY resolved (C4 fix). The worst
+    # initial severity also gates C7 skill distillation: only "real" recipes
+    # (severity ≥ threshold) become skills, not no-op convergences.
     initial_modes: set[PhysFailureMode] = {v.mode for v in best.physics_verdicts}
+    initial_severity_max = max(
+        (v.severity for v in best.physics_verdicts), default=0.0,
+    )
 
     history = [best.metric_scores.get("weighted_total", 0.0)]
     tier_used: list[int] = []
@@ -327,14 +338,60 @@ def generate_shot(
     best.accepted = True
 
     # 3. Distill a lesson based on the mode that was ACTUALLY resolved (C4 fix).
+    distilled_lesson_id = ""
     if lesson_library is not None:
         result = _distill_lesson(spec, best, initial_modes)
         if result is not None:
             mode, fix = result
-            lesson_library.add(trigger=spec.prompt, fix=fix, failure_mode=mode)
+            lesson = lesson_library.add(
+                trigger=spec.prompt, fix=fix, failure_mode=mode,
+                born_task_id=task_id,
+            )
+            distilled_lesson_id = lesson.lesson_id
+
+    # 4. Distill a Skill (C7, v0.3) — see RESEARCH_MEMORY_SKILL.md §4.1 (b).
+    # A skill is born only when HSI converged at Tier 0 with a non-trivial
+    # initial physics challenge — i.e., the cheapest tier handled real physics.
+    distilled_skill_id = ""
+    if (
+        skill_library is not None
+        and spec.physics_sketch is not None
+        and skill_library.should_distill(
+            escalations=escalations,
+            converged=converged,
+            initial_severity_max=initial_severity_max,
+        )
+    ):
+        modes_tag = "+".join(
+            m.value for m in spec.physics_sketch.expected_modes
+        ) or "generic"
+        # Stable, human-readable name — same physics+prompt collapses to one skill.
+        skill_name = f"skill_{modes_tag}__{abs(hash(spec.prompt)) & 0xFFFFF:05x}"
+        coupled = (
+            getattr(spec, "injected_lesson_ids", None) or []
+        )
+        skill = skill_library.distill(
+            name=skill_name,
+            spec_prompt=spec.prompt,
+            sketch=spec.physics_sketch,
+            cinematography=spec.cinematography,
+            thresholds={
+                "weighted_total":
+                    max(0.0, best.metric_scores.get("weighted_total", 0.0) * 0.9),
+                "p1_physics":
+                    max(0.0, best.metric_scores.get("p1_physics", 1.0) * 0.9),
+            },
+            coupled_lesson_ids=([distilled_lesson_id] if distilled_lesson_id else [])
+                              + list(coupled),
+            weighted_total=best.metric_scores.get("weighted_total", 0.0),
+        )
+        distilled_skill_id = skill.skill_id
 
     return SelfImproveResult(
         clip=best, score_history=history, revisions_used=revisions_used,
         converged=converged, gen_calls=gen_calls,
         tier_used=tier_used, escalations=escalations,
+        initial_severity_max=initial_severity_max,
+        distilled_skill_id=distilled_skill_id,
+        distilled_lesson_id=distilled_lesson_id,
     )

@@ -26,6 +26,7 @@ from ..critics.semantic import SemanticCritic
 from ..critics.tournament import Tournament
 from ..logging_utils import get_logger
 from ..memory.lesson_library import LessonLibrary
+from ..memory.multi_layer import MultiLayerMemory
 from ..models import build_image_edit, build_llm, build_mllm, build_video_gen
 from ..tools.metric_tool import MetricTool
 from ..tools.retrieval_tool import RetrievalTool
@@ -52,6 +53,7 @@ class MaestroComponents:
     tournament: Tournament
     lesson_library: LessonLibrary
     image_edit: object
+    mlm: Optional[MultiLayerMemory] = None   # C8 — wired by run_maestro
 
 
 def build_components(
@@ -103,7 +105,11 @@ def run_maestro(
     cache_dir: Optional[Path] = None,
     trajectory_path: Optional[Path] = None,
     lesson_path: Optional[Path] = None,
+    memory_dir: Optional[Path] = None,
 ) -> dict:
+    import time
+    import uuid
+
     cfg = config.data if config else {}
     output_path = Path(output_path)
     cache_dir = Path(cache_dir or output_path.parent / "cache")
@@ -111,39 +117,65 @@ def run_maestro(
 
     fps = int(cfg.get("compose", {}).get("fps", 8))
     gen_cfg = cfg.get("compose", {})
+    mem_cfg = cfg.get("memory", {})
     trajectory = TrajectoryLogger(trajectory_path)
 
     comp = build_components(config, trajectory, lesson_path)
 
+    # C8 — Multi-Layer Memory façade (v0.3). The lesson library that
+    # `build_components` already created is REPLACED by MLM's so all five
+    # tiers persist to a consistent base_dir.
+    mem_base = Path(memory_dir) if memory_dir else (
+        output_path.parent / "memory" if output_path.parent.name else Path("./memory")
+    )
+    mlm = MultiLayerMemory.open(
+        base_dir=mem_base,
+        user_id=mem_cfg.get("user_id", "default"),
+        lesson_path=lesson_path,                       # honor v0.2.2 caller's path
+        enable_skills=bool(mem_cfg.get("enable_skills", True)),
+        enable_entities=bool(mem_cfg.get("enable_entities", True)),
+        enable_preferences=bool(mem_cfg.get("enable_preferences", True)),
+        enable_episodes=bool(mem_cfg.get("enable_episodes", True)),
+    )
+    comp.mlm = mlm
+    comp.lesson_library = mlm.lessons              # keep single source of truth
+
     # Stage 0 — material understanding routes through the UniVA-style tool
     # registry via the ActAgent so the trajectory captures the Plan→Act handoff
-    # (`tool_call` events for probe / caption / detect_objects).
+    # (`tool_call` events for probe / caption / detect_objects). Entity tier 4
+    # is consulted so identities reused across runs are deduplicated.
     asset_memory = build_asset_memory(
         source_videos, images, music, cache_dir, cfg, act_agent=comp.act,
+        entity_store=mlm.entities if mlm.enabled["entities"] else None,
+        task_id=str(uuid.uuid4())[:8],
     )
     log.info("AssetMemory: %s", asset_memory.summarize())
     retrieval = RetrievalTool(asset_memory)
 
-    # Stage 1 — plan + Validate->Correct loop
+    # Stage 1 — plan + Validate->Correct loop + Skill retrieval (C7).
     specs = plan_shots(
         user_prompt, asset_memory,
         comp.screenwriter, comp.director, comp.physics_planner,
-        cache_dir, lesson_library=comp.lesson_library,
+        cache_dir, lesson_library=mlm.lessons,
+        skill_library=mlm.skills if mlm.enabled["skills"] else None,
         plan_validator=comp.plan_validator,
         max_plan_iters=int(cfg.get("plan", {}).get("max_plan_iters", 3)),
         fps=fps,
     )
 
     # Stage 2 — self-improve loop per shot
+    task_id = f"t{int(time.time())}"
     results = []
     clips = []
     for spec in specs:
         res = generate_shot(
             spec, comp.board, comp.generator, comp.refiner, comp.verifier,
-            cache_dir, asset_memory=asset_memory, lesson_library=comp.lesson_library,
+            cache_dir, asset_memory=asset_memory, lesson_library=mlm.lessons,
             image_edit=comp.image_edit, tournament=comp.tournament, retrieval=retrieval,
             physics_planner=comp.physics_planner,  # HSI Tier-1 (C5)
             director=comp.director,                 # HSI Tier-2 (C5)
+            skill_library=mlm.skills if mlm.enabled["skills"] else None,
+            task_id=task_id,
             fps=fps,
             n_candidates=int(gen_cfg.get("n_candidates", 2)),
             max_revisions=int(gen_cfg.get("max_revisions", 5)),
@@ -156,11 +188,15 @@ def run_maestro(
     shot_dur = float(cfg.get("plan", {}).get("shot_duration", 3.0))
     script = assemble(clips, output_path, music, shot_dur)
 
+    distilled_skill_ids = [r.distilled_skill_id for r in results if r.distilled_skill_id]
+    distilled_lesson_ids = [r.distilled_lesson_id for r in results if r.distilled_lesson_id]
     report = {
         "user_prompt": user_prompt,
         "n_shots": len(specs),
         "output_path": str(output_path),
-        "lessons_learned": len(comp.lesson_library),
+        "lessons_learned": len(mlm.lessons),
+        "skills_learned": len(mlm.skills),       # C7 (v0.3)
+        "entities_persisted": len(mlm.entities), # C8 (v0.3)
         "shots": [
             {
                 "shot_idx": r.clip.shot_idx,
@@ -172,12 +208,31 @@ def run_maestro(
                 "skipped_items": r.clip.skipped_items,
                 "tier_used": r.tier_used,        # HSI tier per revision (C5)
                 "escalations": r.escalations,
+                "matched_skill_id": (              # C7 — what we retrieved from library
+                    specs[r.clip.shot_idx].matched_skill.skill_id
+                    if specs[r.clip.shot_idx].matched_skill else ""
+                ),
+                "distilled_skill_id": r.distilled_skill_id,    # C7 — what we LEARNED
+                "distilled_lesson_id": r.distilled_lesson_id,  # C4 lesson id
             }
             for r in results
         ],
     }
     report_path = output_path.with_suffix(".report.json")
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # C8 Tier-1 — persist the episodic trace for this run so future planning
+    # can retrieve similar past tasks.
+    if mlm.enabled["episodes"]:
+        mlm.episodes.append(
+            task_id=task_id,
+            user_prompt=user_prompt,
+            trajectory_path=str(trajectory_path) if trajectory_path else "",
+            report=report,
+            lessons_distilled=distilled_lesson_ids,
+            skills_distilled=distilled_skill_ids,
+        )
+
     log.info("Done. Output=%s Report=%s", output_path, report_path)
     return {
         "output_path": output_path,
@@ -186,4 +241,5 @@ def run_maestro(
         "script": script,
         "trajectory": trajectory,
         "results": results,
+        "mlm": mlm,                  # exposed for tests / downstream apps
     }

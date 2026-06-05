@@ -58,6 +58,8 @@ def build_asset_memory(
     cache_dir: Optional[Path] = None,
     config: Optional[dict] = None,
     act_agent=None,                    # Optional[ActAgent] (UniVA Plan→Act, v0.2.2)
+    entity_store=None,                 # Optional[EntityStore] (C8 Tier-4, v0.3)
+    task_id: str = "",
 ) -> AssetMemory:
     """Build AssetMemory. When `act_agent` is provided, uses it to invoke the
     analysis tools (video_probe / caption / detect_objects) so the trajectory
@@ -97,13 +99,27 @@ def build_asset_memory(
 
     for ii, img in enumerate(images):
         stem = Path(img).stem
-        iid = f"id_{stem}"
+        # C8 Tier-4 cross-run reuse: if the same canonical identity already
+        # exists in the entity store (matched by embedding ≥ threshold), we
+        # reuse its entity_id rather than minting a new "id_<stem>" each run.
+        if entity_store is not None:
+            bbox = None
+            if act_agent is not None:
+                dets = _act_call(act_agent, "detect_objects", img, stem) or []
+                if dets:
+                    bbox = dets[0]["bbox"]
+            ent = entity_store.find_or_create(
+                canonical_name=stem, source_path=str(img),
+                task_id=task_id, bbox=bbox,
+            )
+            iid = ent.entity_id
+        else:
+            iid = f"id_{stem}"
+
         # Caption + bbox grounding via ActAgent if available.
         if act_agent is not None:
             description = _act_call(act_agent, "caption", img, kind="image") \
                 or f"identity anchor from {stem}"
-            # detect_objects returns list[dict]; we keep the first bbox as the
-            # primary identity locus (real impl would track across frames).
             dets = _act_call(act_agent, "detect_objects", img, stem) or []
             if dets:
                 description += f" | bbox={dets[0]['bbox']}"

@@ -203,6 +203,7 @@ class ShotSpec:
     physics_sketch: Optional[PhysicsSketch] = None
     event_graph: Optional[EventGraph] = None
     injected_lessons: list[str] = field(default_factory=list)  # C4
+    matched_skill: Optional["Skill"] = None                    # C7 (v0.3)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -255,11 +256,111 @@ class CandidateClip:
 
 @dataclass
 class Lesson:
-    """C4 cross-task experience entry."""
+    """C4 cross-task experience entry.
+
+    v0.3: extended with A-MEM-style attributes (lesson_id / keywords /
+    linked_lesson_ids / confidence) so the LessonLibrary can self-organise
+    into an evolving network rather than a flat list. Old JSONL files load
+    fine — missing fields take their defaults; `lesson_id` is regenerated
+    deterministically from (trigger, fix, mode).
+    """
 
     trigger: str
     fix: str
     failure_mode: Optional[PhysFailureMode] = None
+    embedding: Optional[NDArray] = None
+    lesson_id: str = ""                       # stable hash of content (filled on load/add)
+    keywords: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    linked_lesson_ids: list[str] = field(default_factory=list)   # A-MEM evolution links
+    revised_by: list[str] = field(default_factory=list)          # supersession chain
+    confidence: float = 1.0                   # decays with disuse, grows with re-confirmation
+    uses: int = 0                             # times retrieved
+    born_task_id: str = ""                    # which episodic trace produced it
+
+
+# ─────────────────────────────────────────────────────────────
+# v0.3 — Procedural skill + cross-run entities + preferences
+# (see RESEARCH_MEMORY_SKILL.md §4 for design rationale)
+# ─────────────────────────────────────────────────────────────
+@dataclass
+class Skill:
+    """C7 PhysicsTyped Skill — a *compiled* shot recipe that an HSI Tier-0
+    convergence proved works on non-trivial physics.
+
+    Distinct from Voyager (executable code) and SkillWeaver (web API):
+    a Skill is a structured plan template — entities + interactions +
+    cinematography + acceptance thresholds — keyed on the set of physical
+    failure modes it resolves.
+    """
+
+    skill_id: str                                                # stable hash
+    name: str
+    physical_signature: list[PhysFailureMode] = field(default_factory=list)
+    triggers: list[str] = field(default_factory=list)            # keyword cues
+    entities: list[PhysEntity] = field(default_factory=list)     # parametric template
+    interactions: list[PhysInteraction] = field(default_factory=list)
+    cinematography_preset: CinematographyTags = field(default_factory=CinematographyTags)
+    checklist_template: list[ChecklistItem] = field(default_factory=list)
+    acceptance_thresholds: dict[str, float] = field(default_factory=dict)
+    coupled_lesson_ids: list[str] = field(default_factory=list)  # auto-inject on retrieve
+    embedding: Optional[NDArray] = None                          # fallback text retrieval
+    perf_score: float = 0.0                                      # EMA of weighted_total
+    uses: int = 0
+    last_used_ts: float = 0.0
+    parent_id: str = ""                                          # versioning chain
+
+
+@dataclass
+class PersistentEntity:
+    """C8 Tier-4 cross-run entity (character / prop / location).
+
+    VideoMemory's Dynamic Memory Bank is per-run; ours is cross-run so the
+    same hero on Day 2 reuses the Day-1 face / style / physics profile.
+    """
+
+    entity_id: str
+    canonical_name: str
+    embedding: Optional[NDArray] = None
+    source_paths: list[str] = field(default_factory=list)
+    style_descriptors: dict[str, str] = field(default_factory=dict)
+    appearance_log: list[dict] = field(default_factory=list)     # (task_id, bbox, ctx)
+    physics_profile: dict[str, float] = field(default_factory=dict)
+    first_seen_ts: float = 0.0
+    last_seen_ts: float = 0.0
+
+
+@dataclass
+class UserPreference:
+    """C8 Tier-5 per-user cinematic / physics-strictness preferences."""
+
+    user_id: str = "default"
+    cinematic_priors: dict[str, str] = field(default_factory=dict)
+    style_priors: list[str] = field(default_factory=list)
+    physics_strictness: float = 1.0                              # multiplier on p1/p2 weights
+    endorsed_lesson_ids: list[str] = field(default_factory=list)
+    rejected_lesson_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class EpisodicTrace:
+    """C8 Tier-1 episodic record — a summary of one finished task run.
+
+    The full trajectory remains a JSONL on disk; this lightweight record is
+    what the multi-layer memory indexes for "show me similar past tasks".
+    """
+
+    task_id: str
+    user_prompt: str
+    timestamp: float
+    trajectory_path: str
+    n_shots: int = 0
+    total_revisions: int = 0
+    escalations: int = 0
+    converged: bool = True
+    final_weighted_total: float = 0.0
+    lessons_distilled: list[str] = field(default_factory=list)
+    skills_distilled: list[str] = field(default_factory=list)
     embedding: Optional[NDArray] = None
 
 

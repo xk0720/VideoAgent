@@ -43,3 +43,18 @@ metrics:
 physics:
   simulator: "mock"           # v0.2: mujoco / newton / particle-sim
   acceptance_severity: 0.30   # below this, a failure mode is considered resolved
+
+# ── Multi-Layer Memory (C8, v0.3) ──
+# Each tier is independently switchable. base_dir is set per run via the
+# `memory_dir` arg to run_maestro (defaults to <output>/memory).
+memory:
+  user_id: "default"           # owner of preference tier
+  enable_skills: true          # C7 SkillLibrary (procedural memory)
+  enable_entities: true        # cross-run identity persistence
+  enable_preferences: true     # per-user cinematic / strictness biases
+  enable_episodes: true        # episodic trace store
+  # Skill distillation thresholds (mirrored from SkillLibrary defaults so an
+  # operator can tune without editing code).
+  skill_distill_severity_threshold: 0.5    # initial worst verdict ≥ this
+  skill_perf_ema_alpha: 0.3                # rolling-avg perf_score
+  skill_eviction_floor: 0.4                # drop if perf < floor AND uses > 5

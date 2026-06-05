@@ -1,5 +1,8 @@
 """Stage 1 — Planning. Screenwriter -> Director -> PhysicsPlanner, then an
-optional Validate->Correct loop (PlanValidatorAgent) before generation."""
+optional Validate->Correct loop (PlanValidatorAgent) before generation, and
+finally an optional Skill-retrieval pass that attaches a matching `Skill`
+from the library to each ShotSpec (C7, v0.3).
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,7 +13,44 @@ from ..agents.physics_planner import PhysicsPlannerAgent
 from ..agents.plan_validator import PlanValidatorAgent
 from ..agents.screenwriter import ScreenwriterAgent
 from ..memory.lesson_library import LessonLibrary
+from ..memory.skill_library import SkillLibrary
 from ..types import AssetMemory, ShotSpec
+
+
+def _attach_skills(
+    specs: list[ShotSpec],
+    skill_library: SkillLibrary,
+    lesson_library: Optional[LessonLibrary] = None,
+) -> None:
+    """For each spec with a built physics sketch, retrieve a Skill keyed on
+    its expected_modes signature. When a skill matches:
+
+      • set `spec.matched_skill` (downstream agents can inspect),
+      • adopt the skill's cinematography preset (Director's choice may be
+        too generic; an experienced skill carries a learned preference),
+      • auto-inject the skill's `coupled_lesson_ids` (C7 §4.1 (c)).
+
+    Skill matching is non-destructive to the prompt itself, so HSI's existing
+    revision logic still functions identically.
+    """
+    for spec in specs:
+        if spec.physics_sketch is None:
+            continue
+        modes = list(spec.physics_sketch.expected_modes)
+        if not modes:
+            continue
+        hits = skill_library.retrieve(spec.prompt, modes, top_k=1)
+        if not hits:
+            continue
+        skill = hits[0]
+        spec.matched_skill = skill
+        spec.cinematography = skill.cinematography_preset
+        # Auto-inject coupled lessons that we actually have on hand.
+        if lesson_library is not None:
+            for lid in skill.coupled_lesson_ids:
+                lesson = lesson_library.get(lid)
+                if lesson is not None and lesson.fix not in spec.injected_lessons:
+                    spec.injected_lessons.append(lesson.fix)
 
 
 def plan_shots(
@@ -21,6 +61,7 @@ def plan_shots(
     physics_planner: PhysicsPlannerAgent,
     cache_dir: Path,
     lesson_library: Optional[LessonLibrary] = None,
+    skill_library: Optional[SkillLibrary] = None,   # C7 (v0.3)
     plan_validator: Optional[PlanValidatorAgent] = None,
     max_plan_iters: int = 3,
     fps: int = 8,
@@ -41,4 +82,10 @@ def plan_shots(
 
     for spec in specs:
         physics_planner.run(spec, cache_dir, fps=fps)
+
+    # C7 skill retrieval — after the sketch is built so expected_modes is
+    # known, but before generation so downstream agents see matched_skill.
+    if skill_library is not None and len(skill_library) > 0:
+        _attach_skills(specs, skill_library, lesson_library)
+
     return specs

@@ -18,13 +18,14 @@ citizen**.
 Design rationale & differentiation vs UniVA / VideoAgent / ViMax / VISTA / M3 /
 event-graph: see `REPORT_AND_INSTRUCTIONS.md`. **Side-by-side comparison vs
 UniVA / CutClaw / VISTA / M3 / VideoAgent / ViMax / Event-Graph with measured
-effect of each Maestro innovation: see `COMPARISON.md`.** End-to-end data flow
-& config: see `DATAFLOW.md`. Incremental modules & citations: see
-`IMPROVEMENTS.md`.
+effect of each Maestro innovation: see `COMPARISON.md`.** **v0.3 research:
+agentic memory + skill paradigms survey, the gap, and the C7+C8 task-specific
+design: see `RESEARCH_MEMORY_SKILL.md`.** End-to-end data flow & config: see
+`DATAFLOW.md`. Incremental modules & citations: see `IMPROVEMENTS.md`.
 
 ---
 
-## Six core innovations
+## Eight core innovations
 
 1. **Physics as a first-class citizen (C1)** — a *sketch layer* (lightweight
    simulation → trajectory/control signal that conditions the generator) plus a
@@ -58,6 +59,19 @@ effect of each Maestro innovation: see `COMPARISON.md`.** End-to-end data flow
    This makes the physics layer **bidirectional** — sim is no longer just an
    input but also a verification reference. Reported as a separate
    `p2_sketch_consistency` metric.
+7. **PhysicsTyped SkillLibrary (C7, v0.3 NEW)** — *compiled shot recipes*
+   distilled when HSI converges at Tier 0 with non-trivial initial severity
+   (≥ 0.5). Skills are keyed on `PhysFailureMode` signatures (not pure text)
+   and carry pointers to coupled lessons that auto-inject on retrieval.
+   Different from Voyager (env-reward distillation) and SkillWeaver
+   (rehearsal-repeatability). Lifecycle borrowed from SkillOps. See
+   `RESEARCH_MEMORY_SKILL.md` §4.1.
+8. **Multi-Layer Memory (C8, v0.3 NEW)** — six-tier memory: working /
+   episodic (with **replay**) / semantic (extended with A-MEM bidirectional
+   links) / procedural (= C7) / entity (VideoMemory-style, **cross-run**) /
+   preference (Me-Agent-style). `MultiLayerMemory` façade exposes an
+   associative query lighting up multiple tiers at once (HippoRAG-inspired,
+   lightweight in v0.3). See `RESEARCH_MEMORY_SKILL.md` §4.2.
 
 Plus: GEST-style event-graph IR, a plan-level Validate→Correct loop, VISTA
 bidirectional tournament selection, and asset-retrieval grounding (see
@@ -384,7 +398,35 @@ install `Maestro/requirements.txt`, and run `Maestro/tests`.
   point API keys / GPU are needed (see `.env.example`). The orchestration,
   self-improvement loop, physics grounding and evaluation harness do not change
   between v0.1 and v0.2 — only the model wrappers do.
-- **v0.2.2** (current) — *UniVA borrowing for breadth*. Same six core innovations
+- **v0.3** (current) — *memory + skill: two more innovations*. Adds two
+  task-specific extensions on top of C1-C6 (see `RESEARCH_MEMORY_SKILL.md`
+  for the survey + design). No model changes; mock pipeline still CPU-only.
+  - **C7 PhysicsTyped SkillLibrary** — a *compiled shot recipe* is born when
+    HSI converges at Tier 0 with non-trivial initial severity (≥ 0.5). Skills
+    are keyed on `PhysFailureMode` signatures (not text) and carry pointers
+    to their coupled lessons; retrieval auto-injects them into the next
+    plan. Differentiates from Voyager (env-reward distillation) /
+    SkillWeaver (rehearsal repeatability).
+  - **C8 Multi-Layer Memory** — six tiers (working / episodic / semantic /
+    procedural / entity / preference). `LessonLibrary` extended with A-MEM
+    bidirectional links + confidence + stable `lesson_id`; new
+    `SkillLibrary` / `EntityStore` (cross-run identity persistence, à la
+    VideoMemory but cross-run) / `PreferenceStore` (Me-Agent style) /
+    `EpisodicStore` (with replay). `MultiLayerMemory` façade exposes an
+    associative query that lights up multiple tiers at once.
+  - Wired into the pipeline: `plan_shots` calls `skill_library.retrieve` and
+    attaches `spec.matched_skill`; `generate_shot` calls
+    `skill_library.distill` post-acceptance; `understand` consults
+    `EntityStore` for cross-run dedup; `run_maestro` writes one
+    `EpisodicTrace` per task.
+  - Report adds `skills_learned`, `entities_persisted`, per-shot
+    `matched_skill_id` / `distilled_skill_id` / `distilled_lesson_id`.
+  - Tests: 18 new (skills × 6, memory tiers × 9, E2E v0.3 × 3); total
+    **90 passed** (CPU, ~1.5 s).
+  - Configurable under `memory:` in `configs/default.yaml`; persisted to
+    `<output_dir>/memory/{lessons,skills,entities,preferences,episodes}.{jsonl,json}`.
+
+- **v0.2.2** — *UniVA borrowing for breadth*. Same six core innovations
   preserved; pulls in UniVA-style infrastructure to make the framework
   server-deployable:
   - **ToolRegistry** with 7-category taxonomy (analysis / generation / editing /
