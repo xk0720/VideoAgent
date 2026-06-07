@@ -20,10 +20,10 @@ class MetricTool(BaseTool):
     category = "metric"
     description = "Score a CandidateClip on m1/m2/p1/p2/id1/m5/aesthetic and weighted_total."
 
-    def __init__(self, weights: Optional[dict[str, float]] = None):
-        # p2_sketch_consistency (C6) is the closed-loop check: did the generator
-        # follow the physics sketch? Kept distinct from p1 so a failure to track
-        # the sketch is debuggable separately from a native physics violation.
+    def __init__(self, weights: Optional[dict[str, float]] = None, world_reward=None):
+        # p2_sketch_consistency (C6) is the oracle check: does the OBSERVED
+        # motion match the sim-predicted motion? Kept distinct from p1 so an
+        # oracle divergence is debuggable separately from a native violation.
         self.weights = weights or {
             "m1_semantic": 0.22,
             "m2_temporal": 0.13,
@@ -33,6 +33,11 @@ class MetricTool(BaseTool):
             "m5_rhythm": 0.10,
             "aesthetic": 0.10,
         }
+        # Optional BaseWorldReward (models/world_reward.py). When set, adds a
+        # `wm_reward` dimension — turning the existing best-of-N + monotonic
+        # Verifier into WMReward-style test-time search (arXiv:2601.10553).
+        # None (default) keeps output keys identical to v0.2.2 (back-compat).
+        self.world_reward = world_reward
 
     def run(
         self,
@@ -84,6 +89,10 @@ class MetricTool(BaseTool):
             "m5_rhythm": round(m5, 3),
             "aesthetic": round(aesthetic, 3),
         }
+        if self.world_reward is not None:
+            scores["wm_reward"] = round(
+                self.world_reward.score(clip, spec, fps), 3
+            )
         scores["weighted_total"] = round(
             sum(self.weights.get(k, 0.0) * v for k, v in scores.items()), 4
         )

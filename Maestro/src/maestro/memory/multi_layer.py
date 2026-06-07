@@ -20,14 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..embeddings import cosine, embed_text
-from ..types import (
-    EpisodicTrace,
-    Lesson,
-    PersistentEntity,
-    PhysFailureMode,
-    Skill,
-    UserPreference,
-)
+from ..types import PhysFailureMode, UserPreference
 from .episodic_store import EpisodicStore
 from .lesson_library import LessonLibrary
 from .entity_store import EntityStore

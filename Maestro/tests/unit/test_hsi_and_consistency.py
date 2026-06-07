@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from maestro.agents.director import DirectorAgent
 from maestro.agents.generator import GeneratorAgent
@@ -22,7 +21,7 @@ from maestro.critics.physics_consistency import PhysicsConsistencyCritic
 from maestro.critics.rhythm import RhythmCritic
 from maestro.critics.semantic import SemanticCritic
 from maestro.memory.lesson_library import LessonLibrary
-from maestro.models.mllm import BaseMLLMClient, MockMLLMClient
+from maestro.models.mllm import MockMLLMClient
 from maestro.physics.sketch import build_physics_sketch
 from maestro.pipeline.generate_loop import generate_shot
 from maestro.tools.metric_tool import MetricTool

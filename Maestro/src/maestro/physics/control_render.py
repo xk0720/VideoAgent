@@ -1,20 +1,21 @@
-"""Physics-sketch → generator control signal adapter (C1 bridge).
+"""Physics-sketch → ControlSpec parser (REPOSITIONED, see PHYSICS_LITERATURE_REVIEW.md).
 
-THIS IS A MAESTRO INNOVATION POINT, not borrowed from any single prior work.
-Existing agentic video systems either (a) leave physics to a soft VLM judge
-(VISTA, arXiv:2510.15831) or (b) hand the whole scene to a 3D engine and lose
-photorealism (Event-Graph, arXiv:2604.10383). Maestro instead keeps the neural
-generator for pixels but *conditions* it on a lightweight physics simulation:
-"engine does physics, diffusion does rendering".
+v0.2 framing ("condition the frozen generator on the sim trajectory — engine
+does physics, diffusion does rendering") is RETIRED: the literature review
+(2026-06) found no work that validates abstract-sim-trajectory conditioning on
+frozen general video models, and sparse trajectories under-determine physical
+plausibility (review §2-3). Honest roles for the parsed `ControlSpec` now:
 
-This module turns the `PhysicsSketch.control_signal` trajectory (produced by
-physics/sim_wrapper.py) into the concrete control representation a conditional
-video generator consumes (e.g. ControlNet-style per-frame maps, drag/trajectory
-control à la DragAnything / MotionCtrl / Tora, or first/last-frame anchors).
+  1. ORACLE REFERENCE (primary): `tracks_2d` is the sim-EXPECTED motion that
+     physics/oracle.py compares against motion OBSERVED in the generated clip
+     (PISA-style trajectory-L2, arXiv:2503.09595) → PhysicsConsistencyCritic.
+  2. KEYFRAME ANCHOR HINTS (secondary): the trajectory's salient points
+     (apex / contact) tell the loop WHERE a physically plausible keyframe
+     should be anchored — fed through I2V first/last-frame conditioning, the
+     one conditioning channel frozen models reliably obey (review §2).
+  3. PROMPT HINTS: `interaction_hints` are folded into the text prompt.
 
-v0.2 TODO: implement the actual rasterization (trajectory → depth/flow/pose
-frames, or → drag-point tensors). v0.1 returns a normalized, model-agnostic spec
-so downstream backends have a stable contract.
+The dataclass / `load_control_spec` API is unchanged for back-compat.
 """
 from __future__ import annotations
 

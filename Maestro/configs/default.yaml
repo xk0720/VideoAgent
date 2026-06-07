@@ -14,6 +14,11 @@ models:
     # device: "cuda"
   image_edit:
     name: "mock-image-edit"   # v0.2: qwen-image-edit
+  # Optional world-model reward (WMReward arXiv:2601.10553 / VJEPA-2 Reward
+  # 2510.21840): adds a `wm_reward` metric so best-of-N + Verifier becomes
+  # test-time physics search. Unset = identical metrics to v0.2.2.
+  # world_reward:
+  #   name: "mock-world-reward"   # v0.3: "vjepa2"
 
 # ── Planning ──
 plan:

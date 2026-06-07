@@ -1,32 +1,28 @@
-"""PhysicsConsistencyCritic — close the loop on the C1 sketch layer.
+"""PhysicsConsistencyCritic — sim-as-ORACLE verification (C6, repositioned v0.3).
 
-WHY THIS IS NEW (vs. existing methods):
-  • VISTA (arXiv:2510.15831) judges physics with a VLM scoring "physical commonsense"
-    over the rendered pixels alone — no mid-level physical ground truth to compare to.
-  • Event-Graph (arXiv:2604.10383) does enforce physics, but via a 3D engine rendering
-    the final pixels — it gives up photorealism in exchange.
-  • Maestro v0.1/v0.2 ships the sketch's `control_signal` *forward* into the generator
-    but never verifies that the rendered video actually *followed* the predicted
-    trajectory. That made physics grounding one-way: sim → generator, no closed loop.
+WHAT CHANGED vs v0.2 (see PHYSICS_LITERATURE_REVIEW.md):
+  • OLD framing: "did the generator obey the control signal we conditioned it
+    on?" — implemented by reading a `control_signal=...` metadata line. That
+    presumed sketch-as-conditioning, which the literature does not support
+    (trajectory conditioning on frozen models is trained-only and trajectories
+    under-determine physics; review §2-3).
+  • NEW framing: the simulator is a VERIFICATION ORACLE. We compare the motion
+    the sim says SHOULD happen against the motion OBSERVED in the generated
+    clip via a track extractor (mock now; CoTracker/RAFT in v0.3), PISA-style
+    normalized Trajectory-L2 (arXiv:2503.09595). Conditioning, if any, is
+    irrelevant to the verdict — only observed pixels matter.
 
-WHAT THIS CRITIC ADDS:
-  A second physics critic that *cross-checks* the generated clip against the same
-  physics-sketch the generator was conditioned on. If the implied motion of the
-  rendered clip diverges from the simulated trajectory, we flag it as a CONSERVATION
-  failure (a generator that ignored the control signal). This makes the sketch layer
-  bidirectional — sim is now BOTH a control input AND a verification reference.
-
-MOCK SEMANTICS (v0.2, CPU-only):
-  In the mock pipeline the generator writes a metadata file whose body records
-  whether it received the `control_signal=...` argument. We parse that as a proxy
-  for "did the generator follow the sketch?". v0.3: swap for an optical-flow or
-  point-tracking estimator that recovers each entity's trajectory from the actual
-  video frames and compares it to the simulated tracks.
+Direct precedents (cite): PISA 2503.09595 (trajectory-L2 vs sim truth),
+Morpheus 2504.02918 (tracked quantities vs conservation laws), PhyCoBench
+2502.05503 (flow deviation), Physics-IQ 2501.09038 (predicted vs real frames).
+OUR increment: the oracle's verdict is localized (worst entity, severity) and
+feeds an agentic repair loop (Refiner/HSI), not just a benchmark score.
 """
 from __future__ import annotations
 
 from typing import Optional
 
+from ..physics.oracle import BaseTrackExtractor, TrajectoryOracle
 from ..types import (
     AssetMemory,
     CandidateClip,
@@ -39,38 +35,19 @@ from .base import BaseCritic
 
 
 class PhysicsConsistencyCritic(BaseCritic):
-    """Verify the rendered clip actually followed the physics sketch (C6, new)."""
+    """Verify observed motion matches the sim-predicted motion (oracle check)."""
 
     kind = "physics"
 
-    def __init__(self, divergence_threshold: float = 0.4, **kwargs):
+    def __init__(
+        self,
+        divergence_threshold: float = 0.4,
+        extractor: Optional[BaseTrackExtractor] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.threshold = divergence_threshold
-
-    def _divergence(self, clip: CandidateClip, spec: ShotSpec) -> float:
-        """Mock divergence in [0,1]; 0 = follows sketch perfectly, 1 = ignored it.
-
-        Heuristic: the mock generator writes `control_signal=<path>` into its
-        metadata file iff it was actually conditioned on the sketch. We read that
-        line — when the value is `None`, divergence is high; otherwise low. We
-        also taper divergence with the revision count (refinements should
-        gradually align the clip to the sketch, mirroring real test-time
-        improvement).
-        """
-        # No sketch was supplied at all -> nothing to be consistent with.
-        if not spec.physics_sketch or not spec.physics_sketch.control_signal:
-            return 0.0
-        try:
-            body = clip.video_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return 0.0
-        # The mock backend records `control_signal=<path-or-None>`; real backends
-        # would instead read estimated trajectories from the frames.
-        followed = "control_signal=None" not in body
-        base = 0.15 if followed else 0.7
-        # Refinements drive the implied motion closer to the sketch.
-        decayed = max(0.0, base - 0.15 * clip.revision)
-        return round(decayed, 3)
+        self.oracle = TrajectoryOracle(extractor=extractor)
 
     def review(
         self,
@@ -79,33 +56,40 @@ class PhysicsConsistencyCritic(BaseCritic):
         asset_memory: Optional[AssetMemory] = None,
         fps: int = 8,
     ) -> None:
-        div = self._divergence(clip, spec)
-        if div >= self.threshold:
-            # Surface as a CONSERVATION verdict — the generator didn't conserve
-            # the sketch's predicted momentum/trajectory.
+        cmp = self.oracle.compare(clip, spec, fps)
+        if cmp is None:
+            # No sketch / no predicted motion / extraction failed -> stay silent
+            # (nothing to verify; avoids spurious CONSERVATION noise).
+            self._log({"shot_idx": spec.shot_idx, "revision": clip.revision},
+                      {"oracle": "silent"})
+            return
+
+        if cmp.deviation >= self.threshold:
             n_frames = max(1, int(round(spec.duration * fps)))
             verdict = PhysicsVerdict(
                 mode=PhysFailureMode.CONSERVATION,
                 frame_range=(0, n_frames),
-                severity=div,
+                severity=cmp.deviation,
                 suggested_intervention=(
-                    "tighten conditioning on the sketch's trajectory control signal; "
-                    "feed first-frame anchor derived from sim"
+                    f"observed motion of '{cmp.worst_entity}' diverges from the "
+                    "simulated expectation; re-anchor keyframes to physically "
+                    "plausible poses (apex/contact) and regenerate; consider "
+                    "best-of-N reseed"
                 ),
             )
             clip.physics_verdicts.append(verdict)
             clip.checklist.items.append(
                 ChecklistItem(
-                    question="Does the rendered motion follow the physics sketch?",
+                    question="Does the observed motion match the physics oracle's prediction?",
                     kind="physics",
                     passed=False,
                     fix_instruction=verdict.suggested_intervention,
                 )
             )
-        # We do NOT write to clip.metric_scores here: ReviewBoard's MetricTool
-        # owns that dict and derives p2_sketch_consistency from the CONSERVATION
-        # verdict above. Keeping ownership single avoids "stash then get wiped".
+        # MetricTool owns metric_scores and derives p2 from the CONSERVATION
+        # verdict above (single ownership, no stash-then-wipe).
         self._log(
             {"shot_idx": spec.shot_idx, "revision": clip.revision},
-            {"divergence": div, "flagged": div >= self.threshold},
+            {"deviation": cmp.deviation, "per_entity": cmp.per_entity,
+             "worst_entity": cmp.worst_entity, "flagged": cmp.deviation >= self.threshold},
         )

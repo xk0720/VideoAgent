@@ -24,19 +24,17 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, Future
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
+from importlib.util import find_spec
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from .config import load_config
 from .pipeline.run import run_maestro
 from .tools.base import default_registry
 
-try:                                       # pragma: no cover (optional dep)
-    import fastapi as _fastapi              # noqa: F401  (probe-only)
-    _HAS_FASTAPI = True
-except Exception:                          # pragma: no cover
-    _HAS_FASTAPI = False
+# Optional dep probe (pyflakes-clean; no actual import needed just to detect).
+_HAS_FASTAPI = find_spec("fastapi") is not None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

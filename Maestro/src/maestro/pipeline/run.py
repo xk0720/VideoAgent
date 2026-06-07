@@ -28,6 +28,7 @@ from ..logging_utils import get_logger
 from ..memory.lesson_library import LessonLibrary
 from ..memory.multi_layer import MultiLayerMemory
 from ..models import build_image_edit, build_llm, build_mllm, build_video_gen
+from ..models.world_reward import build_world_reward
 from ..tools.metric_tool import MetricTool
 from ..tools.retrieval_tool import RetrievalTool
 from ..trajectory import TrajectoryLogger
@@ -67,7 +68,10 @@ def build_components(
     video_gen = build_video_gen(cfg.get("models", {}).get("video_gen"))
     image_edit = build_image_edit(cfg.get("models", {}).get("image_edit"))
 
-    metric_tool = MetricTool(cfg.get("metrics", {}).get("weights"))
+    metric_tool = MetricTool(
+        cfg.get("metrics", {}).get("weights"),
+        world_reward=build_world_reward(cfg.get("models", {}).get("world_reward")),
+    )
     board = ReviewBoard(
         critics=[
             SemanticCritic(mllm=mllm, logger=trajectory),

@@ -50,8 +50,9 @@
 
 **核心创新（必须做）**
 
-- **C1 · Physics-as-first-class：双层物理 grounding（草图层 + critic 层）**
-  - *草图层（Physics Sketch / 可选硬约束）*：在神经生成前，先由 LLM 把场景规划成轻量"事件图/物理草图"（物体、初速度、受力、碰撞、轨迹），用**轻量仿真或几何先验**算出粗粒度的运动轨迹/布局/深度，作为 **control signal（轨迹图/depth/光流先验）** 去 condition 神经视频生成器。这把 Event-Graph 的"引擎硬物理"和神经生成器的"照片级真实"缝起来——**引擎管物理，扩散管渲染**。training-free：仿真器是工具，不训练底模。
+- **C1 · Physics-as-first-class：双层物理 grounding（oracle 层 + critic 层）**
+  > ⚠️ **2026-06 重新定位**（依据 `PHYSICS_LITERATURE_REVIEW.md`）：原"草图当 control signal 去 condition 冻结生成器（引擎管物理，扩散管渲染）"的表述**撤销**——文献调研证实该路线无人验证且有结构性硬伤（轨迹欠定物理、OOD 合成轨迹服从性空白、轨迹控制需训练专门分支）。新表述如下。
+  - *oracle 层（Physics Sketch 作为验证预言机）*：LLM 把场景规划成轻量"事件图/物理草图"（物体、初速度、受力、碰撞），用**轻量仿真**算出**期望轨迹**——它不喂给生成器，而是作为 **ground-truth 参考**：用点追踪/光流（v0.3: CoTracker/RAFT）从**生成出来的视频**抽取**观测轨迹**，做 PISA 式归一化 Trajectory-L2 对比 + Morpheus 式守恒检查（`physics/oracle.py`）。仿真的显著点（最高点/接触瞬间）兼作**关键帧锚点提示**，经 I2V 首/末帧——冻结模型唯一可靠服从的条件通道——进入生成。training-free：仿真器是评测工具，不训练底模。物理提升的真正引擎是 **best-of-N/tournament + world-model reward（对标 WMReward 2601.10553，PhysicsIQ Challenge 第一）+ 单调 Verifier** 的 test-time 搜索。
   - *critic 层（物理失败模式定位）*：专门的 **PhysicsCriticAgent**，不输出一个笼统分数，而是按**失败模式分类法**(穿模/重力惯性/碰撞/流体/物体恒存(object permanence)/形变/守恒律)逐项检查，输出"**第 t 帧违反 X 定律 + 严重度 + 建议干预**"的结构化反馈。复用 PhyGenEval 式分层 VLM 评测(单帧→多帧→全视频)作为零训练评测器。
 
 - **C2 · Keyframe-level 局部自改进（把 M3 扩到 video）**

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 # UniVA's practical tool taxonomy. `physics` and `metric` added for Maestro's
 # differentiation surface — we keep them as first-class categories.

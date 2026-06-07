@@ -1,7 +1,6 @@
 """SkillLibrary (C7) tests — distill rule, typed retrieval, lifecycle."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from maestro.memory.skill_library import SkillLibrary

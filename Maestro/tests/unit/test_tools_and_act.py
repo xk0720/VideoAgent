@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from maestro.agents.act import ActAgent, ToolCall, ToolResult
-from maestro.tools.base import ToolCategory, ToolRegistry, default_registry
+from maestro.agents.act import ActAgent, ToolCall
+from maestro.tools.base import ToolRegistry, default_registry
 from maestro.tools.captioning import CaptioningTool
 from maestro.tools.detection import DetectionTool
 from maestro.tools.audio_gen import AudioGenTool
@@ -179,7 +179,6 @@ def test_sandbox_refuses_side_effecting_tools(tmp_path: Path, monkeypatch):
     """MAESTRO_SANDBOX=1 must reject tools whose spec.side_effects=True
     (documented in `.env.example`). Read-only tools still go through.
     """
-    import os
     monkeypatch.setenv("MAESTRO_SANDBOX", "1")
     act = ActAgent()
     # Side-effecting: audio_gen writes a file → refused.
