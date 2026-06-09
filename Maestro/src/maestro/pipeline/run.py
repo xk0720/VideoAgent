@@ -29,6 +29,7 @@ from ..memory.lesson_library import LessonLibrary
 from ..memory.multi_layer import MultiLayerMemory
 from ..models import build_image_edit, build_llm, build_mllm, build_video_gen
 from ..models.world_reward import build_world_reward
+from ..physics.oracle import build_track_extractor
 from ..tools.metric_tool import MetricTool
 from ..tools.retrieval_tool import RetrievalTool
 from ..trajectory import TrajectoryLogger
@@ -72,11 +73,14 @@ def build_components(
         cfg.get("metrics", {}).get("weights"),
         world_reward=build_world_reward(cfg.get("models", {}).get("world_reward")),
     )
+    # C6 oracle track extractor: mock by default; 'cotracker'/'tapir' recovers
+    # observed motion from REAL generated frames (lazy torch).
+    track_extractor = build_track_extractor(cfg.get("models", {}).get("track_extractor"))
     board = ReviewBoard(
         critics=[
             SemanticCritic(mllm=mllm, logger=trajectory),
             PhysicsCritic(mllm=mllm, logger=trajectory),
-            PhysicsConsistencyCritic(logger=trajectory),  # C6: closed-loop sketch verify
+            PhysicsConsistencyCritic(logger=trajectory, extractor=track_extractor),  # C6
             ConsistencyCritic(logger=trajectory),
             RhythmCritic(logger=trajectory),
         ],

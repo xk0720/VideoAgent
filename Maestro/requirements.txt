@@ -12,3 +12,15 @@ pydantic>=2.5,<3.0
 
 # Image ops (optional — image_ops degrades gracefully if missing)
 pillow>=10.0,<12.0
+
+# ── Real-backend extras (optional; NOT needed for the CPU mock pipeline) ──
+# Video frame decoding for the real C6 track extractor (cotracker/tapir).
+# opencv-python-headless>=4.8,<5.0
+# imageio[ffmpeg]>=2.30,<3.0
+#
+# Heavy GPU model backends are deliberately NOT pinned (match them to your CUDA):
+#   torch                      # required by any real model backend
+#   # cotracker                # C6 real point tracking (models.track_extractor.name: cotracker)
+#   # the OmniWeaving / Wan / Veo SDK for real video generation
+#   # the V-JEPA-2 weights for models.world_reward.name: vjepa2
+# Install these yourself, then flip the matching `name` in configs/*.yaml.

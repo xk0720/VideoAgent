@@ -128,7 +128,9 @@ class PhysEntity:
     name: str
     mass: float = 1.0
     init_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    init_position: tuple[float, float, float] = (0.0, 0.0, 0.0)  # y is height above ground
     forces: list[str] = field(default_factory=lambda: ["gravity"])
+    restitution: float = 0.6                  # bounciness on contact, 0..1
 
 
 @dataclass

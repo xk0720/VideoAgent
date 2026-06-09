@@ -27,11 +27,21 @@ design: see `RESEARCH_MEMORY_SKILL.md`.** End-to-end data flow & config: see
 
 ## Eight core innovations
 
-1. **Physics as a first-class citizen (C1)** — a *sketch layer* (lightweight
-   simulation → trajectory/control signal that conditions the generator) plus a
-   *critic layer* that localizes failures by mode (penetration / gravity /
-   collision / fluid / object-permanence / deformation / conservation) to specific
-   frames, each mapped to an executable fix.
+1. **Physics as a first-class citizen (C1)** — an *oracle layer* + a *critic
+   layer*. The oracle is a lightweight rigid-body **simulator** (ground/wall
+   collision response, restitution, contact events — `physics/sim_wrapper.py`)
+   that computes the **expected** motion of a scene. Crucially the sketch is
+   **not a controller** — conditioning a frozen video model on an abstract sim
+   trajectory is an unvalidated path (trajectories under-determine physics; see
+   `PHYSICS_LITERATURE_REVIEW.md`). Instead the simulator is a **verification
+   oracle**: a track extractor recovers the **observed** motion from the
+   generated video and we score the deviation (PISA-style normalized
+   Trajectory-L2, `physics/oracle.py`). Physics improvement is then driven by
+   **test-time search** — best-of-N tournament + monotonic Verifier (+ optional
+   world-model reward, à la WMReward). The *critic layer* localizes failures by
+   mode (penetration / gravity / collision / fluid / object-permanence /
+   deformation / conservation) to specific frames, each mapped to an executable
+   fix.
 2. **Keyframe-level local self-improvement (C2)** — M3's "checklist → local edit →
    monotonic Verifier → escape hatch", extended from images to video.
 3. **Self-loop = multi-agent review × metric suite (C3)** — a `ReviewBoard` of
@@ -52,13 +62,17 @@ design: see `RESEARCH_MEMORY_SKILL.md`.** End-to-end data flow & config: see
    a regression. After any acceptance the next revision restarts at Tier 0 —
    cost-amortized adaptive scope. **This fills the gap between VISTA (always
    whole-segment) and M3 (always local patch).**
-6. **Closed-loop Sketch↔Video consistency (C6, v0.2.1 NEW)** — a dedicated
-   `PhysicsConsistencyCritic` cross-checks that the rendered clip actually
-   *followed* the sketch the generator was conditioned on. Divergences surface
-   as a `CONSERVATION`-mode verdict and feed the same self-improvement loop.
-   This makes the physics layer **bidirectional** — sim is no longer just an
-   input but also a verification reference. Reported as a separate
-   `p2_sketch_consistency` metric.
+6. **Sketch-as-oracle physics verification (C6, v0.2.1; repositioned v0.3)** —
+   a dedicated `PhysicsConsistencyCritic` compares the **observed** motion of
+   the generated clip (recovered by a track extractor — mock by default;
+   `cotracker`/`tapir` lazy-load torch behind the same ABC) against the
+   **simulator's expected** motion, via PISA-style normalized Trajectory-L2.
+   Divergence beyond a threshold surfaces a localized `CONSERVATION`-mode
+   verdict (worst entity + severity) that feeds the same HSI repair loop.
+   Reported as `p2_sketch_consistency`, kept separate from native-physics
+   `p1_physics`. Honest degradation: on a non-video (mock) clip the extractor
+   returns None and the oracle stays silent; a misconfigured real backend
+   fails loudly rather than emitting a fake-perfect p2.
 7. **PhysicsTyped SkillLibrary (C7, v0.3 NEW)** — *compiled shot recipes*
    distilled when HSI converges at Tier 0 with non-trivial initial severity
    (≥ 0.5). Skills are keyed on `PhysFailureMode` signatures (not pure text)
@@ -131,15 +145,20 @@ Maestro/
 
 ---
 
-## Quickstart (v0.2.2 — CPU, no keys)
+## Quickstart (v0.3 — CPU, no keys, no GPU)
 
 ```bash
 cd Maestro
 python -m venv .venv && source .venv/bin/activate
-pip install -e '.[server]'                # core + fastapi/uvicorn/pydantic
+
+# Minimal: mock pipeline + tests (numpy + pyyaml + pytest only)
+pip install -e '.[dev]'
+
+# Recommended on a server: also get the FastAPI server + image ops
+pip install -e '.[all]'                    # core + server + image
 # (or `pip install -r requirements.txt` for the same set)
 
-# unit + integration tests
+# unit + integration tests — should print "113 passed"
 pytest -q
 
 # single-shot generation (mock models, CPU)
@@ -254,11 +273,14 @@ separate stage — application contract above does NOT change.
 ## Configuration reference (`configs/default.yaml`)
 
 ```yaml
-models:                      # v0.1 all mock; change name/weights for v0.2
+models:                      # all mock by default; flip a name to go real
   llm:        {name: mock-llm}
   mllm:       {name: mock-mllm}
   video_gen:  {name: mock-video-gen}   # weights_path / device for local backends
   image_edit: {name: mock-image-edit}
+  # --- optional v0.3 physics backends (omit / mock = identical CPU behavior) ---
+  track_extractor: {name: mock-track}  # C6 oracle: "cotracker" / "tapir" (needs torch)
+  # world_reward:  {name: mock-world-reward}   # adds wm_reward (V-JEPA-2 / WMReward)
 
 plan:
   n_shots: 3            # default shots (follows music section count if music given)
@@ -272,30 +294,44 @@ compose:
   max_revisions: 5      # self-improvement rounds cap (C2/C5)
   k_retries: 2          # per-revision retries WITHIN each HSI tier (C5)
 
-metrics:                # 7 dims; weighted_total drives Verifier's monotonic check
+metrics:                # weighted_total drives Verifier's monotonic check
   weights:
     m1_semantic: 0.22
     m2_temporal: 0.13
     p1_physics:  0.22   # native physics-failure modes (C1 critic layer)
-    p2_sketch_consistency: 0.10   # closed-loop sketch verify (C6, v0.2.1)
+    p2_sketch_consistency: 0.10   # oracle observed-vs-expected trajectory (C6)
     id1_identity: 0.13
     m5_rhythm:   0.10
     aesthetic:   0.10
 
 physics:
-  simulator: mock              # v0.2: mujoco / newton / particle-sim
+  simulator: mock              # v0.4: mujoco / newton / particle-sim
   acceptance_severity: 0.30    # a failure mode below this is "resolved"
+
+memory:                  # C8 Multi-Layer Memory (v0.3) — all tiers on by default
+  user_id: default
+  enable_skills: true          # C7 SkillLibrary (procedural memory)
+  enable_entities: true        # cross-run identity persistence
+  enable_preferences: true     # per-user cinematic / strictness biases
+  enable_episodes: true        # episodic trace store
+  skill_distill_severity_threshold: 0.5
 ```
 
 Tuning intuition: quality↑ → raise `compose.max_revisions` / `n_candidates`
 (slower); native physics↑ → raise `metrics.weights.p1_physics`, lower
 `physics.acceptance_severity`; sketch-tracking↑ → raise
 `metrics.weights.p2_sketch_consistency`. Any value is overridable via
-`--config your.yaml`.
+`--config your.yaml`. Memory persists to `<output_dir>/memory/` across runs;
+delete that dir for a cold start.
 
 ---
 
-## v0.2 — going real (real pixels)
+## Going real (real pixels / real physics — GPU)
+
+> The CPU mock pipeline above runs with no GPU and no keys. To get real outputs,
+> swap a mock wrapper for a real backend (each is a stable ABC) and install that
+> backend's own heavy deps (torch etc.) to match your CUDA — they are
+> intentionally not pinned in this repo. Flip the matching `name` in your config.
 
 ### What is already wired vs what you implement
 
@@ -421,10 +457,19 @@ install `Maestro/requirements.txt`, and run `Maestro/tests`.
     `EpisodicTrace` per task.
   - Report adds `skills_learned`, `entities_persisted`, per-shot
     `matched_skill_id` / `distilled_skill_id` / `distilled_lesson_id`.
-  - Tests: 18 new (skills × 6, memory tiers × 9, E2E v0.3 × 3); total
-    **90 passed** (CPU, ~1.5 s).
   - Configurable under `memory:` in `configs/default.yaml`; persisted to
     `<output_dir>/memory/{lessons,skills,entities,preferences,episodes}.{jsonl,json}`.
+  - **Physics repositioned to sketch-as-oracle** (same release line): the
+    simulator became a real rigid-body integrator (ground/wall collision,
+    restitution, contact events — `physics/sim_wrapper.py`); the consistency
+    check became a `TrajectoryOracle` (PISA-style observed-vs-expected
+    Trajectory-L2 — `physics/oracle.py`); a track-extractor factory wires
+    `mock-track` (default) or real `cotracker`/`tapir`
+    (`physics/track_extractor_backends.py`); an optional `world_reward`
+    (`models/world_reward.py`, WMReward / V-JEPA-2) adds a `wm_reward` metric.
+    See `PHYSICS_LITERATURE_REVIEW.md` for the rationale.
+  - Tests: **113 passed** (CPU, ~1.8 s) — incl. skills × 6, memory tiers × 9,
+    v0.3 E2E × 3, physics simulator × 6, track extractor × 9.
 
 - **v0.2.2** — *UniVA borrowing for breadth*. Same six core innovations
   preserved; pulls in UniVA-style infrastructure to make the framework

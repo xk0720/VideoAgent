@@ -37,8 +37,8 @@ Cited works:
 | Multi-agent | Plan + Act | Playwriter + Editor + Reviewer | Planner + 3-dim critic + rewriter | Planner + Checker + Refiner + Verifier + Editor | graph router | Director + Editor + Producer + Generator | Director + SceneBuilder + Relations | **10 agents** (incl. C5 HSI tiers) |
 | Tool registry / MCP | ✓ MCP servers | ✗ (in-paper agents) | ✗ | ✗ | partial (graph) | ✗ | n/a (engine) | **✓ ToolRegistry + 4-category UniVA-style taxonomy + 9 default tools** |
 | Self-improvement loop | workflow-level reflection | ✗ (one-shot edit) | ✓ whole-segment, multi-critic | ✓ image checklist + verifier | binary work-flow exec eval | TODO per repo README | ✗ (built-by-construction) | **✓ HSI: keyframe → physics-sketch → spec → escape; monotonic Verifier at every tier** |
-| Physics grounding | ✗ | ✗ | soft VLM critic only | ✗ (static) | ✗ | ✗ | hard engine, no neural pixels | **first-class** (sketch ↔ video bidirectional, p1 / p2 split) |
-| Closed-loop sim verify | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | implicit in engine | **✓ PhysicsConsistencyCritic (C6, new)** |
+| Physics grounding | ✗ | ✗ | soft VLM critic only | ✗ (static) | ✗ | ✗ | hard engine, no neural pixels | **first-class** (sim oracle; p1 native modes + p2 trajectory-L2; optional world-model reward) |
+| Sim-oracle verification | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | implicit in engine | **✓ TrajectoryOracle + PhysicsConsistencyCritic (C6); test-time best-of-N search** |
 | Cross-task memory | per-user prefs | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | **✓ LessonLibrary (C4) distills resolved failure modes** |
 | Long-form structure | ✓ via prompts | **✓ hierarchical decomposition + music sync** | ✗ (single segment) | ✗ | ✓ | ✓ | ✓ via event chain | ✓ (music-driven, but length is shot-bounded; v0.3 → hours via CutClaw-style hierarchical decomposition planned) |
 | Deployment surface | ✓ FastAPI on `/health` + Next.js frontend | n/a (paper) | n/a | n/a | git only | git only | git only | **✓ `maestro serve` (UniVA-compatible `/health` + `/tools` + `/generate` + `/jobs/{id}`) + Dockerfile + HEALTHCHECK** |
@@ -63,19 +63,34 @@ Cited works:
 These are the moves that make Maestro a *different framework*, not "UniVA with
 extra commits".
 
-### D1. **Physics is first-class, both ways** (vs. UniVA / CutClaw / VISTA which treat it as soft VLM critic at best, vs. Event-Graph which sacrifices photorealism)
+### D1. **Physics as a verification oracle for test-time search** (vs. UniVA / CutClaw / VISTA which treat physics as a soft VLM critic at best, vs. Event-Graph which sacrifices photorealism)
 
-We split physics into a *forward control layer* (sketch → trajectory →
-generator conditioning) AND a *backward consistency critic* (does the rendered
-clip's implied motion match the sketch?). Neither side of this loop exists
-in any prior work:
+> **Repositioned in v0.3** (see `PHYSICS_LITERATURE_REVIEW.md`). The original
+> claim — "we condition the frozen generator on a sketch trajectory" — was
+> dropped: trajectory conditioning of a frozen video model is an unvalidated,
+> training-heavy path and trajectories under-determine physics. The load-bearing
+> mechanism is **verification + search**, not control.
 
-| Prior | Forward physics | Backward physics | Photorealism |
+A lightweight rigid-body **simulator** (ground/wall collision, restitution,
+contact events) computes the **expected** motion; a track extractor recovers the
+**observed** motion from the generated video; we score the deviation
+(PISA-style normalized Trajectory-L2) and let **best-of-N tournament + monotonic
+Verifier (+ optional world-model reward)** search for the most physical
+candidate. Conditioning, if any, is a best-effort bonus — the oracle works on a
+fully black-box generator (even text-only API models).
+
+| Prior | Physics signal | Mechanism | Photorealism |
 |---|---|---|---|
-| UniVA / CutClaw / ViMax | ✗ | ✗ | ✓ neural |
-| VISTA | ✗ | soft VLM commonsense | ✓ neural |
-| Event-Graph | hard engine | implicit in engine | **✗ engine-rendered** |
-| **Maestro** | **lightweight sim → control_signal (C1)** | **PhysicsConsistencyCritic → p2_sketch_consistency (C6, new)** | ✓ neural |
+| UniVA / CutClaw / ViMax | ✗ | — | ✓ neural |
+| VISTA | soft VLM "commonsense" score | whole-segment re-prompt | ✓ neural |
+| Event-Graph | hard engine | engine renders the pixels | **✗ engine-rendered** |
+| **Maestro** | **sim oracle: observed-vs-expected Trajectory-L2 (p1/p2) + optional world-model reward** | **best-of-N + monotonic Verifier test-time search; localized verdict → HSI repair** | ✓ neural |
+
+Why this is stronger than the old "control" claim: it is **honest** (concedes
+control is unreliable) yet still novel — no prior agentic video framework uses a
+*physics simulator as a localized verification oracle inside a test-time search
+loop*. It also composes with the V-JEPA-2 / WMReward line (a learned physics
+oracle) as a second, ensemble reward.
 
 ### D2. **Adaptive scope of self-improvement (HSI)** (vs. M3 always local / VISTA always whole / CutClaw zero loop)
 
@@ -145,13 +160,13 @@ prompt = "a ball is thrown and bounces off a wall; water pours from a cup"
 
 | Innovation | Concrete effect on this run | Evidence in trajectory / report |
 |---|---|---|
-| **C1 physics sketch** | each shot's `physics_sketch.control_signal` is a JSON trajectory file the generator was conditioned on; generator metadata records `control_signal=<path>` | `build_sketch` action × 3, `conditioned_on_control: true` in `generate` |
+| **C1 physics oracle** | each shot's simulator emits a real bouncing trajectory (ground/wall collision + contact-frame events) as the oracle's expected motion; `TrajectoryOracle` compares it to observed motion | `build_sketch` action × 3; trajectory JSON has non-trivial `tracks` + `events` |
 | **C1 critic layer** | per-mode verdicts (GRAVITY_INERTIA / COLLISION / PENETRATION / FLUID) at revision 0 with severity ~0.8, decaying to <0.3 by revision 2 | `review` action × 75 = 3 shots × 5 candidates × 5 critics |
 | **C2 keyframe-local edit** | Refiner picks `edit_keyframe_idx` + `edit_instruction` *per revision*; image_edit feeds the result back as `first_frame` of the next gen | `plan_fix` action × 9 (3 shots × 3 revisions) |
 | **C3 multi-agent review × metric** | every candidate scored on 7 dims (m1/m2/p1/p2/id1/m5/aesthetic); `weighted_total` drives Verifier | `final_metrics` in report |
 | **C4 cross-task memory** | 3 lessons distilled, one per resolved failure mode; persisted to `lessons.jsonl`; next run's Director will retrieve them at planning time | `lessons_learned: 3` in report; `lessons.jsonl` has 3 records |
 | **C5 HSI** | this prompt converges at Tier 0; under stubborn judges the loop escalates Tier 0→1→2 (unit-tested) | `tier_used: [0,0,0]`, `escalations: 0`; stress test in `test_hsi_and_consistency.py` shows `tier_used: [2]` when Tier 0 cannot fix the issue |
-| **C6 sketch consistency** | the rendered clip's metadata records the sketch's `control_signal`, so the consistency critic adds no CONSERVATION verdict and `p2_sketch_consistency = 1.0`; if a hypothetical generator ignored the sketch, p2 would drop below 0.7 and the same HSI loop would repair it | `p2_sketch_consistency` in `final_metrics`; unit test `test_consistency_critic_flags_clip_that_ignored_sketch` |
+| **C6 sketch-as-oracle** | `TrajectoryOracle` recovers observed motion (mock extractor by default; `cotracker`/`tapir` on real frames) and scores observed-vs-expected Trajectory-L2; deviation > threshold → localized CONSERVATION verdict → HSI repair. Degrades silently on non-video (mock) clips; fails loudly if a real backend is misconfigured | `p2_sketch_consistency` in `final_metrics`; `tests/unit/test_track_extractor.py` (9) |
 | **UniVA tool registry** | analysis tools fire during Stage 0; the trajectory now logs every tool call with category | `tool_call` × 4 (`video_probe`, `caption` × 2, `detect_objects`) — agents: `ActAgent` |
 | **Server shim** | `maestro serve` → `/health` returns UniVA-shape JSON; `/generate` enqueues a job; `/jobs/{id}` polls | `test_server.py` 4/4 green |
 
@@ -188,8 +203,8 @@ framework if they regress. In `tests/integration/test_internal_audits.py`.
 | **Cosine in [0,1] for BoW vectors** | non-negative buckets → bounded cosine | ✓ |
 | **Tournament neutralizes position bias** | a "first-arg always wins" judge → bidirectional swap yields a tie (bias cancelled), not a spurious win | ✓ — proves the VISTA-style debias actually de-biases, not just claims to |
 | **Tournament picks the strongest under an honest judge** | argmax-by-weighted_total across arbitrary list positions | ✓ |
-| **C1 control_signal plumbed sketch → generator metadata** | the mock generator writes `control_signal=<path>` into the output file — required for C6 critic to read | ✓ — C6's lifeline verified |
-| **No control_signal recorded when sketch absent** | the metadata explicitly says `control_signal=None`, the cue for C6 to stay silent | ✓ |
+| **(mock oracle) control_signal plumbed to generator metadata** | the MOCK track extractor reads `control_signal=<path>` from the clip metadata to stand in for "did the generator follow physics"; the REAL `cotracker`/`tapir` path instead recovers motion from pixels | ✓ — mock oracle mechanism verified |
+| **(mock oracle) no control_signal when sketch absent → oracle silent** | metadata says `control_signal=None`, the cue for the mock extractor to stay silent | ✓ |
 | **PlanValidator CCV converges** | a plan with `id_real + id_ghost` refs runs through `plan_shots` with `max_plan_iters=3`; after Validate→Correct→Verify the bogus ref is gone and the second validate pass succeeds | ✓ — proves the plan-level self-improvement loop actually self-improves, not just runs |
 
 **Test count after internal audits: 67 passed.**
@@ -234,8 +249,21 @@ See `RESEARCH_MEMORY_SKILL.md` for the survey + design rationale.
 | **Round 2 of same prompt retrieves the round-1 skill (closed loop)** | ✓ |
 | **Episodic store finds the prior run for a semantically-close prompt** | ✓ |
 
-**Final test count: 90 passed in 1.48 s** (CPU, no GPU, no API keys).
-18 new v0.3 tests, 0 regressions on v0.2.2's 72.
+### v0.3 physics repositioning (sketch-as-oracle)
+
+| Property under test | Outcome |
+|---|---|
+| Simulator: dropped ball bounces, decaying amplitude, never penetrates floor | ✓ — `test_simulator_ball_bounces_off_ground` |
+| Simulator: one-sided wall rebound + contact events recorded | ✓ — `test_simulator_wall_bounce_records_event` |
+| Simulator: support constraint keeps object at rest (no fall-through) | ✓ |
+| `TrajectoryOracle` observed-vs-expected normalized Trajectory-L2 | ✓ — `physics/oracle.py` |
+| Track-extractor factory: mock default, lazy `cotracker`/`tapir` dispatch | ✓ — `test_track_extractor.py` |
+| Real extractor returns None (silent) on non-video mock clip — no torch needed | ✓ |
+| Real extractor **fails loudly** on a decodable video when the model is unwired | ✓ — never emits a fake-perfect p2 |
+| magic-byte sniff blocks text placeholders before any decoder runs | ✓ |
+
+**Final test count: 113 passed in ~1.8 s** (CPU, no GPU, no API keys).
+0 regressions across the v0.3 line.
 
 ---
 
@@ -243,10 +271,11 @@ See `RESEARCH_MEMORY_SKILL.md` for the survey + design rationale.
 
 Maestro = **UniVA's deployability + CutClaw's hierarchical structuring + M3's
 monotonic-improvement Verifier + Event-Graph's executable IR + VISTA's
-de-biased tournament — all stitched onto a new core (physics-as-first-class,
-adaptive-scope HSI self-improvement, closed-loop sketch↔video consistency,
-cross-task LessonLibrary)**. We deliberately match the operational surface of
-the most production-ready peers (UniVA's `/health`, MCP-style tool registry)
+de-biased tournament — all stitched onto a new core (physics-as-verification-
+oracle for test-time search, adaptive-scope HSI self-improvement, cross-task
+LessonLibrary, and a six-tier memory + PhysicsTyped skill library)**. We
+deliberately match the operational surface of the most production-ready peers
+(UniVA's `/health`, MCP-style tool registry)
 while differentiating on the *depth* of test-time self-improvement and the
 *directness* of physical grounding — the two axes everyone else either skips
 or sacrifices.

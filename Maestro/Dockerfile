@@ -1,8 +1,8 @@
 # Maestro — CPU-friendly container so "upload to server and run" is literal.
 #
-# Build:   docker build -t maestro:0.2.2 .
-# Smoke:   docker run --rm maestro:0.2.2 python -m maestro.cli smoke
-# Serve:   docker run --rm -p 8000:8000 maestro:0.2.2
+# Build:   docker build -t maestro:0.3.0 .
+# Smoke:   docker run --rm maestro:0.3.0 python -m maestro.cli smoke
+# Serve:   docker run --rm -p 8000:8000 maestro:0.3.0
 #
 # Health:  curl http://localhost:8000/health
 #

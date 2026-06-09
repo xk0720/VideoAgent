@@ -91,6 +91,26 @@ class MockTrackExtractor(BaseTrackExtractor):
         return observed
 
 
+def build_track_extractor(spec: str | dict | None) -> BaseTrackExtractor:
+    """Factory. None / 'mock-track' → deterministic MockTrackExtractor (default,
+    CPU, no deps). A real name ('cotracker' / 'tapir') lazy-imports the heavy
+    backend so importing this module never drags in torch.
+
+    config:  models.track_extractor.name: "mock-track"   # v0.3: "cotracker"
+    """
+    name = "mock-track"
+    config: dict = {}
+    if isinstance(spec, dict):
+        name = spec.get("name", name)
+        config = spec
+    elif isinstance(spec, str):
+        name = spec
+    if not name or name.startswith("mock"):
+        return MockTrackExtractor()
+    from .track_extractor_backends import build_real_track_extractor
+    return build_real_track_extractor(name, config)
+
+
 def _motion_range(track: Track) -> float:
     """Max displacement from the starting point — the scale of expected motion."""
     if not track:

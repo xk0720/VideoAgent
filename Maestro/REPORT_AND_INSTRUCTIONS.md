@@ -53,6 +53,7 @@
 - **C1 · Physics-as-first-class：双层物理 grounding（oracle 层 + critic 层）**
   > ⚠️ **2026-06 重新定位**（依据 `PHYSICS_LITERATURE_REVIEW.md`）：原"草图当 control signal 去 condition 冻结生成器（引擎管物理，扩散管渲染）"的表述**撤销**——文献调研证实该路线无人验证且有结构性硬伤（轨迹欠定物理、OOD 合成轨迹服从性空白、轨迹控制需训练专门分支）。新表述如下。
   - *oracle 层（Physics Sketch 作为验证预言机）*：LLM 把场景规划成轻量"事件图/物理草图"（物体、初速度、受力、碰撞），用**轻量仿真**算出**期望轨迹**——它不喂给生成器，而是作为 **ground-truth 参考**：用点追踪/光流（v0.3: CoTracker/RAFT）从**生成出来的视频**抽取**观测轨迹**，做 PISA 式归一化 Trajectory-L2 对比 + Morpheus 式守恒检查（`physics/oracle.py`）。仿真的显著点（最高点/接触瞬间）兼作**关键帧锚点提示**，经 I2V 首/末帧——冻结模型唯一可靠服从的条件通道——进入生成。training-free：仿真器是评测工具，不训练底模。物理提升的真正引擎是 **best-of-N/tournament + world-model reward（对标 WMReward 2601.10553，PhysicsIQ Challenge 第一）+ 单调 Verifier** 的 test-time 搜索。
+    > **草图保真度（v0.3 落地，`physics/sim_wrapper.py`）**：oracle 的判别力取决于 ground-truth 轨迹有多对，因此 `MockSimulator` 从纯抛物线升级为**带碰撞响应的半隐式欧拉积分器**——地面平面（恢复系数反弹、不穿地）、单面墙（横向反弹）、支撑约束（静止不下坠）、并记录**接触帧事件**(`ground_bounce`/`wall_bounce`，供 critic/Refiner 定位修复帧)。v0.4 换 MuJoCo/Newton，oracle 数学与管道不变。
   - *critic 层（物理失败模式定位）*：专门的 **PhysicsCriticAgent**，不输出一个笼统分数，而是按**失败模式分类法**(穿模/重力惯性/碰撞/流体/物体恒存(object permanence)/形变/守恒律)逐项检查，输出"**第 t 帧违反 X 定律 + 严重度 + 建议干预**"的结构化反馈。复用 PhyGenEval 式分层 VLM 评测(单帧→多帧→全视频)作为零训练评测器。
 
 - **C2 · Keyframe-level 局部自改进（把 M3 扩到 video）**
@@ -82,11 +83,12 @@
   - **每档**都跑 `k_retries` 次，**每次**都过 Verifier 单调改进闸（任一档失败到下一档，决不接受退化候选）；接受候选后**复位到 Tier 0**，下一轮再从最便宜档开始（cost-amortized）。
   - report 里的 `tier_used` / `escalations` 暴露这一动态档位行为，trajectory 里能看到 `replan_sketch` / `refine_spec` action。这是相对 VISTA/M3 的实质性 paradigm 扩展。
 
-- **C6 · 物理草图 ↔ 视频 闭环一致性（v0.2.1 新增）**
-  - 现状：Maestro v0.1/v0.2 把 sketch 的 `control_signal` 单向喂给生成器，但**没人验过生成 clip 是否真的跟了草图的轨迹**。VISTA 用 VLM 评一句"physical commonsense"（无中间物理参考可比），Event-Graph 用引擎直接渲染（牺牲真实度）。
-  - Maestro 的 PhysicsConsistencyCritic：把 sketch 同时当成**前向控制信号**和**后向验证基准**。生成 clip 后估其隐含运动（v0.2.1 mock：读生成器写的元数据；v0.3：跑 optical flow / point tracking 还原轨迹）与 sketch 轨迹对比；divergence 超阈值就发一条 `CONSERVATION`-mode verdict 进 Review Board，驱动 HSI 修正。
-  - MetricTool 拆出 `p1_physics`（原生失败模式）vs **`p2_sketch_consistency`**（草图跟随度），让"生成器忽略了我的物理控制"这一具体失败可单独诊断和加权，而不是和原生物理违例混为一谈。
-  - 这把 sketch 层从单向控制升级为**双向 grounding**——是当前没人做的差异化点。
+- **C6 · 物理草图 ↔ 视频 oracle 一致性（v0.2.1 新增，v0.3 随 C1 一并重定位）**
+  - 现状：VISTA 用 VLM 评一句"physical commonsense"（无中间物理参考可比），Event-Graph 用引擎直接渲染（牺牲真实度）；**没人拿一个物理正确的参考轨迹去核验生成视频实际的运动**。
+  - Maestro 的 `PhysicsConsistencyCritic`：把 sketch **只当后向验证基准**（与 C1 reframe 一致——不再声称前向控制）。生成 clip 后用 track extractor 抽**观测轨迹**，与 oracle 的**期望轨迹**做 PISA 式归一化 Trajectory-L2（`physics/oracle.py:TrajectoryOracle`）；divergence 超阈值发 `CONSERVATION`-mode verdict 进 Review Board，**定位到最差实体 + 严重度**，驱动 HSI 修正（接触帧事件给 Refiner 精确锚点）。
+    > **track extractor 已可换真实后端**（`physics/track_extractor_backends.py` + `oracle.build_track_extractor` 工厂，配置 `models.track_extractor.name`）：默认 `mock-track`（CPU 无依赖）；`cotracker`/`tapir` 懒加载 torch，解码真 mp4 帧 → 每实体起点设 query → 点追踪 → 归一化回 [0,1] 屏幕空间。优雅降级：mock 管道产出的文本占位"视频"无像素 → 解码返回 None → oracle 静默（诚实：非视频无法追踪）；若显式配置真后端但库/权重缺失则**响亮报错**，绝不静默给出虚假完美 p2。
+  - MetricTool 拆出 `p1_physics`（原生失败模式）vs **`p2_sketch_consistency`**（观测 vs 期望轨迹的偏差），两类失败可独立诊断、独立加权。可选再叠 `wm_reward`（world-model reward，`models/world_reward.py`）作为第三个物理信号。
+  - 核心立论从"我们能用草图控制生成"改为"**我们把物理正确性变成一个 test-time 可搜索的、可定位的验证目标**"——既诚实（承认轨迹控制不可靠），又把贡献立在文献支持的验证+搜索范式上（PISA / Morpheus / WMReward）。
 
 **增强创新（强烈建议，差异化加分）**
 
@@ -337,7 +339,8 @@ assemble(script, music) → output.mp4 + metric_report + trajectory
 - `m5` beat-cut 同步：剪点与节拍距离（旧）
 - `m6` 能量对应：运动幅度与音乐 RMS 相关（旧）
 - **`p1` 物理合理性 — 原生失败模式**(C1)：PhyGenEval 式分层 VLM，按失败模式加权惩罚；只看 PENETRATION/GRAVITY/COLLISION/FLUID/OBJECT_PERMANENCE/DEFORMATION verdict
-- **`p2` 物理一致性 — 草图跟随度**(C6, v0.2.1 新增)：PhysicsConsistencyCritic 比较生成 clip 的隐含轨迹 vs 草图预测轨迹；只看 CONSERVATION verdict。和 p1 分开报，让"生成器没听草图的话"这类失败可独立诊断
+- **`p2` 物理一致性 — oracle 轨迹偏差**(C6)：`PhysicsConsistencyCritic` 用 `TrajectoryOracle` 比较**观测轨迹 vs 仿真期望轨迹**（PISA 式归一化 Trajectory-L2）；只看 CONSERVATION verdict。和 p1 分开报，让"运动偏离物理预期"这类失败可独立诊断
+- **`wm_reward` 世界模型奖励**(可选, C1 oracle 增强)：`models/world_reward.py`，对标 WMReward(2601.10553)/VJEPA-2 Reward(2510.21840)；未配置时 MetricTool 输出与 v0.2.2 完全一致
 - **`id1` 身份一致性**(新)：跨帧/跨镜头 face/object embedding 方差
 
 每项可在 `configs/default.yaml` 的 `metrics.weights` 改权重；不同镜头类型用不同 preset（沿用旧 heuristic presets 思路）。
