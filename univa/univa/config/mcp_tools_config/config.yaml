@@ -1,0 +1,50 @@
+# Configuration for mcp_tools
+image_gen:
+  text_to_image: "flux-kontext"
+  image_to_image: "flux-kontext"
+  wavespeed_api: ""
+
+video_editing:
+  model_path: "/mnt/data/zhengyangliang/Wan2.1-VACE-1.3B"
+  style_transfer: "runway"
+  pose_reference: "vace_api"
+  repainting: "runway"
+  wavespeed_api: ""
+
+video_gen:
+  text_to_video: "seedance"
+  image_to_video: "seedance"
+  frame_to_frame_video: "wan_api"
+  wavespeed_api: ""
+  base_output_path: "results/video"
+  if_audio: True
+
+audio_gen:
+  wavespeed_api: ""
+  default_model: "mmaudio-v2"
+  speech_model: "speech-2.5-turbo-preview"
+  default_voice: "Wise_Woman"
+  default_emotion: "surprised"
+  base_output_path: "results/audio"
+  duration: 5
+  guidance_scale: 4.5
+  num_inference_steps: 25
+
+video_understanding:
+  model_path: "/share/project/liangzy/liangzy2/models_cache/Qwen2.5-VL-32B-Instruct"
+  retriever_model_path: "/share/project/liangzy/liangzy2/models_cache/BGE-VL-large"
+
+video_tracking:
+  sa2va_model_path: "/mnt/data/zhengyangliang/Sa2VA-4B"
+  sam_model_path: "/mnt/data/zhengyangliang/sam2.1_t.pt"
+
+llm:
+  model: "gpt-5-2025-08-07"
+  openai_api_key: ""
+
+save_service:
+  base_output_path: "results/video"
+  naming_pattern: "{timestamp}_{file_type}_{description}_{index:03d}"
+  cleanup_policy:
+    max_age_days: 30
+    max_size_gb: 100

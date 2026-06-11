@@ -1,0 +1,58 @@
+{
+  "mcpServers": {
+    "video_editing": {
+      "command": "python",
+      "args": ["-m", "mcp_tools.video_editing"],
+      "env": {
+        "PYTHONPATH": "/home/zhengyangliang/UniVideo",
+        "CWD": "/home/zhengyangliang/UniVideo"
+      },
+      "auto_confirm": []
+    },
+    "video_tracking": {
+      "command": "python",
+      "args": ["-m", "mcp_tools.video_tracking"],
+      "env": {
+        "PYTHONPATH": "/home/zhengyangliang/UniVideo",
+        "CWD": "/home/zhengyangliang/UniVideo"
+      },
+      "auto_confirm": []
+    },
+    "video_understanding": {
+      "command": "python",
+      "args": ["-m", "mcp_tools.video_understanding"],
+      "env": {
+        "PYTHONPATH": "/home/zhengyangliang/UniVideo",
+        "CWD": "/home/zhengyangliang/UniVideo"
+      },
+      "auto_confirm": []
+    },
+    "image_gen": {
+      "command": "python",
+      "args": ["-m", "mcp_tools.image_gen"],
+      "env": {
+        "PYTHONPATH": "/home/zhengyangliang/UniVideo",
+        "CWD": "/home/zhengyangliang/UniVideo"
+      },
+      "auto_confirm": []
+    },
+    "video_gen": {
+      "command": "python",
+      "args": ["-m", "mcp_tools.video_gen"],
+      "env": {
+        "PYTHONPATH": "/home/zhengyangliang/UniVideo",
+        "CWD": "/home/zhengyangliang/UniVideo"
+      },
+      "auto_confirm": []
+    },
+    "audio_gen": {
+      "command": "python",
+      "args": ["-m", "mcp_tools.audio_gen"],
+      "env": {
+        "PYTHONPATH": "/home/zhengyangliang/UniVideo",
+        "CWD": "/home/zhengyangliang/UniVideo"
+      },
+      "auto_confirm": []
+    }
+  }
+}
