@@ -100,7 +100,7 @@ def main() -> int:
             f"escalations(C5)={s['escalations']}  "
             f"tier_used(C5)={s['tier_used']}  "
             f"p1(C1)={fm.get('p1_physics')}  "
-            f"p2(C6)={fm.get('p2_sketch_consistency')}  "
+            f"p2(C6)={fm.get('p2_law_consistency')}  "
             f"scores={s['score_history']}"
         )
         if s.get("skipped_items"):

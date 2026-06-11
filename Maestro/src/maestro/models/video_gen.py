@@ -1,8 +1,10 @@
-"""Video generation wrapper. MUST accept conditioning (control signal / first
-frame / reference images) or the physics sketch layer is meaningless.
+"""Video generation wrapper. Conditioning = first frame (C2 keyframe anchor)
++ reference images (E1 identity/style). There is NO physics control signal —
+the sketch-as-controller line is dead (v0.4); physics is verified from the
+generated pixels, never injected.
 
 v0.1 MockVideoGenClient writes a tiny placeholder file per clip and per keyframe
-(no GPU). v0.2: OmniWeaving / Wan / Veo|Sora behind the same `generate` signature.
+(no GPU). Real: OmniWeaving / Wan / Veo|Sora behind the same `generate` signature.
 """
 from __future__ import annotations
 
@@ -19,7 +21,6 @@ class BaseVideoGenClient(ABC):
         duration: float,
         out_path: Path,
         fps: int = 8,
-        control_signal: Optional[Path] = None,
         first_frame: Optional[Path] = None,
         reference_images: Optional[list[Path]] = None,
         seed: int = 0,
@@ -41,7 +42,6 @@ class MockVideoGenClient(BaseVideoGenClient):
         duration: float,
         out_path: Path,
         fps: int = 8,
-        control_signal: Optional[Path] = None,
         first_frame: Optional[Path] = None,
         reference_images: Optional[list[Path]] = None,
         seed: int = 0,
@@ -50,7 +50,7 @@ class MockVideoGenClient(BaseVideoGenClient):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         meta = (
             f"MOCK VIDEO\nmodel={self.name}\nprompt={prompt}\nduration={duration}\n"
-            f"fps={fps}\ncontrol_signal={control_signal}\nfirst_frame={first_frame}\n"
+            f"fps={fps}\nfirst_frame={first_frame}\n"
             f"reference_images={reference_images}\nseed={seed}\n"
         )
         # Write a real (tiny, non-playable) file so downstream path handling works.
@@ -58,7 +58,7 @@ class MockVideoGenClient(BaseVideoGenClient):
         return out_path
 
     def supported_conditions(self) -> set[str]:
-        return {"control_signal", "first_frame", "reference_images"}
+        return {"first_frame", "reference_images"}
 
 
 def build_video_gen(spec: str | dict | None) -> BaseVideoGenClient:

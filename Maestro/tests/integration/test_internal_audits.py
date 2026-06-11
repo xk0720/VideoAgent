@@ -10,10 +10,11 @@ end-to-end pass/fail:
   2. **Tournament** — VISTA-style bidirectional pairwise judge: does it
      actually pick the strongest candidate AND survive a position-biased mock
      judge?
-  3. **C1 control-signal plumbing** — sketch → physics_sketch.control_signal
-     → GeneratorAgent → video metadata. The C6 PhysicsConsistencyCritic
-     reads the metadata line `control_signal=<path>` to decide divergence,
-     so a missing record is a silent C6 break.
+  3. **C6 verification signal path** — annotation → track extractor →
+     reliability gate → law checks → measured verdict. The audit pins the
+     property the self-improve loop depends on: violations are detected
+     from OBSERVED tracks (and clear after refinement), never from
+     generation metadata.
   4. **PlanValidator CCV** — Critique → Correct → Verify converges on
      ungroundable refs (i.e., the second iter actually passes).
 """
@@ -28,7 +29,7 @@ from maestro.agents.plan_validator import PlanValidatorAgent
 from maestro.agents.screenwriter import ScreenwriterAgent
 from maestro.critics.tournament import Tournament
 from maestro.embeddings import cosine, embed_text
-from maestro.physics.sketch import build_physics_sketch
+from maestro.physics.annotate import annotate_physics
 from maestro.pipeline.plan import plan_shots
 from maestro.types import AssetMemory, CandidateClip, Identity, ShotSpec
 
@@ -149,33 +150,50 @@ def test_tournament_picks_strongest_under_honest_judge():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3) C1 control-signal plumbing — sketch → generator metadata
+# 3) C6 verification signal path — observed tracks, not metadata
 # ─────────────────────────────────────────────────────────────────────────────
-def test_control_signal_flows_from_sketch_to_generator_metadata(tmp_path: Path):
-    """Mock generator writes `control_signal=<path>` into the output file.
-    PhysicsConsistencyCritic parses that to score p2_sketch_consistency, so
-    this plumbing is C6's lifeline. If it ever breaks, C6 silently always
-    sees `control_signal=None` and emits CONSERVATION verdicts spuriously.
+def test_verification_signal_comes_from_observed_tracks(tmp_path: Path):
+    """C6's lifeline: the measured verdict must derive from the extracted
+    track (rev 0 contains a mid-air reversal; rev 1 is law-consistent) and
+    NOT from anything the generator wrote about itself. A regression that
+    re-couples verdicts to generation metadata would break the loop silently.
     """
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
-    assert spec.physics_sketch.control_signal is not None
-    assert spec.physics_sketch.control_signal.exists()
+    from maestro.critics.physics_consistency import PhysicsConsistencyCritic
 
-    clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
-    body = clip.video_path.read_text(encoding="utf-8", errors="ignore")
-    sketch_path = str(spec.physics_sketch.control_signal)
-    assert f"control_signal={sketch_path}" in body, body[:200]
+    spec = ShotSpec(shot_idx=0, duration=2.0, prompt="a ball is thrown")
+    spec.physics_annotation = annotate_physics(spec)
+    critic = PhysicsConsistencyCritic()
+
+    c0 = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
+    critic.review(c0, spec, fps=8)
+    measured0 = [v for v in c0.physics_verdicts if v.source == "law_verifier"]
+    assert measured0, "rev-0 violation must be detected from the track"
+
+    c1 = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
+    critic.review(c1, spec, fps=8)
+    measured1 = [v for v in c1.physics_verdicts if v.source == "law_verifier"]
+    assert not measured1, "refined clip must clear the measured check"
+
+    # The generator's own metadata must contain no physics claims at all.
+    body = c0.video_path.read_text(encoding="utf-8", errors="ignore")
+    assert "control_signal" not in body
 
 
-def test_no_control_signal_when_sketch_absent(tmp_path: Path):
-    """A spec with no physics_sketch must produce a clip whose metadata
-    explicitly records control_signal=None — that's the C6 critic's signal
-    to STAY silent (nothing to be consistent with)."""
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a quiet still life")
-    clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
-    body = clip.video_path.read_text(encoding="utf-8", errors="ignore")
-    assert "control_signal=None" in body
+def test_verifier_reports_explicit_coverage(tmp_path: Path):
+    """S3 transparency: entities outside the measurement tier are explicit
+    deferrals in the coverage report — partial verification must never read
+    as full verification."""
+    from maestro.physics.verifier import PhysicsFromPixelsVerifier
+
+    spec = ShotSpec(shot_idx=0, duration=2.0,
+                    prompt="a ball falls while a person runs")
+    spec.physics_annotation = annotate_physics(spec)
+    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
+    result = PhysicsFromPixelsVerifier().verify(clip, spec, fps=8)
+    assert "world_model" in result.coverage          # person: deferred
+    assert "person" in result.coverage["world_model"]
+    measured = {e.entity for e in result.entities if e.measured}
+    assert "person" not in measured
 
 
 # ─────────────────────────────────────────────────────────────────────────────

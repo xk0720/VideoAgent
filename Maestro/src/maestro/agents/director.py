@@ -51,7 +51,7 @@ class DirectorAgent(BaseAgent):
         """HSI Tier-2: rewrite a ShotSpec at GENERATION time given a critic-derived hint.
 
         Distinct from `revise()` (plan-time, fixes ungroundable refs). This one is
-        called when local keyframe edits AND physics-sketch replanning both failed
+        called when local keyframe edits AND physics replanning both failed
         to satisfy the Verifier: we widen scope by biasing cinematography toward
         more stable physics (slower, wider) and append the hint to the prompt. The
         prompt mutation persists across subsequent revisions.

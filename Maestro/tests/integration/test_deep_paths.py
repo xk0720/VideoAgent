@@ -129,19 +129,19 @@ def test_hsi_falls_back_to_escape_hatch_when_all_tiers_fail(tmp_path: Path):
     from maestro.critics.physics import PhysicsCritic
     from maestro.critics.rhythm import RhythmCritic
     from maestro.critics.semantic import SemanticCritic
-    from maestro.physics.sketch import build_physics_sketch
+    from maestro.physics.annotate import annotate_physics
     from maestro.pipeline.generate_loop import generate_shot
     from maestro.tools.metric_tool import MetricTool
     from maestro.types import ShotSpec
 
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
 
     judge = _AlwaysFailingMLLM()
     # Pin weights to dims the stubborn judge controls so the Verifier cannot
     # accept on m2/aesthetic auto-improvement.
     weights = {"m1_semantic": 0.5, "p1_physics": 0.5, "m2_temporal": 0.0,
-               "p2_sketch_consistency": 0.0, "id1_identity": 0.0,
+               "p2_law_consistency": 0.0, "id1_identity": 0.0,
                "m5_rhythm": 0.0, "aesthetic": 0.0}
     board = ReviewBoard(
         critics=[SemanticCritic(mllm=judge), PhysicsCritic(mllm=judge),
@@ -294,5 +294,5 @@ def test_pipeline_script_exposes_every_innovation_in_stdout(tmp_path: Path):
         assert marker in s, f"stdout missing marker {marker!r}"
     # Trajectory action distribution reveals load-bearing agents
     for action in ("review", "generate", "plan_fix", "verify",
-                   "build_sketch", "tool_call", "validate_plan"):
+                   "annotate_physics", "tool_call", "validate_plan"):
         assert action in s, f"stdout missing action {action!r}"

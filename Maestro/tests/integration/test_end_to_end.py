@@ -37,7 +37,7 @@ def test_end_to_end_produces_outputs(tmp_path: Path):
     actions = [e["action"] for e in entries]
     assert "generate" in actions
     assert "verify" in actions          # Verifier ran
-    assert "build_sketch" in actions    # physics module ran
+    assert "annotate_physics" in actions  # physics module ran
     assert "validate_plan" in actions   # plan-level Validate->Correct loop ran
     # v0.2.2: UniVA-style ActAgent must have routed analysis tools through the
     # registry during Stage 0 (build_asset_memory). Pre-fix this was orphaned;
@@ -58,7 +58,7 @@ def test_end_to_end_produces_outputs(tmp_path: Path):
     for shot in report["shots"]:
         assert "score_history" in shot
         assert "p1_physics" in shot["final_metrics"]
-        assert "p2_sketch_consistency" in shot["final_metrics"]   # C6 wired
+        assert "p2_law_consistency" in shot["final_metrics"]   # C6 wired
         assert "tier_used" in shot                                # C5 wired
         assert "escalations" in shot
 

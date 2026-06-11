@@ -1,5 +1,6 @@
-"""GeneratorAgent — produce a CandidateClip, conditioned on the physics sketch's
-control signal + identity/style references (C1 + E1)."""
+"""GeneratorAgent — produce a CandidateClip, conditioned on the keyframe
+anchor + identity/style references (C2 + E1). Physics is never injected; it
+is verified afterwards from the generated pixels (C6 v0.4)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,7 +35,6 @@ class GeneratorAgent(BaseAgent):
         if extra_prompt:
             prompt += " | fix: " + extra_prompt
 
-        control = spec.physics_sketch.control_signal if spec.physics_sketch else None
         ref_images = reference_images  # identity/style anchors from RetrievalTool (E1)
 
         video_path = self.video_gen.generate(
@@ -42,7 +42,6 @@ class GeneratorAgent(BaseAgent):
             duration=spec.duration,
             out_path=cache_dir / f"shot{spec.shot_idx:03d}_r{revision}_s{seed}.mp4",
             fps=fps,
-            control_signal=control,
             first_frame=first_frame,
             reference_images=ref_images,
             seed=seed,
@@ -65,7 +64,7 @@ class GeneratorAgent(BaseAgent):
         self._log(
             "generate",
             {"shot_idx": spec.shot_idx, "revision": revision, "seed": seed,
-             "conditioned_on_control": control is not None},
+             "anchored_on_first_frame": first_frame is not None},
             {"video_path": str(video_path)},
         )
         return clip

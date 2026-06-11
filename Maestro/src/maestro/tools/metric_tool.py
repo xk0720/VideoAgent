@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .base import BaseTool
-from ..types import AssetMemory, CandidateClip, PhysFailureMode, ShotSpec
+from ..types import AssetMemory, CandidateClip, ShotSpec
 
 
 class MetricTool(BaseTool):
@@ -21,14 +21,15 @@ class MetricTool(BaseTool):
     description = "Score a CandidateClip on m1/m2/p1/p2/id1/m5/aesthetic and weighted_total."
 
     def __init__(self, weights: Optional[dict[str, float]] = None, world_reward=None):
-        # p2_sketch_consistency (C6) is the oracle check: does the OBSERVED
-        # motion match the sim-predicted motion? Kept distinct from p1 so an
-        # oracle divergence is debuggable separately from a native violation.
+        # p2_law_consistency (C6 v0.4) is the MEASURED check: does the
+        # observed motion have any physically consistent explanation (law
+        # residual + anomalies)? Kept distinct from p1 (VLM-judged) so a
+        # measured violation is debuggable separately from a judged one.
         self.weights = weights or {
             "m1_semantic": 0.22,
             "m2_temporal": 0.13,
             "p1_physics": 0.22,
-            "p2_sketch_consistency": 0.10,
+            "p2_law_consistency": 0.10,
             "id1_identity": 0.13,
             "m5_rhythm": 0.10,
             "aesthetic": 0.10,
@@ -51,14 +52,14 @@ class MetricTool(BaseTool):
         # m1 semantic: checklist pass rate
         m1 = clip.checklist.pass_rate
 
-        # Split verdicts: native physics failures vs. closed-loop sketch divergence
-        # (CONSERVATION verdicts come from PhysicsConsistencyCritic only).
-        native = [v for v in clip.physics_verdicts if v.mode != PhysFailureMode.CONSERVATION]
-        conserv = [v for v in clip.physics_verdicts if v.mode == PhysFailureMode.CONSERVATION]
-        # p1 physics: 1 - worst native severity
-        p1 = max(0.0, 1.0 - max((v.severity for v in native), default=0.0))
-        # p2 sketch consistency (C6): 1 - worst CONSERVATION severity
-        p2 = max(0.0, 1.0 - max((v.severity for v in conserv), default=0.0))
+        # Split verdicts by evidence source: judged (VLM critic) vs measured
+        # (reference-free law verifier).
+        judged = [v for v in clip.physics_verdicts if v.source != "law_verifier"]
+        measured = [v for v in clip.physics_verdicts if v.source == "law_verifier"]
+        # p1 physics: 1 - worst judged severity
+        p1 = max(0.0, 1.0 - max((v.severity for v in judged), default=0.0))
+        # p2 law consistency (C6): 1 - worst measured severity
+        p2 = max(0.0, 1.0 - max((v.severity for v in measured), default=0.0))
 
         # id1 identity consistency: better when refs exist and across revisions
         if spec.identity_refs:
@@ -84,7 +85,7 @@ class MetricTool(BaseTool):
             "m1_semantic": round(m1, 3),
             "m2_temporal": round(m2, 3),
             "p1_physics": round(p1, 3),
-            "p2_sketch_consistency": round(p2, 3),
+            "p2_law_consistency": round(p2, 3),
             "id1_identity": round(id1, 3),
             "m5_rhythm": round(m5, 3),
             "aesthetic": round(aesthetic, 3),

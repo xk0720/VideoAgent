@@ -58,6 +58,12 @@
 **Self-improve = skill 生命周期**：蒸馏（从轨迹）→ **验证准入**（VLM 评审 + 回归测试，"skill CI"，对应 G2）→ 检索 → 执行 → 评估（EMA 性能）→ 进化/淘汰。
 agent 唯一可学习的基质就是技能库——可审计、可版本化、可回滚（避开 Gödel-Agent 式任意自改写的不安全性）。
 
+**Training-free 硬约束**（用户确认 2026-06-11）：本版本全程不做任何训练/微调。
+"蒸馏"特指 **LLM 把成功轨迹总结为结构化技能条目**（参数化的工具调用序列 + 触发条件
++ 准入测试，AWM/MemoGen 式，零梯度）；"准入"是推理期 VLM 评审；"进化"是条目改写
+与 EMA 淘汰。所有需要梯度的备选（RL 学记忆保留策略、DPO 物理后训练、V2M-Zero 微调）
+一律不实现，只能作为外部预训练模型被调用。
+
 这一步使三个创新点共享同一生命周期与同一评审证据链，而不是三个并列模块。
 Maestro v0.3 的 C7（PhysicsTyped SkillLibrary）是雏形，需推广为上述三类。
 
@@ -73,11 +79,35 @@ Maestro v0.3 的 C7（PhysicsTyped SkillLibrary）是雏形，需推广为上述
 - **跨阶段归因 + 级联验证**：把 C5 HSI 升级为全链归因（成片失败时判定责任在剧本/分镜/关键帧/片段哪一级，
   回到最便宜的责任层重做），配合 script→storyboard→keyframe→latent→clip 逐级验证（关键帧便宜、成片昂贵的不对称性）。
 
-### 3.2 创新点二：物理 = 验证 oracle 技能族（占 G3/G4）
-保持 sketch-as-verifier 定位（已是正确站位），按 S1–S5 强化：
-- **S2 优先**（tracker 可靠性门控 + 跨 tracker 一致性，副产品"tracker 分歧本身是物理不合理线索"可独立成文，填 G4）；
-- **S4 优先**（残差定向重生成：只重生成违规物体的时空管道，把 best-of-N 变成类梯度修正，直接回应"昂贵拒绝采样"质疑）；
-- S1（参数后验 + 守恒残差）、S3（可验证性路由器：刚体→仿真，参数运动→方程发现，流体/生物→V-JEPA 2 reward，语义违规→VLM）、S5（级联早退 + 反循环评测协议）随后。
+### 3.2 创新点二：参考自由的"像素物理验证器"（占 G3/G4）——已实现 v0.4
+
+**Sketch 线已彻底废弃**（用户判定 + 文献支持：草图既不能控制冻结的生成模型，
+"对比单条仿真轨迹"又预设了单图不可知的质量/摩擦/尺度参数）。新定位把问题改成
+**参数自由**的提法：
+
+> "观察到的运动是否存在**任何**物理一致的解释？"
+
+实现（`maestro/physics/`，全部 training-free，125 tests passing）：
+1. `annotate.py` — 规划期标注：哪些实体会动、什么**运动类别**（ballistic/rigid/fluid/
+   agentive/static）、盯哪些失效模式。只是验证种子，不含任何轨迹/控制信号。
+2. `router.py`（S3）— **可验证性路由器**：每个实体分配能检查它的最强档位
+   （measurement / world_model / vlm / none），coverage 显式上报——部分验证绝不冒充全量验证。
+3. `tracks.py` + `track_extractor_backends.py` — CoTracker/TAPIR 从生成像素恢复观测轨迹。
+4. `reliability.py`（S2）— **先认证 tracker 再相信 verdict**：前后向一致性、跨 tracker
+   分歧、抖动检测；"tracker 分歧本身就是不合理线索"（G4，可独立成文）。
+5. `laws.py` — 核心：对观测轨迹拟合被动运动定律族（static / 匀速 / 匀加速，重力向量
+   自由拟合故无需尺度标定），**最佳拟合残差 = 违例度**；再叠加离散异常检测
+   （teleport→物体恒存、mid-air reversal→重力惯性、energy_gain→守恒、jerk spike→碰撞），
+   全部按实体+帧段定位。
+6. `verifier.py` + `critics/physics_consistency.py` — verdict 驱动 best-of-N 选择 +
+   HSI 定向修复（S4 的第一形态：违例的帧段+实体+模式直接生成修复指令），
+   p2_law_consistency 独立计分（source="law_verifier" 与 VLM 评审的 p1 分离）。
+
+**站位**（survey_physics §SYNTHESIS）：PSIVG/PhyRPR 开环注入不验证；WMReward 闭环但
+不可解释；PhyT2V 闭环但文本瓶颈；Morpheus/PISA 测量但只评测——
+"**测量得到、可解释、按实体定位、驱动选择与定向重生成、training-free**"的交集仍然无人占据，
+且新定位不再背负"你的仿真器才是错的"攻击。
+后续：S1（守恒残差强化——能量/动量比值检验，无需绝对质量）、S5（级联早退 + 反循环评测协议）。
 - 物理评审器作为**带类型签名的 review skill** 注册进技能库，由路由器按场景选用。
 
 ### 3.3 创新点三：验证门控的双寄存器实体记忆（占 G5/G6/G10）
@@ -99,18 +129,23 @@ Maestro v0.3 的 C7（PhysicsTyped SkillLibrary）是雏形，需推广为上述
 
 ---
 
-## 4. 待确认决策清单（用户逐项确认后开工）
+## 4. 决策清单（2026-06-11 用户裁定后的状态）
 
-| # | 决策点 | 建议 |
+用户三点裁定：(1) sketch 线废弃 → 物理重新思考（已落地为 §3.2 参考自由验证器）；
+(2) 本版本严格 training-free，不设计任何训练/微调（已写入 §2 硬约束）；
+(3) 链路不通参考根目录 `univa/`（工程图谱见 `univa_engineering_map.md`，
+WaveSpeed API 后端已实现进 `models/video_gen_backends.py`）。其余按建议开工。
+
+| # | 决策点 | 状态 |
 |---|---|---|
-| D1 | **代码底座**：以 Maestro 为底座合并（移植父项目的 ffmpeg 真拼接、SQLite+FAISS 记忆存储、场景检测、CSA arc-judge 思想），父项目转为遗留参考？还是继续双轨？ | 合并到 Maestro（父项目背着 CRITICAL_REVIEW 的 mock 套娃债务） |
-| D2 | **任务定义**：确认核心故事 = "素材+指令 → 检索/生成混合长视频（含音频）"（即吸收父项目前提），而非 Maestro 现在的纯文生视频？ | 确认混合 |
-| D3 | **统一 skill 抽象**（§2）：创作/评审/记忆三类技能 + 蒸馏→准入→进化生命周期，作为框架第一公民？ | 采纳——这是与所有现有工作区分的"换原语" |
-| D4 | **物理优先级**：S2（tracker 门控）+ S4（残差定向重生成）先做，S1/S3/S5 排后？ | 是 |
-| D5 | **记忆方案**：双寄存器实体记忆 + 验证门控写入为主线，跨项目用户记忆为系统级差异化，RL 学习保留策略（Angle 3）不做？ | 是（Angle 3 计算成本过高） |
-| D6 | **音频范围**：v 下一版就加 sound-director 规划 + AV 评审环 + 模型路由？还是先占位（接口+mock），等视觉链路真实化之后？ | 先占位，视觉链路真实信号优先 |
-| D7 | **"跑通"验收标准**：服务器上最小真实链 = 真 LLM 规划 + 真生成 backbone（OmniWeaving/Wan 任一）+ 真 VLM critic + 真 CoTracker 物理验证 + 真 ffmpeg 出片，端到端一条指令出一个 ≥3 镜头视频？ | 以此为第一里程碑，**先于**任何新框架代码 |
-| D8 | **评测组合**：EntityBench、VideoPhy-2、Physics-IQ 协议、UniVA-Bench、AV-Align/JavisBench + 小规模人评？ | 是，并加反循环协议（独立评测轴 + 反作弊正则） |
+| D1 | 代码底座：以 Maestro 为底座，移植父项目真实资产（ffmpeg 拼接、SQLite+FAISS、场景检测、CSA arc-judge 思想） | 按建议执行 |
+| D2 | 任务定义 = "素材+指令 → 检索/生成混合长视频（含音频）" | 按建议执行 |
+| D3 | 统一 skill 抽象（创作/评审/记忆三类 + 生命周期），严格 training-free | 按建议执行（实现中） |
+| D4 | 物理：~~sketch-as-verifier~~ → **参考自由像素验证器**（v0.4 已实现：laws/reliability/router/verifier，125 tests） | **已落地，定位重写** |
+| D5 | 记忆：双寄存器实体记忆 + 验证门控写入；跨项目用户记忆；RL 保留策略不做（也违反 training-free） | 按建议执行（实现中） |
+| D6 | 音频先占位（接口+mock），视觉链路真实信号优先 | 按建议执行 |
+| D7 | "跑通"= 最小真实链（真 LLM + 真生成后端[WaveSpeed API 最快] + 真 VLM critic + 真 CoTracker + 真 ffmpeg） | WaveSpeed 后端已实现，待服务器配 key 验证 |
+| D8 | 评测：EntityBench / VideoPhy-2 / Physics-IQ / UniVA-Bench / AV-Align + 反循环协议 | 按建议执行 |
 
 ---
 

@@ -144,10 +144,10 @@ def test_mlm_associative_query_returns_hits_across_tiers(tmp_path: Path):
     mlm.lessons.add("a ball is thrown and bounces", "enforce gravity arc",
                     PhysFailureMode.GRAVITY_INERTIA)
     # Skill: need to build a sketch.
-    from maestro.physics.sketch import build_physics_sketch
+    from maestro.physics.annotate import annotate_physics
     from maestro.types import CinematographyTags, ShotSpec
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    sketch = annotate_physics(spec)
     mlm.skills.distill("projectile_v1", spec.prompt, sketch,
                        CinematographyTags(), {}, weighted_total=0.9)
     mlm.episodes.append("t1", "a ball thrown and bounces",

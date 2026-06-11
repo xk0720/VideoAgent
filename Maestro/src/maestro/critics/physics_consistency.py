@@ -1,28 +1,29 @@
-"""PhysicsConsistencyCritic — sim-as-ORACLE verification (C6, repositioned v0.3).
+"""PhysicsConsistencyCritic — physics-from-pixels verification (C6, v0.4).
 
-WHAT CHANGED vs v0.2 (see PHYSICS_LITERATURE_REVIEW.md):
-  • OLD framing: "did the generator obey the control signal we conditioned it
-    on?" — implemented by reading a `control_signal=...` metadata line. That
-    presumed sketch-as-conditioning, which the literature does not support
-    (trajectory conditioning on frozen models is trained-only and trajectories
-    under-determine physics; review §2-3).
-  • NEW framing: the simulator is a VERIFICATION ORACLE. We compare the motion
-    the sim says SHOULD happen against the motion OBSERVED in the generated
-    clip via a track extractor (mock now; CoTracker/RAFT in v0.3), PISA-style
-    normalized Trajectory-L2 (arXiv:2503.09595). Conditioning, if any, is
-    irrelevant to the verdict — only observed pixels matter.
+WHAT CHANGED vs v0.3:
+  • v0.3 compared observed motion against a SIMULATED expectation. That still
+    presumed the simulator knew masses/restitution/scale from one prompt — a
+    reviewer-fatal assumption ("your simulator is wrong, not the video").
+  • v0.4 is REFERENCE-FREE: a track extractor recovers observed motion, a
+    reliability gate certifies the tracks (trackers lie on generated video),
+    and the law layer asks the parameter-free question "is there ANY
+    physically consistent explanation for this track?" (best-law residual +
+    anomaly localization). Entities the measurement tier cannot check are
+    routed to world_model / vlm tiers and reported as explicit deferrals.
 
-Direct precedents (cite): PISA 2503.09595 (trajectory-L2 vs sim truth),
-Morpheus 2504.02918 (tracked quantities vs conservation laws), PhyCoBench
-2502.05503 (flow deviation), Physics-IQ 2501.09038 (predicted vs real frames).
-OUR increment: the oracle's verdict is localized (worst entity, severity) and
-feeds an agentic repair loop (Refiner/HSI), not just a benchmark score.
+Precedents (cite): Morpheus 2504.02918 (conservation residuals, benchmarking
+only), PISA 2503.09595 (trajectory residual as reward, sim ground truth),
+equation-discovery forecasting 2507.06830 (parametric fit to observed tracks).
+OUR increment: measured, interpretable, per-entity localized verdicts that
+drive best-of-N selection AND targeted repair (HSI), training-free, with
+tracker-reliability gating nobody else does (survey_physics_2026_06.md §4.1).
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from ..physics.oracle import BaseTrackExtractor, TrajectoryOracle
+from ..physics.tracks import BaseTrackExtractor
+from ..physics.verifier import PhysicsFromPixelsVerifier
 from ..types import (
     AssetMemory,
     CandidateClip,
@@ -35,19 +36,19 @@ from .base import BaseCritic
 
 
 class PhysicsConsistencyCritic(BaseCritic):
-    """Verify observed motion matches the sim-predicted motion (oracle check)."""
+    """Reference-free physical-consistency verdicts from observed pixels."""
 
     kind = "physics"
 
     def __init__(
         self,
-        divergence_threshold: float = 0.4,
+        violation_threshold: float = 0.4,
         extractor: Optional[BaseTrackExtractor] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.threshold = divergence_threshold
-        self.oracle = TrajectoryOracle(extractor=extractor)
+        self.threshold = violation_threshold
+        self.verifier = PhysicsFromPixelsVerifier(extractor=extractor)
 
     def review(
         self,
@@ -56,40 +57,66 @@ class PhysicsConsistencyCritic(BaseCritic):
         asset_memory: Optional[AssetMemory] = None,
         fps: int = 8,
     ) -> None:
-        cmp = self.oracle.compare(clip, spec, fps)
-        if cmp is None:
-            # No sketch / no predicted motion / extraction failed -> stay silent
-            # (nothing to verify; avoids spurious CONSERVATION noise).
+        result = self.verifier.verify(clip, spec, fps)
+        if result is None:
+            # No annotation / clip unreadable -> stay silent (nothing was
+            # verified; avoids emitting confident verdicts from no evidence).
             self._log({"shot_idx": spec.shot_idx, "revision": clip.revision},
-                      {"oracle": "silent"})
+                      {"verifier": "silent"})
             return
 
-        if cmp.deviation >= self.threshold:
-            n_frames = max(1, int(round(spec.duration * fps)))
+        # HSI tier-1 replans tighten the bar (strictness > 1.0)
+        strictness = (
+            spec.physics_annotation.strictness if spec.physics_annotation else 1.0
+        )
+        threshold = self.threshold / max(strictness, 1e-6)
+        n_frames = max(1, int(round(spec.duration * fps)))
+
+        for report in result.measured_reports:
+            if report.violation < threshold:
+                continue
+            if report.anomalies:
+                worst = max(report.anomalies, key=lambda a: a.severity)
+                mode, frame_range, why = worst.mode, worst.frame_range, worst.note
+            else:
+                mode = PhysFailureMode.GRAVITY_INERTIA
+                frame_range = (0, n_frames)
+                why = (f"no consistent motion law (best '{report.fit.law}' "
+                       f"residual {report.fit.residual:.2f})")
             verdict = PhysicsVerdict(
-                mode=PhysFailureMode.CONSERVATION,
-                frame_range=(0, n_frames),
-                severity=cmp.deviation,
+                mode=mode,
+                frame_range=frame_range,
+                severity=report.violation,
+                source="law_verifier",
                 suggested_intervention=(
-                    f"observed motion of '{cmp.worst_entity}' diverges from the "
-                    "simulated expectation; re-anchor keyframes to physically "
-                    "plausible poses (apex/contact) and regenerate; consider "
-                    "best-of-N reseed"
+                    f"observed motion of '{report.entity}' has no physical "
+                    f"explanation ({why}); regenerate this span with the "
+                    "entity following one continuous passive trajectory; "
+                    "consider best-of-N reseed"
                 ),
             )
             clip.physics_verdicts.append(verdict)
             clip.checklist.items.append(
                 ChecklistItem(
-                    question="Does the observed motion match the physics oracle's prediction?",
+                    question=(f"Is the observed motion of '{report.entity}' "
+                              "physically explainable?"),
                     kind="physics",
                     passed=False,
                     fix_instruction=verdict.suggested_intervention,
                 )
             )
-        # MetricTool owns metric_scores and derives p2 from the CONSERVATION
-        # verdict above (single ownership, no stash-then-wipe).
+
+        # MetricTool owns metric_scores and derives p2 from the verdicts above
+        # (single ownership, no stash-then-wipe).
         self._log(
             {"shot_idx": spec.shot_idx, "revision": clip.revision},
-            {"deviation": cmp.deviation, "per_entity": cmp.per_entity,
-             "worst_entity": cmp.worst_entity, "flagged": cmp.deviation >= self.threshold},
+            {
+                "worst_violation": result.worst_violation,
+                "per_entity": {r.entity: r.violation
+                               for r in result.measured_reports},
+                "coverage": result.coverage,           # tier -> entities (S3)
+                "uncertified": result.uncertified,     # gated out (S2)
+                "threshold": round(threshold, 3),
+                "flagged": result.worst_violation >= threshold,
+            },
         )

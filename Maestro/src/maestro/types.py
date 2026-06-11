@@ -111,7 +111,14 @@ class AssetMemory:
 
 
 # ─────────────────────────────────────────────────────────────
-# Physics (C1 / E2)  — the differentiation core
+# Physics (C1 / C6) — physics-from-pixels VERIFICATION (no sketch, no sim)
+#
+# v0.4 repositioning: the old "sketch → simulate → control signal" line is
+# dead (a frozen video model cannot be controlled by a synthetic sketch, and
+# comparing against ONE simulated rollout presumes parameters we don't know).
+# What remains physical about a shot is an ANNOTATION: which entities should
+# move, what CLASS of motion each implies, and which failure modes to watch.
+# Verification happens reference-free, on the OBSERVED pixels (physics/laws.py).
 # ─────────────────────────────────────────────────────────────
 class PhysFailureMode(str, Enum):
     PENETRATION = "penetration"            # 穿模
@@ -123,14 +130,17 @@ class PhysFailureMode(str, Enum):
     CONSERVATION = "conservation"          # 守恒律 (公认最弱项)
 
 
+MotionClass = Literal["ballistic", "rigid", "fluid", "agentive", "static"]
+
+
 @dataclass
 class PhysEntity:
+    """A movable entity named in the prompt, plus the CLASS of motion the
+    prompt implies. The class decides HOW the entity can be verified (which
+    router tier), never how generation should be conditioned."""
+
     name: str
-    mass: float = 1.0
-    init_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    init_position: tuple[float, float, float] = (0.0, 0.0, 0.0)  # y is height above ground
-    forces: list[str] = field(default_factory=lambda: ["gravity"])
-    restitution: float = 0.6                  # bounciness on contact, 0..1
+    motion_class: MotionClass = "rigid"
 
 
 @dataclass
@@ -140,23 +150,33 @@ class PhysInteraction:
 
 
 @dataclass
-class PhysicsSketch:
-    """C1 sketch layer: lightweight physical representation + control signal."""
+class PhysicsAnnotation:
+    """What is physically at stake in a shot — verification seeds, not control.
+
+    Consumed by (a) the VerifiabilityRouter (which tier can check each entity),
+    (b) the track extractor (which entities to seed/track), (c) C7 skill
+    retrieval (expected_modes is the physical signature key). `strictness`
+    tightens the law-residual threshold on HSI tier-1 replans."""
 
     entities: list[PhysEntity] = field(default_factory=list)
     interactions: list[PhysInteraction] = field(default_factory=list)
-    control_signal: Optional[Path] = None       # trajectory/depth/flow image fed to gen
     expected_modes: list[PhysFailureMode] = field(default_factory=list)  # to watch
+    strictness: float = 1.0          # >1.0 = tighter verification thresholds
 
 
 @dataclass
 class PhysicsVerdict:
-    """PhysicsCritic output: localizable -> actionable."""
+    """Physics critic output: localizable -> actionable.
+
+    `source` separates evidence kinds so the metric suite can score them on
+    distinct axes: "vlm" = judged (PhysicsCritic), "law_verifier" = measured
+    (PhysicsConsistencyCritic, reference-free law checks)."""
 
     mode: PhysFailureMode
     frame_range: tuple[int, int]
     severity: float                # 0-1, higher = worse
     suggested_intervention: str
+    source: str = "vlm"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -202,7 +222,7 @@ class ShotSpec:
     identity_refs: list[str] = field(default_factory=list)
     style_refs: list[str] = field(default_factory=list)
     rhythmic_pacing: list[int] = field(default_factory=list)  # shot durations in beats
-    physics_sketch: Optional[PhysicsSketch] = None
+    physics_annotation: Optional[PhysicsAnnotation] = None
     event_graph: Optional[EventGraph] = None
     injected_lessons: list[str] = field(default_factory=list)  # C4
     matched_skill: Optional["Skill"] = None                    # C7 (v0.3)

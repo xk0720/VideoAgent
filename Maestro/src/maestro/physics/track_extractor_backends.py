@@ -1,27 +1,29 @@
-"""Real point-tracking track extractors (v0.3) — CoTracker / TAPIR.
+"""Real point-tracking track extractors (v0.4) — CoTracker / TAPIR.
 
-These implement the SAME `BaseTrackExtractor.extract(...)` contract as the mock
-in `physics/oracle.py`, so the oracle math and the whole pipeline are unchanged
-— you only fill the model call and flip `models.track_extractor.name` in config.
+These implement the SAME `BaseTrackExtractor.extract(...)` contract as the
+mock in `physics/tracks.py`, so the law checks and the whole pipeline are
+unchanged — you only fill the model call and flip
+`models.track_extractor.name` in config.
 
 ────────────────────────────────────────────────────────────────────────────
-What the extractor must do (oracle ground-truth recovery)
+What the extractor must do (observed-track recovery, reference-free)
 ────────────────────────────────────────────────────────────────────────────
-The oracle compares the simulator's EXPECTED per-entity screen tracks against
-the motion OBSERVED in the generated clip. A real extractor recovers the
-observed tracks by point tracking:
+There is no expected trajectory anywhere (the sketch line is dead). The
+extractor's only job is to recover what actually moves in the clip:
 
   1. decode the generated clip into frames (H×W×3);
-  2. for each entity, seed ONE query point at its expected start position
-     (normalized [0,1] → pixel), at t=0;
+  2. seed ONE query point per annotated entity at t=0. v0.4 seeds evenly
+     spaced points in the upper-center band (we do not know where entities
+     are); the real upgrade is open-vocabulary detection (GroundingDINO /
+     Sa2VA) to seed each entity at its detected centroid — same contract;
   3. run CoTracker / TAPIR → per-frame pixel tracks (+ visibility);
-  4. normalize pixel tracks back to [0,1] screen space (÷W, ÷H) so they are
-     directly comparable to `expected` (same convention as control_render's
-     `_project_to_screen`, image y grows downward).
+  4. normalize pixel tracks to [0,1] screen space (÷W, ÷H; y grows downward)
+     for physics/laws.py.
 
 Borrowed (cite): CoTracker (Karaev et al., Meta), TAPIR/TAP-Vid (DeepMind).
-OUR use: tracking is a *verification* instrument feeding the physics oracle —
-not a controller. The tracker's quality bounds p2's sharpness, nothing else.
+OUR use: tracking is a *verification* instrument feeding reference-free law
+checks — never a controller. Reliability gating (physics/reliability.py)
+decides whether each recovered track can be trusted at all.
 
 Graceful degradation (matches video_gen_backends / world_reward):
   • The generated clip must be a REAL decodable video. In the mock pipeline the
@@ -37,7 +39,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .oracle import BaseTrackExtractor, Track
+from .laws import Track
+from .tracks import BaseTrackExtractor
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,17 +111,15 @@ def _decode_frames(path: Path):
         return None
 
 
-def _seed_queries(expected: dict[str, Track], width: int, height: int):
-    """Build CoTracker queries [t, x_px, y_px] from each entity's start point.
-    Returns (queries_list, ordered_entity_names)."""
-    queries = []
-    names = []
-    for name, track in expected.items():
-        if not track:
-            continue
-        x0, y0 = track[0]
-        queries.append([0.0, x0 * width, y0 * height])
-        names.append(name)
+def _seed_queries(entities, width: int, height: int):
+    """Build CoTracker queries [t, x_px, y_px]: one seed per entity, evenly
+    spaced across the upper-center band (no detection yet — see module
+    docstring for the GroundingDINO upgrade path). Returns (queries, names)."""
+    names = [e.name for e in entities]
+    k = len(names)
+    queries = [
+        [0.0, (i + 1) / (k + 1) * width, 0.35 * height] for i in range(k)
+    ]
     return queries, names
 
 
@@ -167,16 +168,16 @@ class CoTrackerExtractor(BaseTrackExtractor):
                 f"device={self.device}): {exc}"
             ) from exc
 
-    def extract(self, clip, spec, expected, fps):
+    def extract(self, clip, spec, entities, fps):
         frames = _decode_frames(Path(clip.video_path))
         if frames is None or len(frames) < 2:
-            return None  # not a real/decodable video → oracle stays silent
+            return None  # not a real/decodable video → verifier stays silent
         self._ensure_loaded()
         try:
             import torch
 
             T, H, W = frames.shape[0], frames.shape[1], frames.shape[2]
-            queries, names = _seed_queries(expected, W, H)
+            queries, names = _seed_queries(entities, W, H)
             if not queries:
                 return None
             video = (
@@ -193,9 +194,6 @@ class CoTrackerExtractor(BaseTrackExtractor):
                     (float(pt[t, i, 0] / W), float(pt[t, i, 1] / H))
                     for t in range(pt.shape[0])
                 ]
-            # entities with no query (empty expected track) → empty observed
-            for name in expected:
-                observed.setdefault(name, [])
             return observed
         except Exception:
             # A tracking failure is non-fatal: stay silent rather than crash.
@@ -225,7 +223,7 @@ class TAPIRExtractor(BaseTrackExtractor):
             "'mock-track'."
         )
 
-    def extract(self, clip, spec, expected, fps):
+    def extract(self, clip, spec, entities, fps):
         frames = _decode_frames(Path(clip.video_path))
         if frames is None or len(frames) < 2:
             return None

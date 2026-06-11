@@ -1,6 +1,6 @@
 """SkillLibrary — C7 PhysicsTyped Skill Library (v0.3).
 
-A skill is a *compiled shot recipe* — sketch params + cinematography preset +
+A skill is a *compiled shot recipe* — physics annotation + cinematography preset +
 checklist + acceptance thresholds + lesson pointers — that the HSI Verifier
 already accepted under non-trivial physics. Distinct from:
 
@@ -31,7 +31,7 @@ from ..types import (
     PhysEntity,
     PhysFailureMode,
     PhysInteraction,
-    PhysicsSketch,
+    PhysicsAnnotation,
     Skill,
 )
 
@@ -71,7 +71,11 @@ class SkillLibrary:
                 continue
             d = json.loads(line)
             sig = [PhysFailureMode(m) for m in d.get("physical_signature", [])]
-            entities = [PhysEntity(**e) for e in d.get("entities", [])]
+            entities = [
+                PhysEntity(name=e["name"],
+                           motion_class=e.get("motion_class", "rigid"))
+                for e in d.get("entities", [])
+            ]
             interactions = [PhysInteraction(**i) for i in d.get("interactions", [])]
             cinema = CinematographyTags(**d.get("cinematography_preset", {}))
             skill = Skill(
@@ -108,8 +112,7 @@ class SkillLibrary:
                     "physical_signature": [m.value for m in s.physical_signature],
                     "triggers": s.triggers,
                     "entities": [
-                        {"name": e.name, "mass": e.mass,
-                         "init_velocity": list(e.init_velocity), "forces": e.forces}
+                        {"name": e.name, "motion_class": e.motion_class}
                         for e in s.entities
                     ],
                     "interactions": [
@@ -157,7 +160,7 @@ class SkillLibrary:
         self,
         name: str,
         spec_prompt: str,
-        sketch: PhysicsSketch,
+        annotation: PhysicsAnnotation,
         cinematography: CinematographyTags,
         thresholds: dict[str, float],
         coupled_lesson_ids: Optional[list[str]] = None,
@@ -166,7 +169,7 @@ class SkillLibrary:
         """Freeze a successful HSI outcome into a Skill. Idempotent on
         (name, physical_signature) — re-distillation reconfirms perf_score.
         """
-        sig = list(sketch.expected_modes)
+        sig = list(annotation.expected_modes)
         skill_id = _stable_skill_id(name, sig)
         if skill_id in self._by_id:
             existing = self._by_id[skill_id]
@@ -185,13 +188,12 @@ class SkillLibrary:
             physical_signature=sig,
             triggers=[t for t in spec_prompt.lower().split() if len(t) > 3][:6],
             entities=[
-                PhysEntity(name=e.name, mass=e.mass,
-                           init_velocity=tuple(e.init_velocity), forces=list(e.forces))
-                for e in sketch.entities
+                PhysEntity(name=e.name, motion_class=e.motion_class)
+                for e in annotation.entities
             ],
             interactions=[
                 PhysInteraction(kind=i.kind, entities=list(i.entities))
-                for i in sketch.interactions
+                for i in annotation.interactions
             ],
             cinematography_preset=CinematographyTags(
                 shot_scale=cinematography.shot_scale,

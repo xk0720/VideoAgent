@@ -9,7 +9,7 @@ from maestro.critics.physics import PhysicsCritic
 from maestro.critics.rhythm import RhythmCritic
 from maestro.critics.semantic import SemanticCritic
 from maestro.memory.lesson_library import LessonLibrary
-from maestro.physics.sketch import build_physics_sketch
+from maestro.physics.annotate import annotate_physics
 from maestro.pipeline.generate_loop import generate_shot
 from maestro.types import ShotSpec
 
@@ -23,8 +23,8 @@ def _board():
 def test_loop_converges_and_is_monotonic(tmp_path: Path):
     spec = ShotSpec(shot_idx=0, duration=1.0,
                     prompt="a ball is thrown and bounces off a wall")
-    build_physics_sketch(spec, tmp_path, fps=8)
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    annotate_physics(spec)
+    spec.physics_annotation = annotate_physics(spec)
 
     res = generate_shot(
         spec, _board(), GeneratorAgent(), RefinerAgent(), VerifierAgent(),
@@ -41,7 +41,7 @@ def test_loop_converges_and_is_monotonic(tmp_path: Path):
 
 def test_lesson_distilled(tmp_path: Path):
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball falls and bounces")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
     lib = LessonLibrary(tmp_path / "l.jsonl")
     generate_shot(spec, _board(), GeneratorAgent(), RefinerAgent(), VerifierAgent(),
                   tmp_path, lesson_library=lib, max_revisions=4)
@@ -51,7 +51,7 @@ def test_lesson_distilled(tmp_path: Path):
 def test_keyframe_local_edit_is_used(tmp_path: Path):
     # a prompt with physics issues should trigger a refiner keyframe edit
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="water pours and splashes")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
     res = generate_shot(spec, _board(), GeneratorAgent(), RefinerAgent(),
                         VerifierAgent(), tmp_path, max_revisions=5)
     # at least one revision happened (local repair), proving loop engaged

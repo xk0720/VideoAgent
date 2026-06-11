@@ -22,7 +22,7 @@ from maestro.critics.rhythm import RhythmCritic
 from maestro.critics.semantic import SemanticCritic
 from maestro.memory.lesson_library import LessonLibrary
 from maestro.models.mllm import MockMLLMClient
-from maestro.physics.sketch import build_physics_sketch
+from maestro.physics.annotate import annotate_physics
 from maestro.pipeline.generate_loop import generate_shot
 from maestro.tools.metric_tool import MetricTool
 from maestro.types import CandidateClip, Checklist, PhysFailureMode, ShotSpec
@@ -44,55 +44,52 @@ def _board(extra_critics=None):
 # ─────────────────────────────────────────────────────────────────────────────
 # C6 — PhysicsConsistencyCritic
 # ─────────────────────────────────────────────────────────────────────────────
-def test_consistency_critic_passes_when_generator_followed_sketch(tmp_path: Path):
-    """A clip generated WITH the sketch should not be flagged as inconsistent."""
+def test_consistency_critic_passes_on_refined_clip(tmp_path: Path):
+    """A refined clip (mock revision >= 1) has law-consistent motion -> no
+    measured verdicts."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown and hits a wall")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
+    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
+    PhysicsConsistencyCritic().review(clip, spec, fps=8)
+    assert all(v.source != "law_verifier" for v in clip.physics_verdicts)
+
+
+def test_consistency_critic_flags_inexplicable_motion(tmp_path: Path):
+    """A revision-0 clip's observed track contains a mid-air reversal — the
+    reference-free law layer must flag it with a localized, measured verdict."""
+    spec = ShotSpec(shot_idx=0, duration=2.0, prompt="a ball is thrown")
+    spec.physics_annotation = annotate_physics(spec)
     clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
     PhysicsConsistencyCritic().review(clip, spec, fps=8)
-    # No CONSERVATION verdict should have been added (the mock generator did
-    # receive the control_signal).
-    assert all(v.mode != PhysFailureMode.CONSERVATION for v in clip.physics_verdicts)
+    measured = [v for v in clip.physics_verdicts if v.source == "law_verifier"]
+    assert measured, "expected a measured verdict for inexplicable motion"
+    assert measured[0].mode == PhysFailureMode.GRAVITY_INERTIA
+    assert measured[0].severity >= 0.3
+    assert measured[0].frame_range[0] > 0      # localized, not whole-clip
 
 
-def test_consistency_critic_flags_clip_that_ignored_sketch(tmp_path: Path):
-    """A clip with `control_signal=None` in its metadata should trip the critic."""
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
-    bogus = tmp_path / "bogus.mp4"
-    bogus.write_text("MOCK VIDEO\ncontrol_signal=None\nfirst_frame=None\n",
-                     encoding="utf-8")
-    clip = CandidateClip(shot_idx=0, video_path=bogus, keyframes=[], revision=0,
-                        checklist=Checklist())
-    PhysicsConsistencyCritic().review(clip, spec, fps=8)
-    conserv = [v for v in clip.physics_verdicts
-               if v.mode == PhysFailureMode.CONSERVATION]
-    assert conserv, "expected a CONSERVATION verdict for a clip that ignored sketch"
-    assert conserv[0].severity >= 0.4
-
-
-def test_consistency_critic_silent_when_no_sketch(tmp_path: Path):
-    """No sketch -> nothing to be consistent with -> no verdict, no metric noise."""
+def test_consistency_critic_silent_when_no_annotation(tmp_path: Path):
+    """No annotation -> nothing to verify -> no verdict, no metric noise."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a butterfly flutters")
     clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
     PhysicsConsistencyCritic().review(clip, spec, fps=8)
-    assert not any(v.mode == PhysFailureMode.CONSERVATION for v in clip.physics_verdicts)
+    assert not any(v.source == "law_verifier" for v in clip.physics_verdicts)
 
 
 def test_metric_tool_splits_p1_and_p2(tmp_path: Path):
-    """MetricTool reports `p1_physics` and `p2_sketch_consistency` separately so
-    a native physics failure stays distinguishable from a sketch-divergence one.
-    """
+    """MetricTool reports `p1_physics` (VLM-judged) and `p2_law_consistency`
+    (measured) separately so a judged failure stays distinguishable from a
+    measured one."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
-    clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
+    # refined clip: measured checks pass, so p2 is high regardless of the
+    # judged verdicts the VLM PhysicsCritic may still emit
+    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
     board = _board()
     board.review(clip, spec, None, fps=8)
     assert "p1_physics" in clip.metric_scores
-    assert "p2_sketch_consistency" in clip.metric_scores
-    # A clip that followed the sketch should have HIGH p2 even when p1 reflects
-    # native verdicts the PhysicsCritic still emits at revision 0.
-    assert clip.metric_scores["p2_sketch_consistency"] >= 0.8
+    assert "p2_law_consistency" in clip.metric_scores
+    assert clip.metric_scores["p2_law_consistency"] >= 0.8
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,7 +122,7 @@ def test_hsi_escalates_past_tier0_when_local_edit_cannot_fix(tmp_path: Path):
     """With a stubborn judge, the loop should escalate beyond Tier 0."""
     spec = ShotSpec(shot_idx=0, duration=1.0,
                     prompt="a ball is thrown and hits a wall")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
 
     judge = _StubbornMLLM()
     # Force weighted_total to depend ONLY on the stubborn judge's m1, otherwise
@@ -157,7 +154,7 @@ def test_hsi_escalates_past_tier0_when_local_edit_cannot_fix(tmp_path: Path):
 def test_hsi_back_compat_without_tier_agents(tmp_path: Path):
     """No physics_planner / director passed -> behaves like v0.1 single-tier."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
     res = generate_shot(
         spec, _board(),
         GeneratorAgent(), RefinerAgent(), VerifierAgent(), tmp_path,
@@ -177,7 +174,7 @@ def test_lesson_distill_picks_resolved_mode(tmp_path: Path):
     """
     spec = ShotSpec(shot_idx=0, duration=1.0,
                     prompt="a ball falls and hits the ground")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
     lib = LessonLibrary(tmp_path / "lessons.jsonl")
     generate_shot(
         spec, _board(),
@@ -186,7 +183,7 @@ def test_lesson_distill_picks_resolved_mode(tmp_path: Path):
     )
     assert len(lib) == 1
     # The stored mode must be one of the modes the sketch flagged for this prompt.
-    expected = set(spec.physics_sketch.expected_modes)
+    expected = set(spec.physics_annotation.expected_modes)
     assert lib.lessons[0].failure_mode in expected
 
 
@@ -199,7 +196,7 @@ def test_recompute_metrics_does_not_re_run_critics(tmp_path: Path):
     reflect the smaller verdict set."""
     spec = ShotSpec(shot_idx=0, duration=1.0,
                     prompt="a ball is thrown and bounces off a wall")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec.physics_annotation = annotate_physics(spec)
     board = _board()
     clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
     board.review(clip, spec, None, fps=8)

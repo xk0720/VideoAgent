@@ -4,13 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from maestro.memory.skill_library import SkillLibrary
-from maestro.physics.sketch import build_physics_sketch
+from maestro.physics.annotate import annotate_physics
 from maestro.types import CinematographyTags, PhysFailureMode, ShotSpec
 
 
 def _sketch(tmp_path: Path, prompt: str = "a ball is thrown and bounces off a wall"):
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt=prompt)
-    return spec, build_physics_sketch(spec, tmp_path, fps=8)
+    return spec, annotate_physics(spec)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ def test_skill_distill_writes_persisted_record(tmp_path: Path):
     skill = lib.distill(
         name="projectile_bounce",
         spec_prompt=spec.prompt,
-        sketch=sketch,
+        annotation=sketch,
         cinematography=CinematographyTags(),
         thresholds={"weighted_total": 0.85},
         coupled_lesson_ids=["L_test_lesson"],

@@ -22,7 +22,7 @@ def _attach_skills(
     skill_library: SkillLibrary,
     lesson_library: Optional[LessonLibrary] = None,
 ) -> None:
-    """For each spec with a built physics sketch, retrieve a Skill keyed on
+    """For each spec with a physics annotation, retrieve a Skill keyed on
     its expected_modes signature. When a skill matches:
 
       • set `spec.matched_skill` (downstream agents can inspect),
@@ -34,9 +34,9 @@ def _attach_skills(
     revision logic still functions identically.
     """
     for spec in specs:
-        if spec.physics_sketch is None:
+        if spec.physics_annotation is None:
             continue
-        modes = list(spec.physics_sketch.expected_modes)
+        modes = list(spec.physics_annotation.expected_modes)
         if not modes:
             continue
         hits = skill_library.retrieve(spec.prompt, modes, top_k=1)

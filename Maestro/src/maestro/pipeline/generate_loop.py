@@ -9,8 +9,8 @@ The soul of Maestro. Per shot:
        Tier 0  refiner.plan  →  image_edit + first_frame + extra_prompt
                                 (cheapest: keyframe-level LOCAL edit, M3-style)
        Tier 1  physics_planner.replan(strictness)
-                                (rebuild the sketch with gentler velocities so
-                                 the conditional generator gets an easier target)
+                                (tighten the physics-verification bar and
+                                 regenerate with anti-violation prompt hints)
        Tier 2  director.refine_spec(hint)
                                 (widen scope: slower / wider cinematography +
                                  prompt rewrite — VISTA-style but bounded)
@@ -100,11 +100,11 @@ def _distill_lesson(
 ) -> Optional[tuple[PhysFailureMode, str]]:
     """Pick the failure mode that was ACTUALLY resolved during the loop.
 
-    Old logic always used `spec.physics_sketch.expected_modes[0]` regardless of
+    Old logic always used `physics_annotation.expected_modes[0]` regardless of
     whether anything was fixed. New: a mode is "resolved" if it appeared in the
     INITIAL review (initial_modes) but not in the FINAL review and was not
     escape-hatched. We distill from one of those true wins. Fall back to the
-    sketch's expected_modes[0] only if no fix was actually achieved.
+    annotation's expected_modes[0] only if no fix was actually achieved.
     """
     final_modes = {v.mode for v in final.physics_verdicts}
     skipped = {
@@ -116,8 +116,8 @@ def _distill_lesson(
     if resolved:
         m = resolved[0]
         return m, suggest_intervention(m)
-    if spec.physics_sketch and spec.physics_sketch.expected_modes:
-        m = spec.physics_sketch.expected_modes[0]
+    if spec.physics_annotation and spec.physics_annotation.expected_modes:
+        m = spec.physics_annotation.expected_modes[0]
         return m, suggest_intervention(m)
     return None
 
@@ -179,13 +179,13 @@ def _tier1_replan_physics(
     ref_images,
     fps: int,
 ) -> tuple[Optional[CandidateClip], int]:
-    """Replan the physics sketch with stricter constraints."""
+    """Replan: tighten the physics verification bar and regenerate."""
     physics_planner.replan(spec, cache_dir, fps=fps, strictness=0.55)
     gen_calls = 0
     for k in range(k_retries):
         cand = generator.run(
             spec, cache_dir, revision=r, seed=100 + k,  # offset seeds so files differ
-            extra_prompt="tighter physics sketch (slower trajectory)",
+            extra_prompt="one continuous passive trajectory per moving object; no mid-air direction changes",
             reference_images=ref_images, fps=fps,
         )
         gen_calls += 1
@@ -298,7 +298,7 @@ def generate_shot(
         )
         gen_calls += calls
 
-        # Tier 1 — replan the physics sketch.
+        # Tier 1 — tighten physics verification and regenerate.
         if accepted_cand is None and physics_planner is not None:
             tier_for_round = 1
             escalations += 1
@@ -355,7 +355,7 @@ def generate_shot(
     distilled_skill_id = ""
     if (
         skill_library is not None
-        and spec.physics_sketch is not None
+        and spec.physics_annotation is not None
         and skill_library.should_distill(
             escalations=escalations,
             converged=converged,
@@ -363,7 +363,7 @@ def generate_shot(
         )
     ):
         modes_tag = "+".join(
-            m.value for m in spec.physics_sketch.expected_modes
+            m.value for m in spec.physics_annotation.expected_modes
         ) or "generic"
         # Stable, human-readable name — same physics+prompt collapses to one skill.
         skill_name = f"skill_{modes_tag}__{abs(hash(spec.prompt)) & 0xFFFFF:05x}"
@@ -373,7 +373,7 @@ def generate_shot(
         skill = skill_library.distill(
             name=skill_name,
             spec_prompt=spec.prompt,
-            sketch=spec.physics_sketch,
+            annotation=spec.physics_annotation,
             cinematography=spec.cinematography,
             thresholds={
                 "weighted_total":

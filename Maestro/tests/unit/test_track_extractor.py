@@ -1,4 +1,4 @@
-"""Track-extractor factory + real-backend graceful degradation (C6 oracle).
+"""Track-extractor factory + real-backend graceful degradation (C6 v0.4).
 
 All tests here are CPU-only and DO NOT require torch / cotracker installed:
 the real backend decodes frames BEFORE loading the model, so a mock (non-video)
@@ -11,15 +11,21 @@ from pathlib import Path
 
 import pytest
 
-from maestro.physics.oracle import (
+from maestro.agents.generator import GeneratorAgent
+from maestro.physics.annotate import annotate_physics
+from maestro.physics.tracks import (
     BaseTrackExtractor,
     MockTrackExtractor,
-    TrajectoryOracle,
     build_track_extractor,
 )
-from maestro.physics.sketch import build_physics_sketch
-from maestro.agents.generator import GeneratorAgent
+from maestro.physics.verifier import PhysicsFromPixelsVerifier
 from maestro.types import CandidateClip, ShotSpec
+
+
+def _spec(prompt="a ball falls") -> ShotSpec:
+    spec = ShotSpec(shot_idx=0, duration=2.0, prompt=prompt)
+    spec.physics_annotation = annotate_physics(spec)
+    return spec
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -50,30 +56,45 @@ def test_factory_unknown_backend_raises():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Mock extractor contract
+# ─────────────────────────────────────────────────────────────────────────────
+def test_mock_extractor_tracks_every_entity(tmp_path: Path):
+    spec = _spec("a ball falls while a person runs")
+    clip = GeneratorAgent().run(spec, tmp_path, revision=0)
+    tracks = MockTrackExtractor().extract(
+        clip, spec, spec.physics_annotation.entities, fps=8
+    )
+    assert set(tracks) == {e.name for e in spec.physics_annotation.entities}
+    n = max(8, int(round(spec.duration * 8)))
+    assert all(len(t) == n for t in tracks.values())
+
+
+def test_mock_extractor_none_on_missing_clip(tmp_path: Path):
+    spec = _spec()
+    clip = CandidateClip(shot_idx=0, video_path=tmp_path / "nope.mp4")
+    assert MockTrackExtractor().extract(
+        clip, spec, spec.physics_annotation.entities, fps=8
+    ) is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Graceful degradation — real extractor on a non-video clip → None (silent)
 # ─────────────────────────────────────────────────────────────────────────────
 def test_cotracker_returns_none_on_mock_text_clip(tmp_path: Path):
     """A mock pipeline writes a TEXT placeholder with a .mp4 name. The real
-    extractor must return None (oracle stays silent) — not crash, not load
+    extractor must return None (verifier stays silent) — not crash, not load
     torch — because there are no pixels to track."""
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec = _spec()
     clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
-
     ex = build_track_extractor({"name": "cotracker", "device": "cpu"})
-    expected = TrajectoryOracle().expected_tracks(spec)
-    assert expected is not None
-    observed = ex.extract(clip, spec, expected, fps=8)
-    assert observed is None
+    assert ex.extract(clip, spec, spec.physics_annotation.entities, fps=8) is None
 
 
 def test_cotracker_returns_none_on_missing_file(tmp_path: Path):
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec = _spec()
     clip = CandidateClip(shot_idx=0, video_path=tmp_path / "nope.mp4")
     ex = build_track_extractor({"name": "cotracker"})
-    expected = TrajectoryOracle().expected_tracks(spec) or {}
-    assert ex.extract(clip, spec, expected, fps=8) is None
+    assert ex.extract(clip, spec, spec.physics_annotation.entities, fps=8) is None
 
 
 def test_decode_frames_rejects_non_video(tmp_path: Path):
@@ -88,36 +109,34 @@ def test_decode_frames_rejects_non_video(tmp_path: Path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Oracle still works end-to-end with a real-backend extractor configured
+# Verifier still works end-to-end with a real-backend extractor configured
 # (degrades to silent on mock clips — p2 not spuriously dinged)
 # ─────────────────────────────────────────────────────────────────────────────
-def test_oracle_silent_with_real_extractor_on_mock_clip(tmp_path: Path):
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+def test_verifier_silent_with_real_extractor_on_mock_clip(tmp_path: Path):
+    spec = _spec()
     clip = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
-    oracle = TrajectoryOracle(extractor=build_track_extractor({"name": "cotracker"}))
-    # extraction fails on the text placeholder → compare() returns None (silent)
-    assert oracle.compare(clip, spec, fps=8) is None
+    verifier = PhysicsFromPixelsVerifier(
+        extractor=build_track_extractor({"name": "cotracker"})
+    )
+    # extraction fails on the text placeholder → verify() returns None (silent)
+    assert verifier.verify(clip, spec, fps=8) is None
 
 
 def test_cotracker_loud_failure_on_real_video_when_unwired(tmp_path: Path, monkeypatch):
     """The crucial honesty guarantee: a DECODABLE video + missing tracker model
-    must raise LOUDLY (not silently emit a perfect, wrong p2). We fake a
-    decodable clip and point at a checkpoint, forcing the cotracker import which
-    is absent in this env → RuntimeError from _ensure_loaded."""
+    must raise LOUDLY (not silently emit a perfect, wrong verdict). We fake a
+    decodable clip, forcing the torch/cotracker import which is absent in this
+    env → RuntimeError from _ensure_loaded."""
     pytest.importorskip("numpy")
     import numpy as np
 
     import maestro.physics.track_extractor_backends as be
 
-    # Pretend the clip decodes to 3 RGB frames.
     monkeypatch.setattr(be, "_decode_frames",
                         lambda p: np.zeros((3, 16, 16, 3), dtype="uint8"))
-    spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
-    spec.physics_sketch = build_physics_sketch(spec, tmp_path, fps=8)
+    spec = _spec()
     clip = CandidateClip(shot_idx=0, video_path=tmp_path / "real.mp4")
-    expected = TrajectoryOracle().expected_tracks(spec)
-    # checkpoint path forces the `import cotracker` branch → ImportError → loud.
-    ex = build_track_extractor({"name": "cotracker", "checkpoint": "/no/such.pth"})
+    ex = build_track_extractor({"name": "cotracker", "checkpoint": "/no/such.pth",
+                                "device": "cpu"})
     with pytest.raises(RuntimeError):
-        ex.extract(clip, spec, expected, fps=8)
+        ex.extract(clip, spec, spec.physics_annotation.entities, fps=8)

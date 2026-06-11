@@ -49,7 +49,7 @@ metrics:
     m1_semantic: 0.22
     m2_temporal: 0.13
     p1_physics: 0.22              # native physics-failure modes (C1 critic layer)
-    p2_sketch_consistency: 0.10   # oracle observed-vs-expected trajectory (C6)
+    p2_law_consistency: 0.10      # measured law-residual verification (C6 v0.4)
     id1_identity: 0.13
     m5_rhythm: 0.10
     aesthetic: 0.10

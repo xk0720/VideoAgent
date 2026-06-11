@@ -59,8 +59,8 @@ class MockMLLMClient(BaseMLLMClient):
     # ── physics verdicts (localized, per failure mode) ──
     def assess_physics(self, clip: CandidateClip, spec: ShotSpec, fps: int) -> list[PhysicsVerdict]:
         expected = (
-            spec.physics_sketch.expected_modes
-            if spec.physics_sketch and spec.physics_sketch.expected_modes
+            spec.physics_annotation.expected_modes
+            if spec.physics_annotation and spec.physics_annotation.expected_modes
             else detect_expected_modes(spec.prompt)
         )
         verdicts: list[PhysicsVerdict] = []
