@@ -139,7 +139,7 @@ def test_hsi_falls_back_to_escape_hatch_when_all_tiers_fail(tmp_path: Path):
 
     judge = _AlwaysFailingMLLM()
     # Pin weights to dims the stubborn judge controls so the Verifier cannot
-    # accept on m2/aesthetic auto-improvement.
+    # accept on m2's applied-fix/anchoring improvement.
     weights = {"m1_semantic": 0.5, "p1_physics": 0.5, "m2_temporal": 0.0,
                "p2_law_consistency": 0.0, "id1_identity": 0.0,
                "m5_rhythm": 0.0, "aesthetic": 0.0}

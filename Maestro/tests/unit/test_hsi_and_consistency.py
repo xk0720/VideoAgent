@@ -44,18 +44,30 @@ def _board(extra_critics=None):
 # ─────────────────────────────────────────────────────────────────────────────
 # C6 — PhysicsConsistencyCritic
 # ─────────────────────────────────────────────────────────────────────────────
-def test_consistency_critic_passes_on_refined_clip(tmp_path: Path):
-    """A refined clip (mock revision >= 1) has law-consistent motion -> no
-    measured verdicts."""
+# A physics repair instruction as the loop would thread it into the
+# regeneration prompt; the mock track is clean only when this text is
+# actually recorded in the clip body (content-derived signal).
+PHYSICS_FIX = "one continuous passive trajectory"
+
+
+def test_consistency_critic_passes_on_repaired_clip(tmp_path: Path):
+    """A clip whose body records an APPLIED physics fix has law-consistent
+    motion -> no measured verdicts. A bare revision bump without the fix
+    stays flagged (the signal reads the artifact, not the counter)."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown and hits a wall")
     spec.physics_annotation = annotate_physics(spec)
-    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
+    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8,
+                                extra_prompt=PHYSICS_FIX)
     PhysicsConsistencyCritic().review(clip, spec, fps=8)
     assert all(v.source != "law_verifier" for v in clip.physics_verdicts)
+    # Negative control: regenerated WITHOUT the fix -> still flagged.
+    clock = GeneratorAgent().run(spec, tmp_path, revision=1, seed=1, fps=8)
+    PhysicsConsistencyCritic().review(clock, spec, fps=8)
+    assert any(v.source == "law_verifier" for v in clock.physics_verdicts)
 
 
 def test_consistency_critic_flags_inexplicable_motion(tmp_path: Path):
-    """A revision-0 clip's observed track contains a mid-air reversal — the
+    """An unrepaired clip's observed track contains a mid-air reversal — the
     reference-free law layer must flag it with a localized, measured verdict."""
     spec = ShotSpec(shot_idx=0, duration=2.0, prompt="a ball is thrown")
     spec.physics_annotation = annotate_physics(spec)
@@ -82,9 +94,11 @@ def test_metric_tool_splits_p1_and_p2(tmp_path: Path):
     measured one."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
     spec.physics_annotation = annotate_physics(spec)
-    # refined clip: measured checks pass, so p2 is high regardless of the
-    # judged verdicts the VLM PhysicsCritic may still emit
-    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
+    # repaired clip (physics fix actually applied): measured checks pass, so
+    # p2 is high regardless of the judged verdicts the VLM PhysicsCritic may
+    # still emit
+    clip = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8,
+                                extra_prompt=PHYSICS_FIX)
     board = _board()
     board.review(clip, spec, None, fps=8)
     assert "p1_physics" in clip.metric_scores
@@ -126,8 +140,8 @@ def test_hsi_escalates_past_tier0_when_local_edit_cannot_fix(tmp_path: Path):
 
     judge = _StubbornMLLM()
     # Force weighted_total to depend ONLY on the stubborn judge's m1, otherwise
-    # m2/aesthetic etc. auto-improve with revision and the Verifier accepts at
-    # Tier 0 even though the judge keeps failing the semantic checklist.
+    # m2 rises with the applied fix text / keyframe anchoring and the Verifier
+    # accepts at Tier 0 even though the judge keeps failing the checklist.
     weights = {"m1_semantic": 1.0, "m2_temporal": 0.0, "p1_physics": 0.0,
                "id1_identity": 0.0, "m5_rhythm": 0.0, "aesthetic": 0.0}
     board = ReviewBoard(

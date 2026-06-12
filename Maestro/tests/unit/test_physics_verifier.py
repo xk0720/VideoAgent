@@ -5,8 +5,10 @@ Guards the repositioning:
     track?" — no simulated expectation anywhere;
   • verdicts are localized (entity, frame range, failure mode) and the
     coverage report says which tier verified what (S3 transparency);
-  • the self-improve signal path: revision-0 mock clips contain a violation,
-    refined clips don't — so HSI has something real (in mock terms) to fix;
+  • the self-improve signal path is CONTENT-DERIVED: mock clips generated
+    without an applied physics repair contain a violation, clips whose body
+    records the fix don't — so HSI has something real (in mock terms) to
+    fix, and regenerating WITHOUT the fix never "improves";
   • optional world-model reward adds a `wm_reward` dimension without breaking
     metric output when unset.
 """
@@ -61,6 +63,12 @@ def _spec(prompt="a ball falls to the ground") -> ShotSpec:
     return spec
 
 
+# A physics repair instruction as the HSI loop would thread it into the
+# regeneration prompt — the mock track extractor keys "clean" on this text
+# actually appearing in the clip body (content-derived, not revision-derived).
+PHYSICS_FIX = "one continuous passive trajectory"
+
+
 # ─────────────────────────────────────────────────────────────
 # Verifier
 # ─────────────────────────────────────────────────────────────
@@ -78,17 +86,26 @@ def test_verifier_silent_when_clip_unreadable(tmp_path: Path):
     assert PhysicsFromPixelsVerifier().verify(clip, spec, fps=8) is None
 
 
-def test_verifier_flags_revision0_and_clears_after_refinement(tmp_path: Path):
-    """The mock signal path: rev-0 tracks contain a mid-air reversal, refined
-    tracks are clean — violations must fall monotonically."""
+def test_verifier_flags_unrepaired_and_clears_after_applied_fix(tmp_path: Path):
+    """The mock signal path is CONTENT-derived: tracks of a clip generated
+    without a physics repair contain a mid-air reversal; a clip whose body
+    records the applied fix is clean. Negative control: regenerating WITHOUT
+    the fix (new revision, new seed) must stay flagged — a clock-driven mock
+    would 'improve' here, which is the meta-error this test guards."""
     spec = _spec()
     verifier = PhysicsFromPixelsVerifier()
     v0 = verifier.verify(GeneratorAgent().run(spec, tmp_path, revision=0), spec, 8)
-    v1 = verifier.verify(GeneratorAgent().run(spec, tmp_path, revision=1), spec, 8)
+    v1 = verifier.verify(
+        GeneratorAgent().run(spec, tmp_path, revision=1, extra_prompt=PHYSICS_FIX),
+        spec, 8)
     assert v0 is not None and v1 is not None
     assert v0.worst_violation > 0.3        # flagged
-    assert v1.worst_violation < 0.1        # clean after refinement
+    assert v1.worst_violation < 0.1        # clean after the fix was APPLIED
     assert v0.worst_violation > v1.worst_violation
+    # Negative control: a regeneration that never embeds the fix stays flagged.
+    v2 = verifier.verify(
+        GeneratorAgent().run(spec, tmp_path, revision=2, seed=7), spec, 8)
+    assert v2.worst_violation > 0.3
 
 
 def test_verifier_coverage_reports_every_tier(tmp_path: Path):
@@ -180,11 +197,17 @@ def test_critic_flags_violation_with_localized_verdict(tmp_path: Path):
     assert "conditioning" not in verdict.suggested_intervention
 
 
-def test_critic_clears_on_refined_clip(tmp_path: Path):
+def test_critic_clears_on_repaired_clip(tmp_path: Path):
     spec = _spec()
-    clip = GeneratorAgent().run(spec, tmp_path, revision=1)
+    clip = GeneratorAgent().run(spec, tmp_path, revision=1,
+                                extra_prompt=PHYSICS_FIX)
     PhysicsConsistencyCritic().review(clip, spec, fps=8)
     assert clip.physics_verdicts == []
+    # Negative control: same revision bump WITHOUT the fix stays flagged —
+    # the verdict reads the artifact, not the revision counter.
+    unrepaired = GeneratorAgent().run(spec, tmp_path, revision=1, seed=9)
+    PhysicsConsistencyCritic().review(unrepaired, spec, fps=8)
+    assert unrepaired.physics_verdicts
 
 
 def test_board_order_independence_measured_verdicts_survive(tmp_path: Path):
@@ -231,7 +254,8 @@ def test_strictness_tightens_the_bar(tmp_path: Path):
     replans keep strictness at 1.0 (tightening the bar on a failing shot
     inverts the repair incentive); strictness > 1.0 is only used by the
     log-only post-acceptance hardening pass (physics.post_accept_strictness).
-    We use a threshold above the rev-0 violation to construct the borderline."""
+    We use a threshold above the unrepaired clip's violation to construct
+    the borderline."""
     spec = _spec()
     clip0 = GeneratorAgent().run(spec, tmp_path, revision=0)
     lenient = PhysicsConsistencyCritic(violation_threshold=0.99)
@@ -245,9 +269,9 @@ def test_strictness_tightens_the_bar(tmp_path: Path):
 
 
 def test_tier1_accepts_repair_at_unchanged_bar(tmp_path: Path):
-    """Tier-1 semantics (F1): a shot whose physics check fails at rev 0
+    """Tier-1 semantics (F1): a shot whose physics check fails initially
     escalates to Tier 1 when local edits cannot help, and the Tier-1
-    regeneration (verdict-derived hints; revision bump → clean mock track)
+    regeneration (verdict-derived hints actually APPLIED → clean mock track)
     is ACCEPTED at the UNCHANGED 0.4 violation bar — no strictness
     tightening anywhere in the failing-shot path."""
     from maestro.agents.physics_planner import PhysicsPlannerAgent
@@ -257,15 +281,17 @@ def test_tier1_accepts_repair_at_unchanged_bar(tmp_path: Path):
     from maestro.pipeline.generate_loop import generate_shot
 
     class _LocalEditCannotFix(GeneratorAgent):
-        """Tier-0 candidates (seeds < 100) keep the violating motion — the
-        keyframe-level local edit cannot repair this defect. Tier-1 seeds
-        (100+) regenerate honestly (revision bump → clean mock track)."""
+        """Tier-0 candidates (seeds < 100) never embed the repair text — the
+        keyframe-level local edit cannot repair this defect, so their tracks
+        stay violating. Tier-1 seeds (100+) apply the verdict-derived hint
+        honestly (fix recorded in the body → clean mock track)."""
 
-        def run(self, spec, cache_dir, revision=0, seed=0, **kwargs):
+        def run(self, spec, cache_dir, revision=0, seed=0, extra_prompt="",
+                **kwargs):
             if seed < 100:
-                revision = 0
-            return super().run(spec, cache_dir, revision=revision,
-                               seed=seed, **kwargs)
+                extra_prompt = ""
+            return super().run(spec, cache_dir, revision=revision, seed=seed,
+                               extra_prompt=extra_prompt, **kwargs)
 
     spec = _spec("a ball falls to the ground")
     critic = PhysicsConsistencyCritic(violation_threshold=0.4)  # unchanged bar
@@ -304,15 +330,22 @@ def test_metric_tool_back_compat_without_world_reward(tmp_path: Path):
     assert "wm_reward" not in scores     # unset -> identical keys to v0.2.2
 
 
-def test_metric_tool_adds_wm_reward_and_it_improves(tmp_path: Path):
+def test_metric_tool_adds_wm_reward_and_it_improves_with_applied_fixes(tmp_path: Path):
+    """The reward is FIX-driven (content), not revision-driven: a clip whose
+    body records an applied repair scores higher; a bare revision bump
+    without the fix scores identically to the original."""
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball is thrown")
     tool = MetricTool(
         weights={"wm_reward": 1.0},      # isolate the dimension
         world_reward=MockWorldReward(),
     )
     c0 = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
-    c2 = GeneratorAgent().run(spec, tmp_path, revision=2, seed=0, fps=8)
-    s0, s2 = tool.run(c0, spec, None, 8), tool.run(c2, spec, None, 8)
+    c_fixed = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8,
+                                   extra_prompt=PHYSICS_FIX)
+    s0, s_fixed = tool.run(c0, spec, None, 8), tool.run(c_fixed, spec, None, 8)
     assert "wm_reward" in s0
-    assert s2["wm_reward"] >= s0["wm_reward"]          # improves with refinement
-    assert s2["weighted_total"] >= s0["weighted_total"]  # drives the search
+    assert s_fixed["wm_reward"] > s0["wm_reward"]          # applied fix helps
+    assert s_fixed["weighted_total"] > s0["weighted_total"]  # drives the search
+    # Negative control: regenerating WITHOUT the fix earns nothing.
+    c_clock = GeneratorAgent().run(spec, tmp_path, revision=2, seed=3, fps=8)
+    assert tool.run(c_clock, spec, None, 8)["wm_reward"] == s0["wm_reward"]

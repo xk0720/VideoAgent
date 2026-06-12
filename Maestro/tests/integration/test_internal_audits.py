@@ -154,9 +154,11 @@ def test_tournament_picks_strongest_under_honest_judge():
 # ─────────────────────────────────────────────────────────────────────────────
 def test_verification_signal_comes_from_observed_tracks(tmp_path: Path):
     """C6's lifeline: the measured verdict must derive from the extracted
-    track (rev 0 contains a mid-air reversal; rev 1 is law-consistent) and
-    NOT from anything the generator wrote about itself. A regression that
-    re-couples verdicts to generation metadata would break the loop silently.
+    track (an unrepaired clip contains a mid-air reversal; a clip whose body
+    records the APPLIED physics fix is law-consistent) and NOT from the
+    revision counter or any quality claim the generator wrote about itself.
+    A regression that re-couples verdicts to revision metadata would turn
+    the loop into a clock and break it silently.
     """
     from maestro.critics.physics_consistency import PhysicsConsistencyCritic
 
@@ -167,12 +169,20 @@ def test_verification_signal_comes_from_observed_tracks(tmp_path: Path):
     c0 = GeneratorAgent().run(spec, tmp_path, revision=0, seed=0, fps=8)
     critic.review(c0, spec, fps=8)
     measured0 = [v for v in c0.physics_verdicts if v.source == "law_verifier"]
-    assert measured0, "rev-0 violation must be detected from the track"
+    assert measured0, "unrepaired violation must be detected from the track"
 
-    c1 = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8)
+    c1 = GeneratorAgent().run(spec, tmp_path, revision=1, seed=0, fps=8,
+                              extra_prompt="one continuous passive trajectory")
     critic.review(c1, spec, fps=8)
     measured1 = [v for v in c1.physics_verdicts if v.source == "law_verifier"]
-    assert not measured1, "refined clip must clear the measured check"
+    assert not measured1, "repaired clip must clear the measured check"
+
+    # Negative control (signal honesty): a regeneration that never applies
+    # the fix must stay flagged — a clock-driven mock would 'clear' here.
+    c2 = GeneratorAgent().run(spec, tmp_path, revision=2, seed=5, fps=8)
+    critic.review(c2, spec, fps=8)
+    assert [v for v in c2.physics_verdicts if v.source == "law_verifier"], \
+        "fix-free regeneration must NOT clear the measured check"
 
     # The generator's own metadata must contain no physics claims at all.
     body = c0.video_path.read_text(encoding="utf-8", errors="ignore")
@@ -194,6 +204,69 @@ def test_verifier_reports_explicit_coverage(tmp_path: Path):
     assert "person" in result.coverage["world_model"]
     measured = {e.entity for e in result.entities if e.measured}
     assert "person" not in measured
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3b) Signal honesty — the loop's improvement signal is CONTENT-derived
+# ─────────────────────────────────────────────────────────────────────────────
+def test_loop_signal_is_content_derived(tmp_path: Path):
+    """Signal-honesty regression guard (parent repo docs/CRITICAL_REVIEW.md
+    §meta-error-1): the loop's convergence must come from repair instructions
+    ACTUALLY APPLIED to the artifact, never from the revision counter. With a
+    stub generator that silently IGNORES all repair conditioning, a
+    clock-driven mock would still "converge"; the honest mock must never
+    accept a candidate (every round falls through to the escape hatch) and
+    the defects must persist.
+    """
+    from maestro.agents.refiner import RefinerAgent
+    from maestro.agents.verifier import VerifierAgent
+    from maestro.critics.board import ReviewBoard
+    from maestro.critics.consistency import ConsistencyCritic
+    from maestro.critics.physics import PhysicsCritic
+    from maestro.critics.physics_consistency import PhysicsConsistencyCritic
+    from maestro.critics.rhythm import RhythmCritic
+    from maestro.critics.semantic import SemanticCritic
+    from maestro.pipeline.generate_loop import generate_shot
+
+    class _FixIgnoringGenerator(GeneratorAgent):
+        """Simulates a generator that does not respond to repair
+        conditioning: extra_prompt and the first-frame anchor are dropped, so
+        no fix ever lands in the artifact."""
+
+        def run(self, spec, cache_dir, revision=0, seed=0, extra_prompt="",
+                first_frame=None, **kwargs):
+            return super().run(spec, cache_dir, revision=revision, seed=seed,
+                               extra_prompt="", first_frame=None, **kwargs)
+
+    def _run(generator, cache_dir):
+        spec = ShotSpec(shot_idx=0, duration=2.0,
+                        prompt="a ball is thrown and bounces off a wall")
+        spec.physics_annotation = annotate_physics(spec)
+        board = ReviewBoard([
+            SemanticCritic(), PhysicsCritic(), PhysicsConsistencyCritic(),
+            ConsistencyCritic(), RhythmCritic(),
+        ])
+        return generate_shot(
+            spec, board, generator, RefinerAgent(), VerifierAgent(),
+            cache_dir, n_candidates=1, max_revisions=2, k_retries=1,
+        )
+
+    # Control: the real loop threads fix text into regenerations → converges.
+    honest = _run(GeneratorAgent(), tmp_path / "honest")
+    assert honest.converged and not honest.escape_hatched
+    assert honest.clip.physics_verdicts == []
+    assert not honest.clip.checklist.failed_items
+
+    # Fix-ignoring world: regeneration without the fix must NOT "improve".
+    broken = _run(_FixIgnoringGenerator(), tmp_path / "broken")
+    assert not broken.converged, "clock-driven convergence — signal leaked"
+    # No candidate was ever accepted: every revision fell through to the
+    # escape hatch (tier 3) because identical content ⇒ identical verdicts.
+    assert broken.tier_used and all(t == 3 for t in broken.tier_used), \
+        broken.tier_used
+    assert broken.escape_hatched
+    # The defects persist instead of decaying with the revision counter.
+    assert broken.clip.physics_verdicts or broken.clip.checklist.failed_items
 
 
 # ─────────────────────────────────────────────────────────────────────────────

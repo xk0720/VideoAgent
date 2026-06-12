@@ -33,6 +33,12 @@ class Tournament:
         return 0
 
     def select(self, candidates: list[CandidateClip], spec: ShotSpec) -> CandidateClip:
+        # HONEST MOCK DEGENERACY: in mock mode, same-round candidates that
+        # applied the same fixes have identical content-derived metrics, so
+        # every bidirectional comparison ties and the FIRST candidate wins by
+        # default — best-of-N is a no-op until a real MLLM judge breaks ties
+        # on actual pixels (different seeds -> different renders). This is by
+        # design: the mock must not invent a fake seed-quality signal.
         if not candidates:
             raise ValueError("no candidates to select from")
         champion = candidates[0]

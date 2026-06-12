@@ -10,11 +10,19 @@ only render-side text the mock produces); a committed value fails only when
 its known antonym appears AND the value itself does not. The real backend
 swaps in an MLLM frame comparison against the identity reference paths —
 same checklist contract. What was compared is logged either way.
+
+SIGNAL HONESTY (see models/mock_signals.py): a mock may simulate the WORLD,
+but critics must read the ARTIFACT (the clip's content), never the revision
+counter — a `f(revision)` verdict turns the self-improve loop into a clock
+(../docs/CRITICAL_REVIEW.md, parent repo, §meta-error-1). The identity item
+below is keyed to whether the clip body shows it was ACTUALLY conditioned on
+reference images or a first-frame anchor.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+from ..models.mock_signals import first_frame_anchored, reference_images_present
 from ..types import ChecklistItem
 from .base import BaseCritic
 
@@ -40,8 +48,11 @@ class ConsistencyCritic(BaseCritic):
         if not spec.identity_refs:
             passed, fix = True, ""
         else:
-            # mock: identity locked in once a revision has carried the anchor
-            passed = clip.revision >= 1
+            # mock: identity locked in iff the rendered artifact shows the
+            # anchor was ACTUALLY carried — reference images conditioned in,
+            # or a first-frame keyframe anchor (both read from the clip
+            # body, never from clip.revision).
+            passed = reference_images_present(clip) or first_frame_anchored(clip)
             fix = "" if passed else "carry identity anchor across frames; re-condition on reference image"
         clip.checklist.items.append(
             ChecklistItem(

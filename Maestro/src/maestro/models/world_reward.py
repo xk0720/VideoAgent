@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from ..types import CandidateClip, ShotSpec
+from .mock_signals import applied_fixes
 
 
 class BaseWorldReward(ABC):
@@ -34,18 +35,28 @@ class BaseWorldReward(ABC):
         Real impl: 1 - normalized V-JEPA-2 surprise over the clip."""
 
 
+# Mock reward constants — keyed to the clip's CONTENT (applied fixes) and its
+# current physics verdicts, never clip.revision (see models/mock_signals.py:
+# a revision-indexed reward would make the loop a clock, not feedback).
+WM_BASE = 0.55          # unrepaired clip's physical-predictability prior
+WM_PER_FIX_BONUS = 0.12  # each repair actually applied steadies the motion
+WM_SEVERITY_PENALTY = 0.2  # dent per unit of worst outstanding verdict severity
+
+
 class MockWorldReward(BaseWorldReward):
-    """Deterministic stand-in: reward improves as the clip is refined and is
-    dented by outstanding physics verdicts — mirroring how a real world model
-    scores clips whose motion is more predictable."""
+    """Deterministic stand-in: reward improves with the repairs ACTUALLY
+    applied to the clip (read from the artifact body) and is dented by
+    outstanding physics verdicts — mirroring how a real world model scores
+    clips whose motion is more predictable. Regenerating without the fix
+    text does not raise the reward."""
 
     def __init__(self, name: str = "mock-world-reward"):
         self.name = name
 
     def score(self, clip: CandidateClip, spec: ShotSpec, fps: int = 8) -> float:
-        base = min(1.0, 0.55 + 0.12 * clip.revision)
+        base = min(1.0, WM_BASE + WM_PER_FIX_BONUS * len(applied_fixes(clip)))
         worst = max((v.severity for v in clip.physics_verdicts), default=0.0)
-        return round(max(0.0, base - 0.2 * worst), 3)
+        return round(max(0.0, base - WM_SEVERITY_PENALTY * worst), 3)
 
 
 def build_world_reward(spec: str | dict | None) -> Optional[BaseWorldReward]:
