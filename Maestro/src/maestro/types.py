@@ -307,13 +307,26 @@ class Lesson:
 # ─────────────────────────────────────────────────────────────
 @dataclass
 class Skill:
-    """C7 PhysicsTyped Skill — a *compiled* shot recipe that an HSI Tier-0
-    convergence proved works on non-trivial physics.
+    """Unified skill entry — the agent's ONLY learnable substrate (training-free).
 
-    Distinct from Voyager (executable code) and SkillWeaver (web API):
-    a Skill is a structured plan template — entities + interactions +
-    cinematography + acceptance thresholds — keyed on the set of physical
-    failure modes it resolves.
+    v0.3 shipped this as the C7 PhysicsTyped creation recipe; the unified
+    abstraction (INNOVATION_PLAN_2026_06.md §2) generalises it to three
+    classes sharing ONE lifecycle (distill → admission → retrieve → execute
+    → evaluate → evolve/evict):
+
+      • "creation" — a compiled shot recipe an HSI Tier-0 convergence proved
+        works on non-trivial physics (distinct from Voyager's executable code
+        and SkillWeaver's web APIs: it is a structured plan template keyed on
+        the physical failure modes it resolves);
+      • "review"   — a verification capability (the C6 physics tiers:
+        measurement / world_model / vlm) registered so router choices are
+        recordable as skill usage;
+      • "memory"   — a memory-management policy entry (MemSkill-style:
+        write gating / retention), auditable instead of implicit.
+
+    `admission` records the "skill CI" verdict (skill_admission.py) that let
+    the entry into the library — AutoSkill (arXiv:2603.01145) consolidates
+    unverified habits; we persist only verified, versioned entries.
     """
 
     skill_id: str                                                # stable hash
@@ -331,6 +344,9 @@ class Skill:
     uses: int = 0
     last_used_ts: float = 0.0
     parent_id: str = ""                                          # versioning chain
+    skill_class: str = "creation"                                # "creation" | "review" | "memory"
+    version: int = 1                                             # bumped on re-distill
+    admission: dict = field(default_factory=dict)                # {passed, judge, score, reasons}
 
 
 @dataclass

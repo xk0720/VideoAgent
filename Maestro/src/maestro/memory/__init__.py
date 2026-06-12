@@ -9,6 +9,7 @@
 See `RESEARCH_MEMORY_SKILL.md` for full design rationale and citations.
 """
 from .lesson_library import LessonLibrary
+from .skill_admission import AdmissionVerdict, MockSkillJudge, SkillAdmission
 from .skill_library import SkillLibrary
 from .entity_store import EntityStore
 from .preference_store import PreferenceStore
@@ -18,6 +19,9 @@ from .multi_layer import AssociativeHit, MultiLayerMemory
 __all__ = [
     "LessonLibrary",
     "SkillLibrary",
+    "SkillAdmission",
+    "AdmissionVerdict",
+    "MockSkillJudge",
     "EntityStore",
     "PreferenceStore",
     "EpisodicStore",

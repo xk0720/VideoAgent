@@ -16,9 +16,18 @@ Maestro's four differentiators (see RESEARCH_MEMORY_SKILL.md §4.1):
   3. Lesson coupling — every skill carries pointers to LessonLibrary IDs.
   4. Time-axis composition is enabled via the sketch_template shape (not
      implemented here; the planner can chain skills).
+
+Unified skill abstraction (INNOVATION_PLAN_2026_06.md §2, training-free):
+the library now holds THREE skill classes ("creation" / "review" / "memory")
+under one lifecycle — distill → ADMISSION (skill CI, skill_admission.py) →
+retrieve → execute → evaluate (EMA) → evolve/evict. When an admission
+reviewer is configured, rejected entries are never persisted (AutoSkill
+arXiv:2603.01145 consolidates unverified habits; we don't), and
+re-distillation bumps `version` so the library stays auditable/rollbackable.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import time
@@ -26,6 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..embeddings import cosine, embed_text
+from ..logging_utils import get_logger
 from ..types import (
     CinematographyTags,
     PhysEntity,
@@ -34,6 +44,14 @@ from ..types import (
     PhysicsAnnotation,
     Skill,
 )
+from .skill_admission import SkillAdmission
+
+log = get_logger(__name__)
+
+# The C6 physics verification tiers, registered as review skills by the
+# pipeline (pipeline/run.py) so VerifiabilityRouter choices are recordable
+# as skill usage. Mirrors physics/router.py tier names.
+PHYSICS_REVIEW_TIERS = ("measurement", "world_model", "vlm")
 
 
 def _stable_skill_id(name: str, signature: list[PhysFailureMode]) -> str:
@@ -56,10 +74,17 @@ class SkillLibrary:
     AGE_DECAY = 0.95                    # per epoch when unused
     EVICTION_FLOOR = 0.4                # drop skill once perf_score falls below
 
-    def __init__(self, path: Optional[Path] = None):
+    def __init__(self, path: Optional[Path] = None,
+                 admission: Optional[SkillAdmission] = None):
         self.path = Path(path) if path else None
         self.skills: list[Skill] = []
         self._by_id: dict[str, Skill] = {}
+        # Admission reviewer ("skill CI"). None = legacy v0.3 behavior:
+        # distill inserts unconditionally. When set, distill() runs the
+        # three-gate review BEFORE insertion and returns None on rejection.
+        self.admission = admission
+        if self.admission is not None and self.admission.library is None:
+            self.admission.library = self   # regression gate needs the bar
         if self.path and self.path.exists():
             self._load()
 
@@ -93,6 +118,12 @@ class SkillLibrary:
                 uses=int(d.get("uses", 0)),
                 last_used_ts=float(d.get("last_used_ts", 0.0)),
                 parent_id=d.get("parent_id", ""),
+                # v0.3 JSONL records lack the unified-abstraction fields;
+                # they load as version-1 creation skills with no admission
+                # record (grandfathered, back-compat).
+                skill_class=d.get("skill_class", "creation"),
+                version=int(d.get("version", 1)),
+                admission=dict(d.get("admission") or {}),
             )
             self.skills.append(skill)
             self._by_id[skill.skill_id] = skill
@@ -131,6 +162,9 @@ class SkillLibrary:
                     "uses": s.uses,
                     "last_used_ts": s.last_used_ts,
                     "parent_id": s.parent_id,
+                    "skill_class": s.skill_class,
+                    "version": s.version,
+                    "admission": s.admission,
                 }, ensure_ascii=False) + "\n")
 
     # ── distillation ─────────────────────────────────────────────────────
@@ -165,14 +199,43 @@ class SkillLibrary:
         thresholds: dict[str, float],
         coupled_lesson_ids: Optional[list[str]] = None,
         weighted_total: float = 0.0,
-    ) -> Skill:
+        skill_class: str = "creation",
+        evidence: Optional[dict] = None,
+    ) -> Optional[Skill]:
         """Freeze a successful HSI outcome into a Skill. Idempotent on
-        (name, physical_signature) — re-distillation reconfirms perf_score.
+        (name, physical_signature) — re-distillation bumps `version` and
+        reconfirms perf_score.
+
+        When an admission reviewer is configured (constructor param), the
+        entry passes "skill CI" BEFORE insertion: `evidence` carries the HSI
+        episode outcome {weighted_total, escalations, resolved_modes,
+        converged} (the metric/verifier signals, not constants). Rejected
+        entries are NOT persisted and None is returned.
         """
         sig = list(annotation.expected_modes)
         skill_id = _stable_skill_id(name, sig)
         if skill_id in self._by_id:
             existing = self._by_id[skill_id]
+            if self.admission is not None:
+                # Re-run admission against the NEW evidence + thresholds. The
+                # candidate keeps the same skill_id; the regression gate
+                # compares against the previous version still in the library,
+                # so the bar is monotone across versions.
+                candidate = dataclasses.replace(
+                    existing,
+                    acceptance_thresholds=dict(thresholds),
+                    version=existing.version + 1,
+                )
+                verdict = self.admission.review(candidate, evidence)
+                if not verdict.passed:
+                    log.info(
+                        "skill admission REJECTED re-distill of %s (v%d): %s",
+                        skill_id, existing.version + 1, "; ".join(verdict.reasons),
+                    )
+                    return None
+                existing.acceptance_thresholds = dict(thresholds)
+                existing.admission = self.admission.as_record(verdict)
+            existing.version += 1
             # Confirm: rolling-average the new weighted_total in.
             existing.perf_score = (
                 self.PERF_EMA_ALPHA * weighted_total
@@ -207,11 +270,71 @@ class SkillLibrary:
             perf_score=weighted_total,
             uses=1,
             last_used_ts=time.time(),
+            skill_class=skill_class,
+        )
+        if self.admission is not None:
+            verdict = self.admission.review(skill, evidence)
+            if not verdict.passed:
+                log.info("skill admission REJECTED %s ('%s'): %s",
+                         skill_id, name, "; ".join(verdict.reasons))
+                return None
+            skill.admission = self.admission.as_record(verdict)
+        self.skills.append(skill)
+        self._by_id[skill_id] = skill
+        self._persist()
+        return skill
+
+    # ── registered (non-distilled) skill classes ─────────────────────────
+    def _register_builtin(self, skill_class: str, name: str, tag: str,
+                          params: Optional[dict[str, float]] = None) -> Skill:
+        """Idempotent registration for review/memory skills. These are not
+        distilled from trajectories — they are pipeline capabilities declared
+        as first-class skills so their usage is recordable in the same
+        lifecycle ledger; the admission record states that provenance."""
+        skill_id = _stable_skill_id(f"{skill_class}::{name}", [])
+        if skill_id in self._by_id:
+            return self._by_id[skill_id]
+        skill = Skill(
+            skill_id=skill_id,
+            name=name,
+            physical_signature=[],          # not physics-typed-retrievable
+            triggers=[tag],
+            acceptance_thresholds=dict(params or {}),
+            embedding=embed_text(name + " " + tag),
+            last_used_ts=time.time(),
+            skill_class=skill_class,
+            admission={
+                "passed": True,
+                "judge": "registration",
+                "score": 1.0,
+                "reasons": [f"built-in {skill_class} skill registered by the pipeline"],
+            },
         )
         self.skills.append(skill)
         self._by_id[skill_id] = skill
         self._persist()
         return skill
+
+    def register_review_skill(self, name: str, tier: str,
+                              params: Optional[dict[str, float]] = None) -> Skill:
+        """Declare a verification tier (PHYSICS_REVIEW_TIERS) as a review
+        skill so VerifiabilityRouter choices become skill usage records."""
+        return self._register_builtin("review", name, tier, params)
+
+    def register_memory_skill(self, name: str,
+                              params: Optional[dict[str, float]] = None) -> Skill:
+        """Declare a memory-management policy (write gating / retention) as a
+        memory skill — MemSkill-style, auditable instead of implicit."""
+        return self._register_builtin("memory", name, "memory_policy", params)
+
+    def find_review_skill(self, tier: str) -> Optional[Skill]:
+        for s in self.skills:
+            if s.skill_class == "review" and tier in s.triggers:
+                return s
+        return None
+
+    def by_class(self, skill_class: str) -> list[Skill]:
+        return [s for s in self.skills if s.skill_class == skill_class]
 
     # ── retrieval ────────────────────────────────────────────────────────
     def retrieve(
@@ -234,6 +357,8 @@ class SkillLibrary:
         target = set(expected_modes)
         scored = []
         for s in self.skills:
+            if s.skill_class != "creation":
+                continue   # review/memory skills are not shot recipes
             overlap = len(set(s.physical_signature) & target)
             if overlap < min_signature_overlap:
                 continue
@@ -252,6 +377,16 @@ class SkillLibrary:
         if hits:
             self._persist()
         return hits
+
+    def mark_used(self, skill_id: str) -> None:
+        """Record one execution of a skill (uses++ + ts touch) without a
+        retrieval — how review/memory skill usage is ledgered."""
+        s = self._by_id.get(skill_id)
+        if s is None:
+            return
+        s.uses += 1
+        s.last_used_ts = time.time()
+        self._persist()
 
     def record_outcome(self, skill_id: str, weighted_total: float) -> None:
         """Update perf_score after a downstream HSI run that used this skill."""
@@ -280,7 +415,11 @@ class SkillLibrary:
             if now - s.last_used_ts > idle_seconds:
                 evicted += 1
                 continue
-            if s.uses > 5 and s.perf_score < self.EVICTION_FLOOR:
+            # perf_score is an EMA of episode outcomes — only creation skills
+            # have one; registered review/memory skills are exempt from the
+            # perf floor (their perf is not measured by this signal).
+            if (s.skill_class == "creation"
+                    and s.uses > 5 and s.perf_score < self.EVICTION_FLOOR):
                 evicted += 1
                 continue
             kept.append(s)

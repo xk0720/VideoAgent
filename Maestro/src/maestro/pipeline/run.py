@@ -27,6 +27,8 @@ from ..critics.tournament import Tournament
 from ..logging_utils import get_logger
 from ..memory.lesson_library import LessonLibrary
 from ..memory.multi_layer import MultiLayerMemory
+from ..memory.skill_admission import SkillAdmission
+from ..memory.skill_library import PHYSICS_REVIEW_TIERS
 from ..models import build_image_edit, build_llm, build_mllm, build_video_gen
 from ..models.world_reward import build_world_reward
 from ..physics.tracks import build_track_extractor
@@ -80,7 +82,10 @@ def build_components(
         critics=[
             SemanticCritic(mllm=mllm, logger=trajectory),
             PhysicsCritic(mllm=mllm, logger=trajectory),
-            PhysicsConsistencyCritic(logger=trajectory, extractor=track_extractor),  # C6
+            PhysicsConsistencyCritic(
+                violation_threshold=cfg.get("physics", {}).get("violation_threshold", 0.4),
+                logger=trajectory, extractor=track_extractor,
+            ),  # C6
             ConsistencyCritic(logger=trajectory),
             RhythmCritic(logger=trajectory),
         ],
@@ -144,9 +149,23 @@ def run_maestro(
         enable_entities=bool(mem_cfg.get("enable_entities", True)),
         enable_preferences=bool(mem_cfg.get("enable_preferences", True)),
         enable_episodes=bool(mem_cfg.get("enable_episodes", True)),
+        # Skill CI (unified skill abstraction): distilled entries must pass
+        # admission before persisting. Disable via memory.enable_skill_admission
+        # to recover the legacy v0.3 insert-unconditionally behavior.
+        skill_admission=(
+            SkillAdmission()
+            if bool(mem_cfg.get("enable_skill_admission", True)) else None
+        ),
     )
     comp.mlm = mlm
     comp.lesson_library = mlm.lessons              # keep single source of truth
+
+    # Register the C6 physics verification tiers as REVIEW skills so router
+    # choices are recordable as skill usage (idempotent skill_id — safe to
+    # re-register across runs sharing one memory_dir).
+    if mlm.enabled["skills"]:
+        for tier in PHYSICS_REVIEW_TIERS:
+            mlm.skills.register_review_skill(f"physics_review_{tier}", tier)
 
     # Stage 0 — material understanding routes through the UniVA-style tool
     # registry via the ActAgent so the trajectory captures the Plan→Act handoff
@@ -203,7 +222,10 @@ def run_maestro(
         "n_shots": len(specs),
         "output_path": str(output_path),
         "lessons_learned": len(mlm.lessons),
-        "skills_learned": len(mlm.skills),       # C7 (v0.3)
+        # "learned" = distilled creation skills only; registered review/memory
+        # skills are declared capabilities, not learned ones.
+        "skills_learned": len(mlm.skills.by_class("creation")),   # C7
+        "skills_registered": len(mlm.skills) - len(mlm.skills.by_class("creation")),
         "entities_persisted": len(mlm.entities), # C8 (v0.3)
         "shots": [
             {

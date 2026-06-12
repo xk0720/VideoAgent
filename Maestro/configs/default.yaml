@@ -19,11 +19,11 @@ models:
   # test-time physics search. Unset = identical metrics to v0.2.2.
   # world_reward:
   #   name: "mock-world-reward"   # v0.3: "vjepa2"
-  # C6 oracle track extractor — recovers OBSERVED motion from generated frames
-  # for the sketch-vs-video physics check. Default mock (CPU, no deps); real
-  # backends ('cotracker'/'tapir') need torch + real mp4 frames.
+  # C6 track extractor — recovers OBSERVED motion from generated frames for
+  # the reference-free law checks (physics/laws.py). Default mock (CPU, no
+  # deps); real backends ('cotracker'/'tapir') need torch + real mp4 frames.
   track_extractor:
-    name: "mock-track"           # v0.3: "cotracker" / "tapir"
+    name: "mock-track"           # real: "cotracker" / "tapir"
     # checkpoint: "/data/ckpts/cotracker3.pth"   # or omit for torch.hub
     # device: "cuda"
 
@@ -54,10 +54,10 @@ metrics:
     m5_rhythm: 0.10
     aesthetic: 0.10
 
-# ── Physics ──
+# ── Physics (C6 v0.4 — reference-free verification; no simulator) ──
 physics:
-  simulator: "mock"           # v0.2: mujoco / newton / particle-sim
   acceptance_severity: 0.30   # below this, a failure mode is considered resolved
+  violation_threshold: 0.40   # law-residual/anomaly severity that triggers a verdict
 
 # ── Multi-Layer Memory (C8, v0.3) ──
 # Each tier is independently switchable. base_dir is set per run via the

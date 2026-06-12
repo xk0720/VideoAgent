@@ -264,6 +264,19 @@ def generate_shot(
         candidates.append(c)
     best = tournament.select(candidates, spec) if tournament else _tournament_select(candidates)
 
+    # Unified skill abstraction: the measurement verification tier is a
+    # registered review skill (pipeline/run.py); ledger its usage when the
+    # PhysicsConsistencyCritic actually produced MEASURED verdicts
+    # (source="law_verifier"). Honest limitation: the loop only sees measured
+    # reports that crossed the critic's violation threshold — sub-threshold
+    # coverage lives in the trajectory log (we do not refactor the critic).
+    if skill_library is not None and any(
+        v.source == "law_verifier" for c in candidates for v in c.physics_verdicts
+    ):
+        measurement_skill = skill_library.find_review_skill("measurement")
+        if measurement_skill is not None:
+            skill_library.mark_used(measurement_skill.skill_id)
+
     # Snapshot the initial physics-failure-mode set so lesson distillation can
     # later report which modes were ACTUALLY resolved (C4 fix). The worst
     # initial severity also gates C7 skill distillation: only "real" recipes
@@ -370,6 +383,16 @@ def generate_shot(
         coupled = (
             getattr(spec, "injected_lesson_ids", None) or []
         )
+        # Admission evidence — the REAL episode signals (metric suite total +
+        # verifier-driven convergence/escalation record + which physics modes
+        # the loop actually resolved), consumed by SkillAdmission ("skill CI").
+        final_modes = {v.mode for v in best.physics_verdicts}
+        evidence = {
+            "weighted_total": best.metric_scores.get("weighted_total", 0.0),
+            "escalations": escalations,
+            "resolved_modes": sorted(m.value for m in initial_modes - final_modes),
+            "converged": converged,
+        }
         skill = skill_library.distill(
             name=skill_name,
             spec_prompt=spec.prompt,
@@ -384,8 +407,10 @@ def generate_shot(
             coupled_lesson_ids=([distilled_lesson_id] if distilled_lesson_id else [])
                               + list(coupled),
             weighted_total=best.metric_scores.get("weighted_total", 0.0),
+            evidence=evidence,
         )
-        distilled_skill_id = skill.skill_id
+        # distill returns None when admission ("skill CI") rejects the entry.
+        distilled_skill_id = skill.skill_id if skill is not None else ""
 
     return SelfImproveResult(
         clip=best, score_history=history, revisions_used=revisions_used,

@@ -25,6 +25,7 @@ from .episodic_store import EpisodicStore
 from .lesson_library import LessonLibrary
 from .entity_store import EntityStore
 from .preference_store import PreferenceStore
+from .skill_admission import SkillAdmission
 from .skill_library import SkillLibrary
 
 
@@ -68,6 +69,7 @@ class MultiLayerMemory:
         enable_entities: bool = True,
         enable_preferences: bool = True,
         enable_episodes: bool = True,
+        skill_admission: Optional[SkillAdmission] = None,
     ) -> "MultiLayerMemory":
         base = Path(base_dir) if base_dir else None
         # Allow an explicit lesson path override for back-compat with v0.2.2
@@ -79,9 +81,9 @@ class MultiLayerMemory:
         ep = (base / "entities.jsonl") if base else None
         pp = (base / "preferences.json") if base else None
         ep_tr = (base / "episodes.jsonl") if base else None
-        return cls(
+        mlm = cls(
             lessons=LessonLibrary(lp),
-            skills=SkillLibrary(sp),
+            skills=SkillLibrary(sp, admission=skill_admission),
             entities=EntityStore(ep),
             preferences=PreferenceStore(pp),
             episodes=EpisodicStore(ep_tr),
@@ -95,6 +97,18 @@ class MultiLayerMemory:
                 "episodes": enable_episodes,
             },
         )
+        if mlm.enabled["skills"]:
+            # Unified skill abstraction: the library's own retention policy is
+            # a declared MEMORY skill — the EMA/eviction constants become an
+            # auditable library entry instead of implicit code behavior.
+            mlm.skills.register_memory_skill(
+                "skill_ema_retention",
+                params={
+                    "perf_ema_alpha": SkillLibrary.PERF_EMA_ALPHA,
+                    "eviction_floor": SkillLibrary.EVICTION_FLOOR,
+                },
+            )
+        return mlm
 
     # ── Associative query (HippoRAG-style, lightweight v0.3) ─────────────
     def query(
