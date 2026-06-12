@@ -200,6 +200,31 @@ def run_maestro(
         fps=fps,
     )
 
+    # v0.4 — dual-register entity memory + verification-gated writes
+    # (memory/entity_store.py, memory/write_gate.py; survey Angles 1+2).
+    # Register the IMMUTABLE identity half up front: one frozen register per
+    # entity named by the plan (physics annotation entities) or anchored by
+    # an uploaded image (identity anchors carry reference paths). Idempotent
+    # — same name always maps to the same entity_id, across shots AND runs.
+    write_gate = VerificationWriteGate()
+    transitions_committed = 0
+    transitions_rejected = 0
+    if mlm.enabled["entities"]:
+        for spec in specs:
+            if spec.physics_annotation:
+                for pe in spec.physics_annotation.entities:
+                    mlm.entities.register(make_identity(
+                        pe.name,
+                        description=f"planned entity (motion_class={pe.motion_class})",
+                    ))
+        for anchor in asset_memory.identity_anchors.values():
+            name = anchor.name or anchor.identity_id
+            mlm.entities.register(make_identity(
+                name,
+                reference_paths=[anchor.source] if anchor.source else [],
+                description=anchor.description,
+            ))
+
     # Stage 2 — self-improve loop per shot
     task_id = f"t{int(time.time())}"
     results = []
@@ -221,6 +246,18 @@ def run_maestro(
         results.append(res)
         clips.append(res.clip)
 
+        # Verification-gated entity-state writes: transitions proposed from
+        # this shot's plan are committed ONLY if the gate confirms them in
+        # the clip the HSI loop just ACCEPTED ("commit only what rendered").
+        # propose_transitions_from_spec is the deterministic mock stand-in
+        # for the Director authoring transitions at planning time.
+        if mlm.enabled["entities"]:
+            for t in propose_transitions_from_spec(spec, mlm.entities):
+                mlm.entities.propose(t)
+            gated = mlm.entities.commit_gated(res.clip, spec, write_gate)
+            transitions_committed += gated["committed"]
+            transitions_rejected += gated["rejected"]
+
     # Stage 3
     shot_dur = float(cfg.get("plan", {}).get("shot_duration", 3.0))
     script = assemble(clips, output_path, music, shot_dur)
@@ -236,7 +273,11 @@ def run_maestro(
         # skills are declared capabilities, not learned ones.
         "skills_learned": len(mlm.skills.by_class("creation")),   # C7
         "skills_registered": len(mlm.skills) - len(mlm.skills.by_class("creation")),
-        "entities_persisted": len(mlm.entities), # C8 (v0.3)
+        "entities_persisted": len(mlm.entities), # C8 (v0.3 legacy register)
+        # v0.4 dual-register entity memory + verification-gated writes:
+        "entities": len(mlm.entities.identities),
+        "transitions_committed": transitions_committed,
+        "transitions_rejected": transitions_rejected,
         "shots": [
             {
                 "shot_idx": r.clip.shot_idx,

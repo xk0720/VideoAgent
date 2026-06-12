@@ -132,9 +132,10 @@ def propose_transitions_from_spec(
         for cue, (fld, val) in _STATE_CUES.items():
             if cue not in tok_set:
                 continue
-            if cue == "holding":     # value = the word following the cue
-                i = toks.index(cue)
-                val = toks[i + 1] if i + 1 < len(toks) else "object"
+            if cue == "holding":     # value = next non-article word after the cue
+                rest = [w for w in toks[toks.index(cue) + 1:]
+                        if w not in ("a", "an", "the")]
+                val = rest[0] if rest else "object"
             if attrs.get(fld) == val:
                 continue             # no-op: state already says so
             if any(
