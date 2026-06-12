@@ -23,11 +23,11 @@
 `pipeline/plan.py: plan_shots()`，三个 agent 串行：
 1. `ScreenwriterAgent` → 分镜大纲 `outline: list[str]`（镜头数默认跟随音乐段落数）。
 2. `DirectorAgent` → 每镜头一份 `ShotSpec`（prompt、镜头语言、引用哪些 identity/style anchor、按 beat 的 `rhythmic_pacing`）。**同时检索 `LessonLibrary` 把历史经验作为约束注入**（C4）。
-3. `PhysicsPlannerAgent` → 给每个 `ShotSpec` 挂 `PhysicsSketch`：从 prompt 抽实体/受力/交互 → `MockSimulator` 跑轨迹 → 写出 `control_signal`（一个轨迹 JSON），作为后续生成的**条件信号**（C1 草图层）。
+3. `PhysicsPlannerAgent` → 给每个 `ShotSpec` 挂 `PhysicsAnnotation`（v0.4）：从 prompt 抽实体 + **运动类别**（ballistic/rigid/fluid/agentive/static）+ 交互 + 预期失效模式。只是**验证种子**——不含轨迹、不含控制信号（sketch-as-controller 线已废弃）。
 
 ### Stage 2 · 生成 + 自改进闭环（核心）→ `accepted CandidateClip[]`
 `pipeline/generate_loop.py: generate_shot()`，**逐 shot** 跑闭环：
-1. `GeneratorAgent` 在 control_signal / first_frame / 参考图条件下生成 `n_candidates` 个候选 `CandidateClip`。
+1. `GeneratorAgent` 在 first_frame（关键帧锚）/ 参考图条件下生成 `n_candidates` 个候选 `CandidateClip`；物理从不注入，只在生成后从像素验证（C6 v0.4）。
 2. **Tournament 选优**取最强候选（E3）。
 3. `ReviewBoard`（`critics/board.py`）并行跑 4 个 critic：
    - `SemanticCritic`（prompt 对齐 checklist）
@@ -131,7 +131,7 @@ python scripts/run_pipeline.py \
 
 ### B. 接真实视频生成（v0.2，出真实像素）
 最小改动路径——只换"出像素"的一环即可先看到真实视频：
-1. 在 `src/maestro/models/video_gen.py` 新增一个 `BaseVideoGenClient` 子类（如 `OmniWeavingClient` / `WanClient` / `VeoApiClient`），实现 `generate(prompt, duration, out_path, control_signal, first_frame, reference_images, seed)`，**务必支持条件输入**（否则物理草图层失效）。
+1. 在 `src/maestro/models/video_gen.py` 新增一个 `BaseVideoGenClient` 子类（已有 `WaveSpeedClient` 完整实现 / `OmniWeavingClient` / `WanClient` 骨架），实现 `generate(prompt, duration, out_path, first_frame, reference_images, seed)`。纯文本 API 后端也可以——物理是验证出来的，不是注入的（v0.4）。
 2. 在 `build_video_gen()` 工厂里按 `name` 分发到你的新类。
 3. `configs/default.yaml` 把 `models.video_gen.name` 改成你的后端，并在 `.env` 填 key/endpoint。
 4. ffmpeg 装上，`AssemblyTool` 会自动走真实拼接（不再降级 manifest）。

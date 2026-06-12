@@ -25,10 +25,12 @@ from ..critics.rhythm import RhythmCritic
 from ..critics.semantic import SemanticCritic
 from ..critics.tournament import Tournament
 from ..logging_utils import get_logger
+from ..memory.entity_store import make_identity, propose_transitions_from_spec
 from ..memory.lesson_library import LessonLibrary
 from ..memory.multi_layer import MultiLayerMemory
 from ..memory.skill_admission import SkillAdmission
 from ..memory.skill_library import PHYSICS_REVIEW_TIERS
+from ..memory.write_gate import VerificationWriteGate
 from ..models import build_image_edit, build_llm, build_mllm, build_video_gen
 from ..models.world_reward import build_world_reward
 from ..physics.tracks import build_track_extractor
@@ -159,6 +161,14 @@ def run_maestro(
     )
     comp.mlm = mlm
     comp.lesson_library = mlm.lessons              # keep single source of truth
+
+    # v0.4 dual-register entity memory: let the ConsistencyCritic read the
+    # committed state registers (the store does not exist yet when
+    # build_components constructs the board, so it is wired here).
+    if mlm.enabled["entities"]:
+        for critic in comp.board.critics:
+            if isinstance(critic, ConsistencyCritic):
+                critic.entity_store = mlm.entities
 
     # Register the C6 physics verification tiers as REVIEW skills so router
     # choices are recordable as skill usage (idempotent skill_id — safe to

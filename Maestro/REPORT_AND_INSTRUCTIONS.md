@@ -1,5 +1,12 @@
 # Maestro — 物理可信 · 自改进 · 多模态 Agentic Video Generation
 
+> **⚠️ 2026-06-12 更新**：本文是 v0.1 的建造总纲，**其中"物理草图 → 控制信号"（C1 sketch 层）
+> 的设计已在 v0.4 废弃**——草图不能控制冻结的视频模型，对比单条仿真轨迹也预设了不可知参数。
+> 现行物理方案是参考自由的"像素物理验证"（`src/maestro/physics/`、
+> `docs/research/INNOVATION_PLAN_2026_06.md` §3.2）。本文其余架构（多 agent、HSI、metric 套件、
+> 记忆/技能）仍然有效，阅读时请以 README v0.4 状态节为准。
+
+
 **Report & Build Instructions（写代码前的总纲）**
 
 > 代号 **Maestro**（可改）。一个 **training-free、多 agent、自闭环自改进、物理可信(physically-grounded)** 的 **视频生成(generation)** 智能体框架。用户提供自然语言指令 + 可选多模态素材（视频/图像/音乐），系统通过"多 agent 规划 → 生成 → 多维 metric 评审 → 关键帧级局部修正 → 物理校验"的闭环产出视频。

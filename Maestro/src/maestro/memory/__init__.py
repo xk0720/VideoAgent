@@ -11,10 +11,11 @@ See `RESEARCH_MEMORY_SKILL.md` for full design rationale and citations.
 from .lesson_library import LessonLibrary
 from .skill_admission import AdmissionVerdict, MockSkillJudge, SkillAdmission
 from .skill_library import SkillLibrary
-from .entity_store import EntityStore
+from .entity_store import EntityStore, make_identity, propose_transitions_from_spec
 from .preference_store import PreferenceStore
 from .episodic_store import EpisodicStore
 from .multi_layer import AssociativeHit, MultiLayerMemory
+from .write_gate import VerificationWriteGate
 
 __all__ = [
     "LessonLibrary",
@@ -23,6 +24,9 @@ __all__ = [
     "AdmissionVerdict",
     "MockSkillJudge",
     "EntityStore",
+    "make_identity",
+    "propose_transitions_from_spec",
+    "VerificationWriteGate",
     "PreferenceStore",
     "EpisodicStore",
     "MultiLayerMemory",

@@ -368,6 +368,72 @@ class PersistentEntity:
     last_seen_ts: float = 0.0
 
 
+# ─────────────────────────────────────────────────────────────
+# Dual-register entity memory (v0.4 — survey_memory_2026_06.md Angles 1+2)
+#
+# OUR increment over the 2026 entity-memory line: EntityMem (arXiv:2605.15199)
+# freezes reference features and cannot evolve state; VideoMemory
+# (arXiv:2601.03655) and StoryMem (arXiv:2512.19539) update descriptors freely
+# and drift. We factorize every entity into an IMMUTABLE identity register ⊕ a
+# MUTABLE state register that changes only through typed, logged transitions —
+# continuity becomes auditable instead of implicit.
+# ─────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class EntityIdentity:
+    """Canonical identity register — IMMUTABLE after registration.
+
+    Holds what never changes about an entity: its id, name, verified
+    reference image paths and description. The dataclass is frozen AND the
+    EntityStore exposes no API to mutate it post-`register` — this is the
+    EntityMem-style anchor, minus EntityMem's inability to evolve state
+    (state lives in the separate EntityState register).
+    """
+
+    entity_id: str
+    name: str
+    reference_paths: list[str] = field(default_factory=list)
+    description: str = ""
+    created_ts: float = 0.0
+
+
+@dataclass
+class EntityState:
+    """Mutable state register — appearance/location/emotion/… as a flat dict.
+
+    Changes ONLY through StateTransition entries applied by the EntityStore
+    (committed or correction status); `version` increments once per applied
+    transition so every state version is traceable to a log entry.
+    """
+
+    attributes: dict[str, str] = field(default_factory=dict)
+    shot_idx: int = -1            # shot of last applied transition
+    version: int = 0              # == number of applied transitions
+
+
+@dataclass
+class StateTransition:
+    """One typed, logged state change — the audit unit of entity continuity.
+
+    Lifecycle: "proposed" (authored at planning time) → "committed" (the
+    verification gate confirmed the change in the ACCEPTED rendered clip) or
+    "rejected" (gate found no evidence / clip not accepted). "correction" is
+    the explicit, auditable path for when the render contradicts the
+    proposal and memory must follow the pixels (Angle 1's discrepancy entry).
+    `evidence` records what the gate actually saw — never left empty on a
+    gated decision.
+    """
+
+    entity_id: str
+    shot_idx: int
+    field: str                    # which state attribute changed
+    old: str
+    new: str
+    cause: str                    # why the change was proposed
+    status: str = "proposed"      # "proposed" | "committed" | "rejected" | "correction"
+    evidence: str = ""            # what the verification gate saw
+    ts: float = 0.0
+
+
 @dataclass
 class UserPreference:
     """C8 Tier-5 per-user cinematic / physics-strictness preferences."""
