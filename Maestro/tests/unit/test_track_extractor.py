@@ -122,6 +122,36 @@ def test_verifier_silent_with_real_extractor_on_mock_clip(tmp_path: Path):
     assert verifier.verify(clip, spec, fps=8) is None
 
 
+def test_cotracker_inference_failure_warns_and_returns_none(
+    tmp_path: Path, monkeypatch
+):
+    """F13 regression: an inference failure stays non-fatal (None — p2 stays
+    neutral: 'no measured violation' is not 'verified') but must WARN via the
+    maestro logger so a persistent bug is visible in server logs instead of
+    silently disabling physics verification forever."""
+    pytest.importorskip("numpy")
+    import numpy as np
+
+    import maestro.physics.track_extractor_backends as be
+
+    monkeypatch.setattr(be, "_decode_frames",
+                        lambda p: np.zeros((4, 8, 8, 3), dtype="uint8"))
+    # model "loads" fine but inference blows up (self._model stays None)
+    monkeypatch.setattr(be.CoTrackerExtractor, "_ensure_loaded",
+                        lambda self: None)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        be.log, "warning",
+        lambda msg, *a, **k: warnings.append(msg % a if a else msg))
+    spec = _spec()
+    clip = CandidateClip(shot_idx=0, video_path=tmp_path / "real.mp4")
+    ex = be.CoTrackerExtractor(config={"device": "cpu"})
+    out = ex.extract(clip, spec, spec.physics_annotation.entities, fps=8)
+    assert out is None                       # non-fatal
+    assert warnings, "inference failure must be logged"
+    assert "CoTracker inference failed" in warnings[0]
+
+
 def test_cotracker_loud_failure_on_real_video_when_unwired(tmp_path: Path, monkeypatch):
     """The crucial honesty guarantee: a DECODABLE video + missing tracker model
     must raise LOUDLY (not silently emit a perfect, wrong verdict). We fake a

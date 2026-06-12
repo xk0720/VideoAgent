@@ -22,7 +22,10 @@ class PhysicsCritic(BaseCritic):
 
     def review(self, clip, spec, asset_memory=None, fps=8) -> None:
         verdicts = self.mllm.assess_physics(clip, spec, fps)
-        clip.physics_verdicts = verdicts
+        # extend, never replace: other critics (PhysicsConsistencyCritic)
+        # append measured verdicts to the same list, and board order must
+        # not decide whether they survive.
+        clip.physics_verdicts.extend(verdicts)
         for v in verdicts:
             clip.checklist.items.append(
                 ChecklistItem(

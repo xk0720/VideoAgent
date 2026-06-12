@@ -121,6 +121,32 @@ def test_admission_rejects_bar_lowering_regression(tmp_path: Path):
     assert len(lib.by_class("creation")) == 1
 
 
+def test_admission_rejects_omitted_threshold_keys(tmp_path: Path):
+    """F10: omitting a key the library bar declares must FAIL gate (b) — an
+    empty-thresholds skill would otherwise bypass the regression check
+    entirely while still competing in retrieval against the incumbent."""
+    spec, sketch = _sketch()
+    lib = SkillLibrary(tmp_path / "skills.jsonl", admission=SkillAdmission())
+    incumbent = lib.distill(
+        "strict_recipe", spec.prompt, sketch, CinematographyTags(),
+        thresholds={"weighted_total": 0.85},
+        weighted_total=0.95, evidence=GOOD_EVIDENCE,
+    )
+    assert incumbent is not None
+    empty = lib.distill(
+        "no_bar_recipe", spec.prompt, sketch, CinematographyTags(),
+        thresholds={},                               # asserts nothing at all
+        weighted_total=0.95, evidence=GOOD_EVIDENCE,
+    )
+    assert empty is None
+    assert len(lib.by_class("creation")) == 1
+    # The reason names the omitted key (same physical signature as incumbent).
+    adm = SkillAdmission(library=lib)
+    candidate = _skill(signature=tuple(sketch.expected_modes), thresholds={})
+    reasons = adm._regression_reasons(candidate)
+    assert any("omits threshold 'weighted_total'" in r for r in reasons)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Library-side lifecycle (skill_library.py)
 # ─────────────────────────────────────────────────────────────────────────────

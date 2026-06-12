@@ -23,13 +23,15 @@ under one lifecycle — distill → ADMISSION (skill CI, skill_admission.py) →
 retrieve → execute → evaluate (EMA) → evolve/evict. When an admission
 reviewer is configured, rejected entries are never persisted (AutoSkill
 arXiv:2603.01145 consolidates unverified habits; we don't), and
-re-distillation bumps `version` so the library stays auditable/rollbackable.
+re-distillation bumps `version` — a counter only (no stored history chain;
+`parent_id` is reserved). Full rollback/history-chain support is future work.
 """
 from __future__ import annotations
 
 import dataclasses
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -68,17 +70,26 @@ class SkillLibrary:
     weighted_total) and `uses` for SkillOps-style aging.
     """
 
-    # — Distillation thresholds (also configurable via configs/default.yaml) —
+    # — Distillation thresholds (defaults; configurable via configs/default.yaml
+    #   memory.skill_distill_severity_threshold / skill_perf_ema_alpha /
+    #   skill_eviction_floor, threaded through MultiLayerMemory.open) —
     DEFAULT_SEVERITY_THRESHOLD = 0.5    # initial worst verdict must be ≥ this
     PERF_EMA_ALPHA = 0.3                # rolling avg for perf_score
     AGE_DECAY = 0.95                    # per epoch when unused
     EVICTION_FLOOR = 0.4                # drop skill once perf_score falls below
 
     def __init__(self, path: Optional[Path] = None,
-                 admission: Optional[SkillAdmission] = None):
+                 admission: Optional[SkillAdmission] = None,
+                 distill_severity_threshold: float = DEFAULT_SEVERITY_THRESHOLD,
+                 perf_ema_alpha: float = PERF_EMA_ALPHA,
+                 eviction_floor: float = EVICTION_FLOOR):
         self.path = Path(path) if path else None
         self.skills: list[Skill] = []
         self._by_id: dict[str, Skill] = {}
+        # Operator-tunable lifecycle constants (configs/default.yaml memory.*).
+        self.distill_severity_threshold = distill_severity_threshold
+        self.perf_ema_alpha = perf_ema_alpha
+        self.eviction_floor = eviction_floor
         # Admission reviewer ("skill CI"). None = legacy v0.3 behavior:
         # distill inserts unconditionally. When set, distill() runs the
         # three-gate review BEFORE insertion and returns None on rejection.
@@ -131,11 +142,17 @@ class SkillLibrary:
     def _persist(self) -> None:
         """Atomically rewrite the JSONL — needed because we mutate perf_score
         / uses in-place, and append-only would diverge from the in-memory state.
+
+        Atomicity: written to a sibling `.tmp` file then `os.replace`d, so a
+        crash mid-write can never truncate the library. Single-writer
+        assumption: there is NO file locking — concurrent processes sharing
+        one memory_dir can still lose each other's updates (last writer wins).
         """
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as f:
+        tmp = self.path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             for s in self.skills:
                 f.write(json.dumps({
                     "skill_id": s.skill_id,
@@ -166,6 +183,7 @@ class SkillLibrary:
                     "version": s.version,
                     "admission": s.admission,
                 }, ensure_ascii=False) + "\n")
+        os.replace(tmp, self.path)
 
     # ── distillation ─────────────────────────────────────────────────────
     def should_distill(
@@ -173,20 +191,31 @@ class SkillLibrary:
         escalations: int,
         converged: bool,
         initial_severity_max: float,
-        severity_threshold: float = DEFAULT_SEVERITY_THRESHOLD,
+        escape_hatched: bool = False,
+        severity_threshold: Optional[float] = None,
     ) -> bool:
         """The Maestro-specific distillation rule (§4.1 (b)).
 
         A skill is born when ALL of:
           • HSI never had to escalate past Tier 0 (cheap recipe worked);
-          • the loop converged (no escape hatch left defects behind);
+          • the loop converged (the review board fully passed at the end —
+            NOTE this does NOT by itself prove the escape hatch never fired:
+            a hatched defect is dropped from the review state, which can make
+            the final board pass; hence the separate flag below);
+          • the escape hatch never fired this episode (`escape_hatched`) —
+            a hatched episode may have shipped hidden defects and is not
+            admissible recipe evidence;
           • initial worst-verdict severity ≥ threshold (the recipe handled
             something non-trivial — we don't want to memorise "no physics
-            verdict ever appeared" as a skill).
+            verdict ever appeared" as a skill). The threshold defaults to the
+            library's configured `distill_severity_threshold`.
         """
+        if severity_threshold is None:
+            severity_threshold = self.distill_severity_threshold
         return (
             escalations == 0
             and converged
+            and not escape_hatched
             and initial_severity_max >= severity_threshold
         )
 
@@ -233,23 +262,27 @@ class SkillLibrary:
                         skill_id, existing.version + 1, "; ".join(verdict.reasons),
                     )
                     return None
-                existing.acceptance_thresholds = dict(thresholds)
                 existing.admission = self.admission.as_record(verdict)
+            # Both paths (with and without admission) update the thresholds
+            # identically — the legacy path used to bump `version` while
+            # silently keeping stale acceptance_thresholds.
+            existing.acceptance_thresholds = dict(thresholds)
             existing.version += 1
             # Confirm: rolling-average the new weighted_total in.
             existing.perf_score = (
-                self.PERF_EMA_ALPHA * weighted_total
-                + (1 - self.PERF_EMA_ALPHA) * existing.perf_score
+                self.perf_ema_alpha * weighted_total
+                + (1 - self.perf_ema_alpha) * existing.perf_score
             )
             existing.uses += 1
             existing.last_used_ts = time.time()
             self._persist()
             return existing
+        triggers = [t for t in spec_prompt.lower().split() if len(t) > 3][:6]
         skill = Skill(
             skill_id=skill_id,
             name=name,
             physical_signature=sig,
-            triggers=[t for t in spec_prompt.lower().split() if len(t) > 3][:6],
+            triggers=triggers,
             entities=[
                 PhysEntity(name=e.name, motion_class=e.motion_class)
                 for e in annotation.entities
@@ -266,7 +299,9 @@ class SkillLibrary:
             ),
             acceptance_thresholds=dict(thresholds),
             coupled_lesson_ids=list(coupled_lesson_ids or []),
-            embedding=embed_text(name + " " + spec_prompt),
+            # Same embedding formula as _load (name + triggers) so retrieval
+            # ranking is identical before and after a process restart.
+            embedding=embed_text(name + " " + " ".join(triggers)),
             perf_score=weighted_total,
             uses=1,
             last_used_ts=time.time(),
@@ -394,8 +429,8 @@ class SkillLibrary:
         if s is None:
             return
         s.perf_score = (
-            self.PERF_EMA_ALPHA * weighted_total
-            + (1 - self.PERF_EMA_ALPHA) * s.perf_score
+            self.perf_ema_alpha * weighted_total
+            + (1 - self.perf_ema_alpha) * s.perf_score
         )
         self._persist()
 
@@ -419,7 +454,7 @@ class SkillLibrary:
             # have one; registered review/memory skills are exempt from the
             # perf floor (their perf is not measured by this signal).
             if (s.skill_class == "creation"
-                    and s.uses > 5 and s.perf_score < self.EVICTION_FLOOR):
+                    and s.uses > 5 and s.perf_score < self.eviction_floor):
                 evicted += 1
                 continue
             kept.append(s)

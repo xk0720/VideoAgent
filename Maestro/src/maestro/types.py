@@ -128,6 +128,7 @@ class PhysFailureMode(str, Enum):
     OBJECT_PERMANENCE = "object_permanence"  # 物体恒存
     DEFORMATION = "deformation"
     CONSERVATION = "conservation"          # 守恒律 (公认最弱项)
+    UNEXPLAINED = "unexplained"            # high law residual, no localized anomaly
 
 
 MotionClass = Literal["ballistic", "rigid", "fluid", "agentive", "static"]
@@ -224,7 +225,8 @@ class ShotSpec:
     rhythmic_pacing: list[int] = field(default_factory=list)  # shot durations in beats
     physics_annotation: Optional[PhysicsAnnotation] = None
     event_graph: Optional[EventGraph] = None
-    injected_lessons: list[str] = field(default_factory=list)  # C4
+    injected_lessons: list[str] = field(default_factory=list)  # C4 (fix texts)
+    injected_lesson_ids: list[str] = field(default_factory=list)  # C4 lesson ids (skill coupling)
     matched_skill: Optional["Skill"] = None                    # C7 (v0.3)
 
 
@@ -240,6 +242,9 @@ class ChecklistItem:
     kind: ChecklistKind
     passed: bool = False
     fix_instruction: str = ""      # populated by critic/refiner when failed
+    # PhysFailureMode.value when this physics item mirrors a PhysicsVerdict
+    # (keyed by ReviewBoard after critics run); "" for non-physics items.
+    mode: str = ""
 
 
 @dataclass
@@ -432,6 +437,7 @@ class StateTransition:
     status: str = "proposed"      # "proposed" | "committed" | "rejected" | "correction"
     evidence: str = ""            # what the verification gate saw
     ts: float = 0.0
+    run_id: str = ""              # which pipeline run proposed it ("" = legacy/unscoped)
 
 
 @dataclass

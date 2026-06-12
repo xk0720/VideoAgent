@@ -65,6 +65,14 @@ INTERVENTION_LIBRARY: dict[PhysFailureMode, str] = {
         "lock angular/linear momentum with trajectory control; add 'preserve "
         "momentum and mass, no sudden velocity jumps'"
     ),
+    # UNEXPLAINED is verdict-only (high best-law residual with no localized
+    # anomaly). It is deliberately ABSENT from FAILURE_MODE_KEYWORDS: no
+    # prompt cue predicts it, so detect_expected_modes never emits it.
+    PhysFailureMode.UNEXPLAINED: (
+        "no passive motion law fits the observed track; regenerate the span "
+        "with the entity following one continuous smooth trajectory; "
+        "consider best-of-N reseed"
+    ),
 }
 
 

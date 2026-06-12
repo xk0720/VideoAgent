@@ -8,9 +8,11 @@ The soul of Maestro. Per shot:
 
        Tier 0  refiner.plan  →  image_edit + first_frame + extra_prompt
                                 (cheapest: keyframe-level LOCAL edit, M3-style)
-       Tier 1  physics_planner.replan(strictness)
-                                (tighten the physics-verification bar and
-                                 regenerate with anti-violation prompt hints)
+       Tier 1  physics_planner.replan + verdict-derived hints
+                                (re-annotate from the ORIGINAL prompt and
+                                 regenerate with anti-violation prompt hints
+                                 built from the worst measured/judged verdict —
+                                 the verification bar does NOT move)
        Tier 2  director.refine_spec(hint)
                                 (widen scope: slower / wider cinematography +
                                  prompt rewrite — VISTA-style but bounded)
@@ -22,7 +24,21 @@ The soul of Maestro. Per shot:
      through. After every accepted candidate we *reset to Tier 0* so the next
      revision starts cheap again (cost-amortized adaptive scope).
 
+     WHY TIER 1 NEVER TIGHTENS STRICTNESS: tightening the bar on a FAILING
+     shot inverts the repair incentive — the stricter critic threshold makes
+     same-quality candidates accrue MORE verdicts, p2 drops, and the monotonic
+     Verifier rejects exactly the regenerations that would repair the defect.
+     Strictness-tightening therefore lives only in the POST-ACCEPTANCE
+     hardening pass (`physics.post_accept_strictness`): once a candidate is
+     accepted at any tier ≥ 1, one extra review at the tighter bar runs as a
+     log-only quality watchdog (it can never reject the accepted clip).
+
   4. distill a Lesson from the failure mode that was actually resolved (C4)
+
+NOTE on `accepted`: `best.accepted = True` means "the clip we ship" (assembly
+depends on it) — NOT "defect-free". Honest quality status travels separately:
+`converged` (review board fully passed) and the escape-hatch record
+(`escape_hatched`, `skipped_modes`, `clip.skipped_items`).
 
 WHY HSI: VISTA always replans the whole segment (expensive); M3 only does local
 patches (limited scope on static images). HSI = adaptive scope escalation, the
@@ -30,6 +46,8 @@ gap neither prior work fills.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -41,12 +59,15 @@ from ..agents.refiner import RefinerAgent
 from ..agents.verifier import VerifierAgent
 from ..critics.board import ReviewBoard
 from ..critics.tournament import Tournament
+from ..logging_utils import get_logger
 from ..memory.lesson_library import LessonLibrary
 from ..memory.skill_library import SkillLibrary
 from ..models.image_edit import BaseImageEditClient, MockImageEditClient
 from ..physics.failure_modes import suggest_intervention
 from ..tools.retrieval_tool import RetrievalTool
 from ..types import CandidateClip, PhysFailureMode, ShotSpec
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -61,6 +82,8 @@ class SelfImproveResult:
     initial_severity_max: float = 0.0                     # snapshot for C7 distill
     distilled_skill_id: str = ""                          # C7 — empty if no distill
     distilled_lesson_id: str = ""                         # C4 — what was saved
+    escape_hatched: bool = False                          # any Tier-3 skip this episode
+    skipped_modes: list[str] = field(default_factory=list)  # typed physics skips
 
 
 def _tournament_select(candidates: list[CandidateClip]) -> CandidateClip:
@@ -69,21 +92,38 @@ def _tournament_select(candidates: list[CandidateClip]) -> CandidateClip:
 
 
 def _escape_hatch(clip: CandidateClip) -> Optional[PhysFailureMode]:
-    """Drop the single worst remaining defect; return its mode if it was a physics one."""
+    """Drop the single worst remaining defect; return its physics mode if known.
+
+    When a physics verdict is dropped, its MIRRORED failed checklist item
+    (keyed by ReviewBoard._key_physics_items) is flipped too, so p1/p2 and m1
+    never desynchronize. Checklist-item skips of physics kind report their
+    typed mode the same way, so loop-level skip accounting sees them.
+    """
     if clip.physics_verdicts:
         worst = max(clip.physics_verdicts, key=lambda v: v.severity)
         clip.physics_verdicts.remove(worst)
         clip.skipped_items.append(f"physics:{worst.mode.value}")
+        # Flip the mirrored checklist item in lock-step with the verdict.
+        for item in clip.checklist.failed_items:
+            if item.kind == "physics" and item.mode == worst.mode.value:
+                item.passed = True
+                break
         return worst.mode
     failed = clip.checklist.failed_items
     if failed:
-        failed[0].passed = True
-        clip.skipped_items.append(f"{failed[0].kind}:{failed[0].question[:40]}")
+        item = failed[0]
+        item.passed = True
+        clip.skipped_items.append(f"{item.kind}:{item.question[:40]}")
+        if item.kind == "physics" and item.mode:
+            try:
+                return PhysFailureMode(item.mode)
+            except ValueError:  # unknown key — still skipped, just untyped
+                return None
     return None
 
 
 def _worst_hint(clip: CandidateClip) -> str:
-    """Pick the worst defect's intervention as the hint that drives Tier-2 replan."""
+    """Pick the worst defect's intervention as the hint that drives Tier-1/2 replans."""
     if clip.physics_verdicts:
         worst = max(clip.physics_verdicts, key=lambda v: v.severity)
         return worst.suggested_intervention
@@ -93,25 +133,54 @@ def _worst_hint(clip: CandidateClip) -> str:
     return ""
 
 
+def _tier1_hint(best: CandidateClip) -> str:
+    """Verdict-derived anti-violation hint for Tier 1: the worst verdict's own
+    intervention (_worst_hint) combined with the failure-mode library's
+    generic intervention (suggest_intervention) when it adds anything."""
+    hint = _worst_hint(best)
+    if best.physics_verdicts:
+        worst = max(best.physics_verdicts, key=lambda v: v.severity)
+        lib_hint = suggest_intervention(worst.mode)
+        if lib_hint and lib_hint not in hint:
+            hint = f"{hint} | {lib_hint}" if hint else lib_hint
+    return hint or (
+        "one continuous passive trajectory per moving object; "
+        "no mid-air direction changes"
+    )
+
+
+def _stable_skill_name(spec: ShotSpec) -> str:
+    """Stable, human-readable skill name. The suffix is md5-derived from the
+    prompt so the SAME prompt yields the SAME skill_id across processes —
+    builtin hash() is PYTHONHASHSEED-salted and would duplicate skills in a
+    shared memory_dir (and version bumps would never fire cross-run)."""
+    modes_tag = "+".join(
+        m.value for m in (spec.physics_annotation.expected_modes
+                          if spec.physics_annotation else [])
+    ) or "generic"
+    digest = hashlib.md5(spec.prompt.encode("utf-8")).hexdigest()[:5]
+    return f"skill_{modes_tag}__{digest}"
+
+
 def _distill_lesson(
     spec: ShotSpec,
     final: CandidateClip,
     initial_modes: set[PhysFailureMode],
+    skipped_modes: set[PhysFailureMode],
 ) -> Optional[tuple[PhysFailureMode, str]]:
     """Pick the failure mode that was ACTUALLY resolved during the loop.
 
-    Old logic always used `physics_annotation.expected_modes[0]` regardless of
-    whether anything was fixed. New: a mode is "resolved" if it appeared in the
-    INITIAL review (initial_modes) but not in the FINAL review and was not
-    escape-hatched. We distill from one of those true wins. Fall back to the
-    annotation's expected_modes[0] only if no fix was actually achieved.
+    A mode is "resolved" if it appeared in the INITIAL review (initial_modes)
+    but not in the FINAL review and was not escape-hatched at ANY point in the
+    loop (`skipped_modes` is the loop-level typed accumulator — the final
+    clip's own skip records are not enough, because an accepted candidate
+    replaces the clip and drops earlier skip records). We distill from one of
+    those true wins. Fall back to the annotation's expected_modes[0] only if
+    no fix was actually achieved.
     """
     final_modes = {v.mode for v in final.physics_verdicts}
-    skipped = {
-        item.split(":", 1)[1] for item in final.skipped_items if item.startswith("physics:")
-    }
     resolved = [
-        m for m in initial_modes if m not in final_modes and m.value not in skipped
+        m for m in initial_modes if m not in final_modes and m not in skipped_modes
     ]
     if resolved:
         m = resolved[0]
@@ -168,6 +237,7 @@ def _tier1_replan_physics(
     *,
     best: CandidateClip,
     spec: ShotSpec,
+    base_prompt: str,
     cache_dir: Path,
     r: int,
     k_retries: int,
@@ -179,13 +249,24 @@ def _tier1_replan_physics(
     ref_images,
     fps: int,
 ) -> tuple[Optional[CandidateClip], int]:
-    """Replan: tighten the physics verification bar and regenerate."""
-    physics_planner.replan(spec, cache_dir, fps=fps, strictness=0.55)
+    """Replan: regenerate with VERDICT-DERIVED anti-violation hints at an
+    UNCHANGED verification bar.
+
+    The replan re-annotates (entities may change after prompt fixes) from the
+    ORIGINAL prompt snapshot — never from the Tier-2-mutated `spec.prompt`,
+    whose '| plan-fix: <hint>' suffix would be keyword-scanned and could
+    re-introduce modes the hint merely names. Strictness stays at 1.0: a
+    tighter bar on a failing shot makes same-quality candidates accrue more
+    verdicts → lower p2 → Verifier rejection, the inverse of repair (see
+    module docstring; tightening lives in the post-acceptance watchdog)."""
+    physics_planner.replan(spec, cache_dir, fps=fps, strictness=1.0,
+                           base_prompt=base_prompt)
+    hint = _tier1_hint(best)
     gen_calls = 0
     for k in range(k_retries):
         cand = generator.run(
             spec, cache_dir, revision=r, seed=100 + k,  # offset seeds so files differ
-            extra_prompt="one continuous passive trajectory per moving object; no mid-air direction changes",
+            extra_prompt=hint,
             reference_images=ref_images, fps=fps,
         )
         gen_calls += 1
@@ -225,6 +306,46 @@ def _tier2_replan_spec(
     return None, gen_calls
 
 
+def _post_accept_audit(
+    *,
+    accepted: CandidateClip,
+    spec: ShotSpec,
+    board: ReviewBoard,
+    asset_memory,
+    fps: int,
+    strictness: float,
+) -> None:
+    """Post-acceptance hardening (quality watchdog) — LOG-ONLY by design.
+
+    Tightening the verification bar on a FAILING shot inverts the repair
+    incentive (stricter bar → more verdicts → lower p2 → the monotonic
+    Verifier rejects the candidates that fix the defect). Tightening on an
+    ACCEPTED candidate is sound: the decision is already made, so the tighter
+    pass can only surface borderline physics for the operator — it never
+    rejects. Runs on a deep copy so the shipped clip's review state is
+    untouched; the annotation strictness is restored afterwards.
+    """
+    ann = spec.physics_annotation
+    if ann is None or strictness <= 1.0:
+        return
+    audit_clip = copy.deepcopy(accepted)
+    prev = ann.strictness
+    ann.strictness = strictness
+    try:
+        board.review(audit_clip, spec, asset_memory, fps)
+    finally:
+        ann.strictness = prev
+    borderline = [
+        (v.mode.value, round(v.severity, 3)) for v in audit_clip.physics_verdicts
+    ]
+    if borderline:
+        log.info(
+            "post-accept hardening shot %d (strictness=%.2f): %d borderline "
+            "physics verdict(s) %s — log-only, the accepted clip stands",
+            spec.shot_idx, strictness, len(borderline), borderline,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 def generate_shot(
     spec: ShotSpec,
@@ -246,10 +367,16 @@ def generate_shot(
     n_candidates: int = 2,
     max_revisions: int = 5,
     k_retries: int = 2,
+    post_accept_strictness: float = 1.0,   # >1.0 enables the log-only watchdog
 ) -> SelfImproveResult:
     image_edit = image_edit or MockImageEditClient()
     cache_dir = Path(cache_dir)
     gen_calls = 0
+
+    # Snapshot the ORIGINAL prompt before any tier can mutate it: Tier 2's
+    # refine_spec appends '| plan-fix: <hint>' in place, and Tier-1 replans
+    # must re-annotate from this snapshot, not from hint text.
+    base_prompt = spec.prompt
 
     # Identity/style anchor images for cross-shot consistency (E1).
     ref_images = retrieval.retrieve_identity_refs(spec.identity_refs) if retrieval else None
@@ -289,6 +416,11 @@ def generate_shot(
     history = [best.metric_scores.get("weighted_total", 0.0)]
     tier_used: list[int] = []
     escalations = 0
+    # Loop-level escape-hatch accounting (F3): skip records must live on the
+    # LOOP, not the clip — a later accepted candidate replaces the clip and
+    # would silently drop the skip records.
+    skipped_modes: set[PhysFailureMode] = set()
+    escape_hatched = False
 
     # 2. Hierarchical revision loop (C5).
     revisions_used = 0
@@ -311,12 +443,13 @@ def generate_shot(
         )
         gen_calls += calls
 
-        # Tier 1 — tighten physics verification and regenerate.
+        # Tier 1 — regenerate with verdict-derived hints (bar unchanged).
         if accepted_cand is None and physics_planner is not None:
             tier_for_round = 1
             escalations += 1
             accepted_cand, calls = _tier1_replan_physics(
-                best=best, spec=spec, cache_dir=cache_dir, r=r, k_retries=k_retries,
+                best=best, spec=spec, base_prompt=base_prompt,
+                cache_dir=cache_dir, r=r, k_retries=k_retries,
                 generator=generator, verifier=verifier, board=board,
                 physics_planner=physics_planner, asset_memory=asset_memory,
                 ref_images=ref_images, fps=fps,
@@ -339,21 +472,48 @@ def generate_shot(
             best = accepted_cand
             history.append(best.metric_scores.get("weighted_total", 0.0))
             tier_used.append(tier_for_round)
+            # Post-acceptance hardening: only after an escalated acceptance,
+            # only log-only (see _post_accept_audit for why never on failure).
+            if tier_for_round >= 1:
+                _post_accept_audit(
+                    accepted=best, spec=spec, board=board,
+                    asset_memory=asset_memory, fps=fps,
+                    strictness=post_accept_strictness,
+                )
         else:
             # Tier 3 — escape hatch. Drop the worst defect, then refresh metrics
             # so the Verifier's NEXT round compares against an honest total.
-            _escape_hatch(best)
+            mode = _escape_hatch(best)
+            escape_hatched = True
+            if mode is not None:
+                skipped_modes.add(mode)
             board.recompute_metrics(best, spec, asset_memory, fps)
             history.append(best.metric_scores.get("weighted_total", 0.0))
             tier_used.append(3)
 
     converged = converged or board.all_passed(best)
+    # `accepted` = "the clip we ship" (assembly consumes it), NOT "defect-free".
+    # Honest status is `converged` + the escape-hatch record above.
     best.accepted = True
+
+    # Strictness always returns to 1.0 when the loop exits (accepted or
+    # budget-exhausted) — no replan/audit state may leak into the next shot
+    # or the next run sharing this spec object.
+    if spec.physics_annotation is not None:
+        spec.physics_annotation.strictness = 1.0
+
+    # Skill lifecycle (F12d): if planning matched a library skill for this
+    # shot, feed the episode outcome back into its perf EMA.
+    if skill_library is not None and spec.matched_skill is not None:
+        skill_library.record_outcome(
+            spec.matched_skill.skill_id,
+            best.metric_scores.get("weighted_total", 0.0),
+        )
 
     # 3. Distill a lesson based on the mode that was ACTUALLY resolved (C4 fix).
     distilled_lesson_id = ""
     if lesson_library is not None:
-        result = _distill_lesson(spec, best, initial_modes)
+        result = _distill_lesson(spec, best, initial_modes, skipped_modes)
         if result is not None:
             mode, fix = result
             lesson = lesson_library.add(
@@ -364,7 +524,9 @@ def generate_shot(
 
     # 4. Distill a Skill (C7, v0.3) — see RESEARCH_MEMORY_SKILL.md §4.1 (b).
     # A skill is born only when HSI converged at Tier 0 with a non-trivial
-    # initial physics challenge — i.e., the cheapest tier handled real physics.
+    # initial physics challenge — i.e., the cheapest tier handled real physics
+    # — and the escape hatch never fired (a hatched episode may have shipped
+    # hidden defects; it is not admissible recipe evidence).
     distilled_skill_id = ""
     if (
         skill_library is not None
@@ -373,24 +535,22 @@ def generate_shot(
             escalations=escalations,
             converged=converged,
             initial_severity_max=initial_severity_max,
+            escape_hatched=escape_hatched,
         )
     ):
-        modes_tag = "+".join(
-            m.value for m in spec.physics_annotation.expected_modes
-        ) or "generic"
-        # Stable, human-readable name — same physics+prompt collapses to one skill.
-        skill_name = f"skill_{modes_tag}__{abs(hash(spec.prompt)) & 0xFFFFF:05x}"
-        coupled = (
-            getattr(spec, "injected_lesson_ids", None) or []
-        )
+        skill_name = _stable_skill_name(spec)
+        coupled = list(spec.injected_lesson_ids)
         # Admission evidence — the REAL episode signals (metric suite total +
         # verifier-driven convergence/escalation record + which physics modes
         # the loop actually resolved), consumed by SkillAdmission ("skill CI").
+        # Escape-hatched modes are NOT resolved modes (F3c).
         final_modes = {v.mode for v in best.physics_verdicts}
         evidence = {
             "weighted_total": best.metric_scores.get("weighted_total", 0.0),
             "escalations": escalations,
-            "resolved_modes": sorted(m.value for m in initial_modes - final_modes),
+            "resolved_modes": sorted(
+                m.value for m in initial_modes - final_modes - skipped_modes
+            ),
             "converged": converged,
         }
         skill = skill_library.distill(
@@ -405,7 +565,7 @@ def generate_shot(
                     max(0.0, best.metric_scores.get("p1_physics", 1.0) * 0.9),
             },
             coupled_lesson_ids=([distilled_lesson_id] if distilled_lesson_id else [])
-                              + list(coupled),
+                              + coupled,
             weighted_total=best.metric_scores.get("weighted_total", 0.0),
             evidence=evidence,
         )
@@ -419,4 +579,6 @@ def generate_shot(
         initial_severity_max=initial_severity_max,
         distilled_skill_id=distilled_skill_id,
         distilled_lesson_id=distilled_lesson_id,
+        escape_hatched=escape_hatched,
+        skipped_modes=sorted(m.value for m in skipped_modes),
     )

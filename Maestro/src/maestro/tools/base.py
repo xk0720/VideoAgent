@@ -28,7 +28,8 @@ ToolCategory = Literal[
     "generation",   # T2V / I2V / image-edit / audio — produce new media
     "editing",      # ffmpeg cut/concat/trim, PIL ops — deterministic transforms
     "tracking",     # identity / object trajectory across frames
-    "physics",      # sketch / simulation / control-signal rendering (Maestro C1)
+    "physics",      # reference-free physics VERIFICATION: annotation, track
+                    # extraction, law checks (Maestro C6, v0.4)
     "metric",       # quantitative scoring (Maestro C3)
     "retrieval",    # asset/lesson lookup (Maestro E1/C4)
 ]

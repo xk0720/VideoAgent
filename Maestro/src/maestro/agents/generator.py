@@ -49,7 +49,9 @@ class GeneratorAgent(BaseAgent):
 
         keyframes = []
         for k in range(n_keyframes):
-            kf = cache_dir / f"shot{spec.shot_idx:03d}_r{revision}_kf{k}.txt"
+            # Seed is part of the name: same-revision candidates (different
+            # seeds) must not overwrite each other's keyframes.
+            kf = cache_dir / f"shot{spec.shot_idx:03d}_r{revision}_s{seed}_kf{k}.txt"
             kf.write_text(f"keyframe {k} of {video_path.name}\nprompt={prompt}\n",
                           encoding="utf-8")
             keyframes.append(kf)

@@ -52,6 +52,7 @@ class LawFit:
     """Best-fitting member of the passive-motion family."""
 
     law: str               # "static" | "constant_velocity" | "constant_acceleration"
+                           # | "indeterminate" (< 4 frames: nothing fittable)
     residual: float        # RMS error / motion range, clipped to [0,1]
     params: dict = field(default_factory=dict)
 
@@ -88,6 +89,16 @@ MIN_RANGE = 1e-3      # below this motion there is nothing physical to verify
 _TELEPORT_FACTOR = 6.0     # step > 6× median step = discontinuity
 _REVERSAL_MIN_SPEED = 0.01  # per-frame speed that counts as "really moving"
 
+# Robust-scale fallbacks. The teleport / jerk detectors normalize by the
+# track's MEDIAN step / jerk (a robust scale estimate). On the cleanest
+# violations that scale collapses to zero — a static object that teleports
+# has median speed 0, an otherwise-polynomial track has median jerk 0 — and
+# a relative gate would divide by nothing and silence the detector exactly
+# when the evidence is strongest. When the median is degenerate (<= 1e-6) we
+# fall back to these ABSOLUTE thresholds in normalized screen units/frame.
+ABS_TELEPORT = 0.15   # any single step larger than 15% of the screen
+ABS_JERK = 0.05       # acceleration discontinuity, units/frame³
+
 
 def motion_range(track: Track) -> float:
     """Max displacement from the start — the scale everything normalizes by."""
@@ -112,7 +123,12 @@ def fit_best_law(track: Track, fps: int = 8) -> LawFit:
     more complex one (parsimony margin 20%)."""
     arr = np.asarray(track, dtype=float)
     rng = motion_range(track)
-    if len(arr) < 4 or rng < MIN_RANGE:
+    if len(arr) < 4:
+        # Too few samples to fit ANY law — calling that "static" would label
+        # arbitrary garbage as physically explainable. "indeterminate" keeps
+        # violation at 0 (no evidence either way) but the label is honest.
+        return LawFit(law="indeterminate", residual=0.0, params={"n": len(arr)})
+    if rng < MIN_RANGE:
         return LawFit(law="static", residual=0.0, params={"range": rng})
 
     candidates: list[LawFit] = []
@@ -146,7 +162,11 @@ def detect_anomalies(track: Track, fps: int = 8) -> list[MotionAnomaly]:
     speed = np.linalg.norm(vel, axis=1)
     anomalies: list[MotionAnomaly] = []
 
-    # 1. teleport — a step hugely out of scale with the rest of the motion
+    # 1. teleport — a step hugely out of scale with the rest of the motion.
+    #    Severity follows the jerk detector's double-trigger convention: a
+    #    step at exactly the trigger (6× median) scores 0.5, twice the
+    #    trigger (12× median) saturates at 1.0 — so severity spans [0.5, 1.0]
+    #    instead of degenerating to a constant.
     med = float(np.median(speed))
     if med > 1e-6:
         jumps = np.where(speed > _TELEPORT_FACTOR * med)[0]
@@ -154,13 +174,39 @@ def detect_anomalies(track: Track, fps: int = 8) -> list[MotionAnomaly]:
             f = int(jumps[0])
             anomalies.append(MotionAnomaly(
                 kind="teleport", frame_range=(f, f + 1),
-                severity=min(1.0, float(speed[f] / (_TELEPORT_FACTOR * med)) - 0.0),
+                severity=min(1.0, float(speed[f] / (2 * _TELEPORT_FACTOR * med))),
                 note=f"step {speed[f]:.3f} vs median {med:.3f}",
+            ))
+    else:
+        # Median speed ~0: a static object that teleports — the relative
+        # gate has no scale, so use the absolute fallback (see ABS_TELEPORT).
+        jumps = np.where(speed > ABS_TELEPORT)[0]
+        if len(jumps):
+            f = int(jumps[0])
+            anomalies.append(MotionAnomaly(
+                kind="teleport", frame_range=(f, f + 1),
+                severity=min(1.0, float(speed[f] / (2 * ABS_TELEPORT))),
+                note=f"step {speed[f]:.3f} from rest (absolute gate)",
             ))
 
     # 2. mid-air reversal — vertical velocity flips sign while clearly moving,
     #    NOT at the lowest screen point (a bounce at a surface is legitimate;
     #    y grows downward so a surface contact is a local y-maximum).
+    #
+    #    SINGLE-GROUND-PLANE ASSUMPTION + two known ambiguity classes:
+    #    we have no ground-plane estimate, so "the surface" is approximated
+    #    by the track's GLOBAL y-maximum. Consequences:
+    #      (a) MISS — a reversal AT the track's global y-max (the object
+    #          never falls deeper afterwards) is indistinguishable from a
+    #          legitimate bounce, so it is NOT flagged, even if it was in
+    #          fact a mid-air reversal that ended the clip.
+    #      (b) FALSE-POSITIVE — a legitimate bounce on an ELEVATED surface
+    #          (a table top that sits above the track's deepest later point)
+    #          IS flagged: the contact happened above the global y-max, which
+    #          to this detector looks like thin air.
+    #    A heuristic "local maximum" test cannot discriminate either case:
+    #    at any +→− reversal, y[i] IS a local maximum by construction. Doing
+    #    better requires an actual ground/support-plane estimate.
     vy = vel[:, 1]
     y = arr[:, 1]
     y_max = float(y.max())
@@ -200,10 +246,30 @@ def detect_anomalies(track: Track, fps: int = 8) -> list[MotionAnomaly]:
                     severity=min(1.0, float(jerk[f] / (16.0 * med_j))),
                     note=f"jerk {jerk[f]:.4f} vs median {med_j:.4f}",
                 ))
+        else:
+            # Median jerk ~0: an otherwise-polynomial track (constant jerk
+            # everywhere except the spike) — the robust scale collapses, so
+            # use the absolute fallback (see ABS_JERK).
+            spikes = np.where(jerk > ABS_JERK)[0]
+            if len(spikes):
+                f = int(spikes[0])
+                anomalies.append(MotionAnomaly(
+                    kind="jerk_spike", frame_range=(f, f + 3),
+                    severity=min(1.0, float(jerk[f] / (2 * ABS_JERK))),
+                    note=f"jerk {jerk[f]:.4f} on a jerk-free track (absolute gate)",
+                ))
     return anomalies
 
 
 def analyze_track(entity: str, track: Track, fps: int = 8) -> LawReport:
+    """Fit the best passive law + run anomaly detectors for one entity.
+
+    Tracks with fewer than 4 frames come back as law="indeterminate"
+    (violation 0: no evidence either way, but never labeled "static"). In the
+    assembled verifier this case is gated upstream: reliability.certify()
+    rejects tracks shorter than MIN_FRAMES=4 ("too_short"), so analyze_track
+    only sees an indeterminate-length track when called directly.
+    """
     fit = fit_best_law(track, fps)
     anomalies = detect_anomalies(track, fps)
     # A falling object legitimately gains speed (gravity does work). Energy

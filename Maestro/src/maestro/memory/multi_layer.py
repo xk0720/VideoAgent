@@ -70,6 +70,12 @@ class MultiLayerMemory:
         enable_preferences: bool = True,
         enable_episodes: bool = True,
         skill_admission: Optional[SkillAdmission] = None,
+        # Operator-tunable skill lifecycle constants (configs/default.yaml
+        # memory.skill_* keys, threaded by pipeline/run.py). None = library
+        # class defaults.
+        skill_distill_severity_threshold: Optional[float] = None,
+        skill_perf_ema_alpha: Optional[float] = None,
+        skill_eviction_floor: Optional[float] = None,
     ) -> "MultiLayerMemory":
         base = Path(base_dir) if base_dir else None
         # Allow an explicit lesson path override for back-compat with v0.2.2
@@ -81,9 +87,16 @@ class MultiLayerMemory:
         ep = (base / "entities.jsonl") if base else None
         pp = (base / "preferences.json") if base else None
         ep_tr = (base / "episodes.jsonl") if base else None
+        skill_kwargs = {}
+        if skill_distill_severity_threshold is not None:
+            skill_kwargs["distill_severity_threshold"] = skill_distill_severity_threshold
+        if skill_perf_ema_alpha is not None:
+            skill_kwargs["perf_ema_alpha"] = skill_perf_ema_alpha
+        if skill_eviction_floor is not None:
+            skill_kwargs["eviction_floor"] = skill_eviction_floor
         mlm = cls(
             lessons=LessonLibrary(lp),
-            skills=SkillLibrary(sp, admission=skill_admission),
+            skills=SkillLibrary(sp, admission=skill_admission, **skill_kwargs),
             entities=EntityStore(ep),
             preferences=PreferenceStore(pp),
             episodes=EpisodicStore(ep_tr),
@@ -104,8 +117,8 @@ class MultiLayerMemory:
             mlm.skills.register_memory_skill(
                 "skill_ema_retention",
                 params={
-                    "perf_ema_alpha": SkillLibrary.PERF_EMA_ALPHA,
-                    "eviction_floor": SkillLibrary.EVICTION_FLOOR,
+                    "perf_ema_alpha": mlm.skills.perf_ema_alpha,
+                    "eviction_floor": mlm.skills.eviction_floor,
                 },
             )
         return mlm

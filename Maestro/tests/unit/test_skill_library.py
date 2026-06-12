@@ -23,9 +23,31 @@ def test_skill_distill_when_tier0_converges_on_nontrivial_severity(tmp_path: Pat
     assert not lib.should_distill(escalations=1, converged=True,
                                   initial_severity_max=0.7)         # escalated
     assert not lib.should_distill(escalations=0, converged=False,
-                                  initial_severity_max=0.7)         # escape hatch fired
+                                  initial_severity_max=0.7)         # did not converge
     assert not lib.should_distill(escalations=0, converged=True,
                                   initial_severity_max=0.2)         # trivial
+
+
+def test_skill_distill_refuses_escape_hatched_episode(tmp_path: Path):
+    """F3b: `converged` can be True even though the escape hatch fired (a
+    hatched defect is dropped from the review state, which can make the final
+    board pass) — the separate `escape_hatched` flag must veto distillation."""
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    assert lib.should_distill(escalations=0, converged=True,
+                              initial_severity_max=0.7, escape_hatched=False)
+    assert not lib.should_distill(escalations=0, converged=True,
+                                  initial_severity_max=0.7, escape_hatched=True)
+
+
+def test_skill_distill_severity_threshold_is_configurable(tmp_path: Path):
+    """F13b: the constructor's distill_severity_threshold is the default bar
+    for should_distill (threaded from configs/default.yaml memory.*)."""
+    strict = SkillLibrary(tmp_path / "skills.jsonl",
+                          distill_severity_threshold=0.9)
+    assert not strict.should_distill(escalations=0, converged=True,
+                                     initial_severity_max=0.7)
+    assert strict.should_distill(escalations=0, converged=True,
+                                 initial_severity_max=0.95)
 
 
 def test_skill_distill_writes_persisted_record(tmp_path: Path):

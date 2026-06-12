@@ -4,8 +4,11 @@ Point trackers are trained on REAL video. On generated video (flicker,
 morphing, identity drift) they can silently emit plausible-looking tracks of
 implausible objects — so a physics verdict is only as trustworthy as the
 track it was computed from. This module certifies tracks BEFORE the law
-checks run; uncertified entities are routed to a fallback tier instead of
-producing a confident-but-wrong verdict.
+checks run; the assembled verifier (physics/verifier.py) DEMOTES a
+decertified measurement entity to the "vlm" tier instead of letting it
+produce a confident-but-wrong measured verdict (exception: when the clip
+itself is unreadable there is nothing for a VLM to look at either, so the
+entity stays an uncertified measurement deferral).
 
 No published work quantifies or gates on tracker reliability over generated
 content (survey_physics_2026_06.md §4.1) — the gate, and "tracker
@@ -29,8 +32,21 @@ import numpy as np
 from .laws import MIN_RANGE, Track, motion_range
 
 MIN_FRAMES = 4          # below this no law can be fit
-_JITTER_LIMIT = 0.65    # fraction of frame-pairs allowed to reverse direction
+# Fraction of frame-pairs allowed to reverse direction. IID positional noise
+# (a tracker that lost its point) produces direction churn ≈ 0.67-0.72 —
+# within sampling noise of the old 0.65 limit, so it could slip through.
+# 0.55 keeps every physical motion family (churn ≈ 0 for smooth tracks)
+# while rejecting lost-point noise with margin. KNOWN BLIND SPOT: a tracker
+# drifting as a random WALK (IID velocity increments) has churn ≈ 0.5 and
+# still certifies — catching drift needs a smoothness/autocorrelation check,
+# which is future work; this gate is honest only about churn.
+_JITTER_LIMIT = 0.55
 _AGREEMENT_LIMIT = 0.5  # cross-tracker mean L2 / motion range
+# When BOTH tracks are static, motion range is no scale at all (it collapses
+# to MIN_RANGE and a constant seed offset between two healthy trackers reads
+# as huge disagreement). Two static tracks agree if they sit within this
+# absolute distance of each other (normalized screen units).
+STATIC_TOLERANCE = 0.05
 
 
 @dataclass
@@ -72,13 +88,22 @@ def certify(track: Track, fps: int = 8) -> TrackCertificate:
 
 def cross_agreement(a: Track, b: Track) -> float:
     """Mean per-frame disagreement between two extractors' tracks of the same
-    entity, normalized by motion range. 0 = identical, ≥1 = unrelated."""
+    entity, normalized by motion range. 0 = identical, ≥1 = unrelated.
+
+    Static-static special case: when NEITHER track moves there is no motion
+    range to normalize by (dividing a constant seed offset by MIN_RANGE=1e-3
+    would decertify two perfectly healthy trackers staring at the same still
+    object). Two static tracks are instead compared absolutely: they agree
+    when their mean offset is within STATIC_TOLERANCE."""
     n = min(len(a), len(b))
     if n == 0:
         return 1.0
     aa, bb = np.asarray(a[:n], dtype=float), np.asarray(b[:n], dtype=float)
+    offset = float(np.mean(np.linalg.norm(aa - bb, axis=1)))
+    if motion_range(a) < MIN_RANGE and motion_range(b) < MIN_RANGE:
+        return offset / STATIC_TOLERANCE
     rng = max(motion_range(a), motion_range(b), MIN_RANGE)
-    return float(np.mean(np.linalg.norm(aa - bb, axis=1)) / rng)
+    return offset / rng
 
 
 def certify_pair(a: Track, b: Track, fps: int = 8) -> TrackCertificate:
@@ -88,8 +113,11 @@ def certify_pair(a: Track, b: Track, fps: int = 8) -> TrackCertificate:
     caller may surface, but never a measured law verdict."""
     ca, cb = certify(a, fps), certify(b, fps)
     if not (ca.certified and cb.certified):
-        weakest = ca if ca.confidence <= cb.confidence else cb
-        return weakest
+        # Select among the certs that actually FAILED — picking by raw
+        # confidence alone could return a CERTIFIED cert on a rounding tie,
+        # silently certifying the pair despite one tracker failing.
+        failed = [c for c in (ca, cb) if not c.certified]
+        return min(failed, key=lambda c: c.confidence)
     agreement = cross_agreement(a, b)
     if agreement > _AGREEMENT_LIMIT:
         return TrackCertificate(False, round(max(0.0, 1.0 - agreement), 3),

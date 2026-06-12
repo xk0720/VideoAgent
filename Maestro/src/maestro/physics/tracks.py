@@ -73,7 +73,18 @@ def _clean_fall(x0: float, n: int) -> Track:
 def _violating_fall(x0: float, n: int) -> Track:
     """Falls to y≈0.5, reverses upward MID-AIR, then falls deeper to y≈0.8.
     The reversal happens well above the track's deepest point, which is what
-    laws.detect_anomalies recognizes as a gravity/inertia violation."""
+    laws.detect_anomalies recognizes as a gravity/inertia violation.
+
+    A deterministic micro-oscillation rides on y: a real point tracker never
+    returns perfectly piecewise-linear tracks, and a jerk-free synthetic
+    track would (correctly) trip the jerk detector's absolute fallback for
+    degenerate median-jerk tracks (laws.ABS_JERK). The oscillation gives the
+    track a realistic nonzero jerk floor so the segment junctions are judged
+    by the robust 8x-median gate — keeping the mid-air reversal the dominant
+    (gravity/inertia) violation, as a tracker watching this motion would see.
+    Amplitude scales 1/n so per-frame noise stays ~10% of segment speeds."""
+    import math
+
     a, b = n // 3, n // 2
     track: Track = []
     for t in range(n):
@@ -84,6 +95,7 @@ def _violating_fall(x0: float, n: int) -> Track:
             y = 0.5 - 0.1 * (t - a + 1) / max(1, b - a)
         else:                           # fall again 0.4 → 0.8
             y = 0.4 + 0.4 * (t - b) / max(1, n - 1 - b)
+        y += (0.07 / n) * math.sin(2.1 * t + 1.3)   # tracker-like noise floor
         track.append((x, y))
     return track
 

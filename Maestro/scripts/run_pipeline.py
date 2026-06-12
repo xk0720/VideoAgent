@@ -108,7 +108,7 @@ def main() -> int:
 
     if not args.quiet:
         # Trajectory action distribution exposes every load-bearing agent:
-        # build_sketch (C1), plan_fix (C2), review (C3), tool_call (UniVA),
+        # annotate_physics (C6), plan_fix (C2), review (C3), tool_call (UniVA),
         # verify (Verifier), validate_plan (PlanValidator CCV), …
         counts = _summarize_trajectory(trajectory_path)
         print("\nTrajectory action distribution:")

@@ -143,6 +143,9 @@ def run_maestro(
     mem_base = Path(memory_dir) if memory_dir else (
         output_path.parent / "memory" if output_path.parent.name else Path("./memory")
     )
+    def _opt_float(key: str):
+        return float(mem_cfg[key]) if key in mem_cfg else None
+
     mlm = MultiLayerMemory.open(
         base_dir=mem_base,
         user_id=mem_cfg.get("user_id", "default"),
@@ -158,6 +161,10 @@ def run_maestro(
             SkillAdmission()
             if bool(mem_cfg.get("enable_skill_admission", True)) else None
         ),
+        # Skill lifecycle tuning (configs/default.yaml memory.skill_*).
+        skill_distill_severity_threshold=_opt_float("skill_distill_severity_threshold"),
+        skill_perf_ema_alpha=_opt_float("skill_perf_ema_alpha"),
+        skill_eviction_floor=_opt_float("skill_eviction_floor"),
     )
     comp.mlm = mlm
     comp.lesson_library = mlm.lessons              # keep single source of truth
@@ -206,17 +213,24 @@ def run_maestro(
     # entity named by the plan (physics annotation entities) or anchored by
     # an uploaded image (identity anchors carry reference paths). Idempotent
     # — same name always maps to the same entity_id, across shots AND runs.
+    #
+    # ORDER MATTERS: identity ANCHORS register FIRST. They carry verified
+    # reference paths/descriptions; a bare plan entity with the same name
+    # (e.g. anchor 'hero.png' vs prompt noun 'hero') must never claim the id
+    # first and shadow the anchor's refs. EntityStore.register additionally
+    # backfills empty fields on collision (registration-time enrichment), so
+    # the refs survive either order — but anchors-first keeps the log honest.
+    #
+    # NOTE on run scoping: identity ids are name-keyed, so generic-noun ids
+    # ('hero', 'dog') deliberately SHARE state across runs — that is the
+    # recurring-character feature. The annotator's 'subject' FALLBACK entity
+    # (emitted when no noun cue matched) is pure noise under that rule and is
+    # excluded from registration (and therefore from proposals).
+    run_id = uuid.uuid4().hex[:12]
     write_gate = VerificationWriteGate()
     transitions_committed = 0
     transitions_rejected = 0
     if mlm.enabled["entities"]:
-        for spec in specs:
-            if spec.physics_annotation:
-                for pe in spec.physics_annotation.entities:
-                    mlm.entities.register(make_identity(
-                        pe.name,
-                        description=f"planned entity (motion_class={pe.motion_class})",
-                    ))
         for anchor in asset_memory.identity_anchors.values():
             name = anchor.name or anchor.identity_id
             mlm.entities.register(make_identity(
@@ -224,9 +238,22 @@ def run_maestro(
                 reference_paths=[anchor.source] if anchor.source else [],
                 description=anchor.description,
             ))
+        for spec in specs:
+            if spec.physics_annotation:
+                for pe in spec.physics_annotation.entities:
+                    if pe.name == "subject":   # annotator fallback — not an entity
+                        continue
+                    mlm.entities.register(make_identity(
+                        pe.name,
+                        description=f"planned entity (motion_class={pe.motion_class})",
+                    ))
 
     # Stage 2 — self-improve loop per shot
     task_id = f"t{int(time.time())}"
+    # F14: report "learned" counters are THIS-RUN deltas — cumulative library
+    # sizes inflate on a shared memory_dir. Snapshot before the shot loop.
+    skills_before = len(mlm.skills.by_class("creation")) if mlm.enabled["skills"] else 0
+    lessons_before = len(mlm.lessons)
     results = []
     clips = []
     for spec in specs:
@@ -242,19 +269,30 @@ def run_maestro(
             n_candidates=int(gen_cfg.get("n_candidates", 2)),
             max_revisions=int(gen_cfg.get("max_revisions", 5)),
             k_retries=int(gen_cfg.get("k_retries", 2)),
+            post_accept_strictness=float(
+                cfg.get("physics", {}).get("post_accept_strictness", 1.0)
+            ),
         )
         results.append(res)
         clips.append(res.clip)
 
         # Verification-gated entity-state writes: transitions proposed from
         # this shot's plan are committed ONLY if the gate confirms them in
-        # the clip the HSI loop just ACCEPTED ("commit only what rendered").
-        # propose_transitions_from_spec is the deterministic mock stand-in
-        # for the Director authoring transitions at planning time.
+        # the clip the HSI loop just ACCEPTED ("commit only what rendered")
+        # AND the loop converged on it (accepted = "the clip we ship", not
+        # "defect-free"). Proposals and the gate's pending-selection are
+        # scoped to THIS run's run_id, so a transition rejected in an earlier
+        # run sharing the memory_dir stays re-proposable and report counters
+        # count only this run's decisions. propose_transitions_from_spec is
+        # the deterministic mock stand-in for the Director authoring
+        # transitions at planning time.
         if mlm.enabled["entities"]:
-            for t in propose_transitions_from_spec(spec, mlm.entities):
+            for t in propose_transitions_from_spec(spec, mlm.entities, run_id=run_id):
                 mlm.entities.propose(t)
-            gated = mlm.entities.commit_gated(res.clip, spec, write_gate)
+            gated = mlm.entities.commit_gated(
+                res.clip, spec, write_gate,
+                converged=res.converged, run_id=run_id,
+            )
             transitions_committed += gated["committed"]
             transitions_rejected += gated["rejected"]
 
@@ -262,17 +300,28 @@ def run_maestro(
     shot_dur = float(cfg.get("plan", {}).get("shot_duration", 3.0))
     script = assemble(clips, output_path, music, shot_dur)
 
+    # F12d: SkillOps lifecycle pass once per run — decay/evict stale skills.
+    skills_evicted = mlm.skills.age_and_evict() if mlm.enabled["skills"] else 0
+
     distilled_skill_ids = [r.distilled_skill_id for r in results if r.distilled_skill_id]
     distilled_lesson_ids = [r.distilled_lesson_id for r in results if r.distilled_lesson_id]
+    skills_total = len(mlm.skills.by_class("creation")) if mlm.enabled["skills"] else 0
     report = {
         "user_prompt": user_prompt,
         "n_shots": len(specs),
         "output_path": str(output_path),
-        "lessons_learned": len(mlm.lessons),
+        # "*_learned" = THIS RUN's deltas (a shared memory_dir would otherwise
+        # inflate them); "*_total" = cumulative library sizes.
+        "lessons_learned": max(0, len(mlm.lessons) - lessons_before),
+        "lessons_total": len(mlm.lessons),
         # "learned" = distilled creation skills only; registered review/memory
         # skills are declared capabilities, not learned ones.
-        "skills_learned": len(mlm.skills.by_class("creation")),   # C7
-        "skills_registered": len(mlm.skills) - len(mlm.skills.by_class("creation")),
+        "skills_learned": max(0, skills_total - skills_before),   # C7
+        "skills_total": skills_total,
+        "skills_evicted": skills_evicted,
+        "skills_registered": (
+            (len(mlm.skills) - skills_total) if mlm.enabled["skills"] else 0
+        ),
         "entities_persisted": len(mlm.entities), # C8 (v0.3 legacy register)
         # v0.4 dual-register entity memory + verification-gated writes:
         "entities": len(mlm.entities.identities),

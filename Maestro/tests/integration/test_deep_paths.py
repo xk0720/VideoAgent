@@ -288,7 +288,7 @@ def test_pipeline_script_exposes_every_innovation_in_stdout(tmp_path: Path):
     for marker in (
         "(C5)",                      # HSI tier_used + escalations
         "p1(C1)",                    # native physics
-        "p2(C6)",                    # sketch consistency
+        "p2(C6)",                    # law consistency
         "Lessons learned (C4)",      # cross-task memory
     ):
         assert marker in s, f"stdout missing marker {marker!r}"

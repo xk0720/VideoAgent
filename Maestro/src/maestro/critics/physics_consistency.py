@@ -79,7 +79,10 @@ class PhysicsConsistencyCritic(BaseCritic):
                 worst = max(report.anomalies, key=lambda a: a.severity)
                 mode, frame_range, why = worst.mode, worst.frame_range, worst.note
             else:
-                mode = PhysFailureMode.GRAVITY_INERTIA
+                # Residual-only violation: nothing localized to blame, just
+                # "no passive law fits" — labeling that gravity/inertia would
+                # mislead the lesson/skill indexes. UNEXPLAINED is honest.
+                mode = PhysFailureMode.UNEXPLAINED
                 frame_range = (0, n_frames)
                 why = (f"no consistent motion law (best '{report.fit.law}' "
                        f"residual {report.fit.residual:.2f})")

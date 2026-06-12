@@ -51,6 +51,8 @@ def _attach_skills(
                 lesson = lesson_library.get(lid)
                 if lesson is not None and lesson.fix not in spec.injected_lessons:
                     spec.injected_lessons.append(lesson.fix)
+                    if lesson.lesson_id not in spec.injected_lesson_ids:
+                        spec.injected_lesson_ids.append(lesson.lesson_id)
 
 
 def plan_shots(
@@ -68,6 +70,18 @@ def plan_shots(
 ) -> list[ShotSpec]:
     outline = screenwriter.run(user_prompt, asset_memory)
     specs = director.run(outline, asset_memory, lesson_library)
+
+    # C7 lesson-coupling provenance: the Director injects lessons as FIX TEXTS
+    # (spec.injected_lessons); map them back to stable lesson IDS here so a
+    # skill distilled from this shot can carry `coupled_lesson_ids` that point
+    # at the real LessonLibrary entries.
+    if lesson_library is not None:
+        fix_to_id = {l.fix: l.lesson_id for l in lesson_library.lessons}
+        for spec in specs:
+            for fix in spec.injected_lessons:
+                lid = fix_to_id.get(fix)
+                if lid and lid not in spec.injected_lesson_ids:
+                    spec.injected_lesson_ids.append(lid)
 
     # Validate -> Correct loop (plan-level self-improvement). Cheap: runs before
     # any video synthesis. Skipped if no validator is provided (back-compat).

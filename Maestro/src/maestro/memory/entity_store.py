@@ -34,8 +34,10 @@ content-stable ids). One file holds three record kinds discriminated by a
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -106,7 +108,7 @@ def _tokens(text: str) -> list[str]:
 
 
 def propose_transitions_from_spec(
-    spec: ShotSpec, store: "EntityStore",
+    spec: ShotSpec, store: "EntityStore", run_id: str = "",
 ) -> list[StateTransition]:
     """Derive proposed transitions for registered entities named in the spec.
 
@@ -114,7 +116,9 @@ def propose_transitions_from_spec(
     annotation's entity list; cues are matched as whole tokens (so "dry"
     never fires on "laundry"). A transition is only proposed when it would
     actually change the current state register, and never duplicated for the
-    same (entity, shot, field, new) already in the log.
+    same (entity, shot, field, new) already proposed in the SAME run
+    (`run_id`): a transition rejected in run 1 must be re-proposable in run 2,
+    so the dedup scan is run-scoped. `run_id=""` (legacy) scans the whole log.
     """
     toks = _tokens(spec.prompt)
     tok_set = set(toks)
@@ -141,13 +145,15 @@ def propose_transitions_from_spec(
             if any(
                 t.entity_id == ident.entity_id and t.shot_idx == spec.shot_idx
                 and t.field == fld and t.new == val
+                and (not run_id or t.run_id == run_id)
                 for t in store.log
             ):
-                continue             # already proposed/decided for this shot
+                continue             # already proposed/decided in THIS run/shot
             out.append(StateTransition(
                 entity_id=ident.entity_id, shot_idx=spec.shot_idx,
                 field=fld, old=attrs.get(fld, ""), new=val,
                 cause=f"prompt cue '{cue}' in shot {spec.shot_idx}",
+                run_id=run_id,
             ))
     return out
 
@@ -214,6 +220,7 @@ class EntityStore:
                     status=d.get("status", "proposed"),
                     evidence=d.get("evidence", ""),
                     ts=float(d.get("ts", 0.0)),
+                    run_id=d.get("run_id", ""),
                 )
                 self.log.append(t)
                 # State is REPLAYED from the log, never stored — every state
@@ -237,10 +244,16 @@ class EntityStore:
                 self._by_id[ent.entity_id] = ent
 
     def _persist(self) -> None:
+        """Full JSONL rewrite, ATOMIC: written to a sibling `.tmp` then
+        `os.replace`d, so a crash mid-write can never truncate the store.
+        Single-writer assumption: there is NO file locking — concurrent
+        processes sharing one memory_dir can lose each other's updates
+        (last writer wins)."""
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as f:
+        tmp = self.path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             # Legacy records first (kind-less lines, v0.3 shape).
             for e in self.entities:
                 f.write(json.dumps({
@@ -274,16 +287,38 @@ class EntityStore:
                     "status": t.status,
                     "evidence": t.evidence,
                     "ts": t.ts,
+                    "run_id": t.run_id,
                 }, ensure_ascii=False) + "\n")
+        os.replace(tmp, self.path)
 
     # ── identity register (immutable after registration) ──────────────────
     def register(self, identity: EntityIdentity) -> EntityIdentity:
         """Idempotent on entity_id. Re-registering an existing id returns the
-        ORIGINAL register untouched — there is deliberately no update path
-        (the identity register is the immutable half of the dual register)."""
+        existing register; identity CONTENT is never overwritten — there is
+        deliberately no update path (the identity register is the immutable
+        half of the dual register).
+
+        Registration-time ENRICHMENT (documented exception, not state
+        mutation): when a re-registration carries non-empty reference_paths /
+        description and the existing register's corresponding field is EMPTY,
+        the empty field is filled in. This covers the order-independent case
+        of the same name arriving once as a bare plan entity and once as an
+        identity anchor with verified reference images — the anchor's refs
+        must never be dropped just because the bare registration came first.
+        Once a field is non-empty it is frozen for good."""
         existing = self.identities.get(identity.entity_id)
         if existing is not None:
-            return existing
+            fills: dict = {}
+            if identity.reference_paths and not existing.reference_paths:
+                fills["reference_paths"] = list(identity.reference_paths)
+            if identity.description and not existing.description:
+                fills["description"] = identity.description
+            if not fills:
+                return existing
+            enriched = dataclasses.replace(existing, **fills)
+            self.identities[enriched.entity_id] = enriched
+            self._persist()
+            return enriched
         self.identities[identity.entity_id] = identity
         self._persist()
         return identity
@@ -305,17 +340,27 @@ class EntityStore:
         self._persist()
         return transition
 
-    def commit_gated(self, clip, spec: ShotSpec, gate) -> dict[str, int]:
+    def commit_gated(self, clip, spec: ShotSpec, gate,
+                     converged: bool = True, run_id: str = "") -> dict[str, int]:
         """Run the verification gate on every proposed transition for this
         shot; commit confirmed ones into the state register, mark the rest
         rejected. Either way the gate's evidence string is logged — the
         decision is auditable, not silent. Returns {"committed": n,
-        "rejected": m}."""
+        "rejected": m}.
+
+        `converged` is the HSI loop's honest status for the accepted clip
+        (the gate requires it — `accepted` alone only means "the clip we
+        ship"). `run_id` scopes the pending-transition selection to THIS
+        run's proposals: leftover proposals from earlier runs sharing the
+        memory_dir are never decided (or counted) by another run. `run_id=""`
+        (legacy) selects all pending proposals."""
         committed = rejected = 0
         for t in self.log:
             if t.status != "proposed" or t.shot_idx != spec.shot_idx:
                 continue
-            ok, evidence = gate.confirm(t, clip, spec)
+            if run_id and t.run_id != run_id:
+                continue
+            ok, evidence = gate.confirm(t, clip, spec, converged=converged)
             t.evidence = evidence
             if ok:
                 t.status = "committed"
@@ -371,7 +416,13 @@ class EntityStore:
 
     def history(self, entity_id: str) -> list[StateTransition]:
         """Ordered transition log for one entity — the continuity audit trail
-        (the log list is append-only, so order == proposal order)."""
+        (the log list is append-only, so order == proposal order).
+
+        Deliberately CROSS-RUN (no run_id filter), like state replay: entity
+        ids are name-keyed, so a generic-noun id ('hero', 'dog') shares state
+        across runs by design — that is the recurring-character feature. Only
+        proposal dedup, pending-commit selection and report counters are
+        run-scoped (see propose_transitions_from_spec / commit_gated)."""
         return [t for t in self.log if t.entity_id == entity_id]
 
     def reentry_context(self, entity_id: str) -> Optional[dict]:

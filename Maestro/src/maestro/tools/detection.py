@@ -5,11 +5,13 @@ the protagonist" and condition generation on the bbox. Maestro uses it for two
 things:
   • Identity grounding: lock a face/object bbox across the source video so
     the Generator's reference_images feed stays consistent (E1).
-  • Sketch verification (C6): future hook — point trajectories estimated here
-    are what PhysicsConsistencyCritic compares to the sim trajectory.
+  • Physics verification seeding (C6, v0.4): detected entity centroids are
+    the upgrade path for seeding the track extractor's query points
+    (physics/track_extractor_backends.py) — the recovered tracks then feed
+    the reference-free law checks. There is no sim trajectory to compare to.
 
-v0.2.2: mock returns deterministic bboxes based on prompt keywords. v0.3 wires
-Grounding-DINO / SAM / a tracker.
+v0.2.2: mock returns deterministic bboxes based on prompt keywords. A real
+backend wires Grounding-DINO / SAM / a tracker.
 """
 from __future__ import annotations
 

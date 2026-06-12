@@ -174,14 +174,22 @@ class SkillAdmission:
         return bar
 
     def _regression_reasons(self, skill: Skill) -> list[str]:
-        """Gate (b). Only keys the candidate actually declares are compared;
-        an entry that declares no threshold for a key asserts nothing and
-        cannot replace the stricter incumbent at retrieval time."""
+        """Gate (b). Every key the library bar declares for this physical
+        signature must be matched or exceeded by the candidate. OMITTING a
+        declared key fails the gate too: an empty-thresholds entry would
+        otherwise bypass the regression check entirely while still competing
+        in retrieval against the stricter incumbent."""
         reasons: list[str] = []
         bar = self._library_bar(skill)
         for key, best in bar.items():
             ours = skill.acceptance_thresholds.get(key)
-            if ours is not None and ours + self.REGRESSION_EPS < best:
+            if ours is None:
+                reasons.append(
+                    f"regression: candidate omits threshold '{key}' that the "
+                    f"library bar declares ({best:.3f}) for this physical "
+                    f"signature"
+                )
+            elif ours + self.REGRESSION_EPS < best:
                 reasons.append(
                     f"regression: '{key}' threshold {ours:.3f} would lower "
                     f"the library bar {best:.3f} for this physical signature"

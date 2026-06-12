@@ -39,8 +39,11 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from ..logging_utils import get_logger
 from .laws import Track
 from .tracks import BaseTrackExtractor
+
+log = get_logger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,6 +172,14 @@ class CoTrackerExtractor(BaseTrackExtractor):
             ) from exc
 
     def extract(self, clip, spec, entities, fps):
+        """Recover one normalized track per entity, or None on failure.
+
+        Inference failures are NON-FATAL (None → the verifier stays silent)
+        but are logged at WARNING level: a persistent inference bug would
+        otherwise disable physics verification forever with no trace in the
+        server logs. Metric semantics of the silent path: p2 stays NEUTRAL —
+        'no measured violation' is not 'verified', and the coverage report
+        makes the gap explicit."""
         frames = _decode_frames(Path(clip.video_path))
         if frames is None or len(frames) < 2:
             return None  # not a real/decodable video → verifier stays silent
@@ -195,8 +206,15 @@ class CoTrackerExtractor(BaseTrackExtractor):
                     for t in range(pt.shape[0])
                 ]
             return observed
-        except Exception:
-            # A tracking failure is non-fatal: stay silent rather than crash.
+        except Exception as exc:
+            # Non-fatal (verifier stays silent, p2 stays neutral) but VISIBLE:
+            # a silent `return None` here would mask a persistent inference
+            # bug as "nothing to verify" forever.
+            log.warning(
+                "CoTracker inference failed on %s (%d frames, %d entities): %r "
+                "— physics verification skipped for this clip",
+                clip.video_path, len(frames), len(entities), exc,
+            )
             return None
 
 
