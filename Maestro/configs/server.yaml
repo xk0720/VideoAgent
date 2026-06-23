@@ -1,0 +1,110 @@
+# Maestro v0.4 — REAL server config (no mocks).
+#
+# Every model below is a real backend. Copy this file, set the API keys in your
+# environment (see .env.example), and run:
+#   maestro run-once --prompt "..." -o outputs/demo.mp4 --config configs/server.yaml
+#
+# The single-provider default uses Qwen for BOTH planning (qwen-plus) and the
+# VLM judge (qwen-vl-max) so one $QWEN_API_KEY covers reasoning + perception;
+# WaveSpeed produces the actual pixels ($WAVESPEED_API_KEY, no local GPU); and
+# CoTracker verifies physics from those pixels (needs torch + a CUDA GPU).
+# Mix-and-match alternatives are in the comments.
+
+models:
+  # ── Planning brain (screenwriter / director / refiner / verifier) ──
+  # Alternatives — flip name+model and supply the matching key:
+  #   name: deepseek   model: deepseek-chat        $DEEPSEEK_API_KEY
+  #   name: openai     model: gpt-4o               $OPENAI_API_KEY
+  #   name: anthropic  model: claude-sonnet-4-6    $ANTHROPIC_API_KEY
+  #   name: vllm       model: <served-id>   base_url: http://localhost:8000/v1
+  llm:
+    name: "qwen"
+    model: "qwen-plus"
+    temperature: 0.7
+    max_tokens: 1024
+    # api_key: "..."        # or $QWEN_API_KEY (preferred)
+
+  # ── VLM judge & critic (SemanticCritic / PhysicsCritic VLM layer / Tournament) ──
+  # A clip the VLM cannot decode yields NO verdict (never a fabricated one).
+  # Alternative:  name: gpt-4o   model: gpt-4o   $OPENAI_API_KEY
+  mllm:
+    name: "qwen-vl"
+    model: "qwen-vl-max"
+    n_frames: 4             # frames sampled from each clip for the judge
+    # api_key: "..."        # or $QWEN_API_KEY
+
+  # ── Video generation — WaveSpeed hosted API (REAL pixels, no local GPU) ──
+  # Browse model ids at wavespeed.ai; any t2v/i2v id works. The client auto-
+  # swaps *-t2v-* → *-i2v-* when a first-frame anchor is supplied (C2).
+  video_gen:
+    name: "wavespeed"
+    model_id: "bytedance/seedance-v1-pro-t2v-480p"
+    poll_interval: 2.0
+    timeout: 600
+    # api_key: "..."        # or $WAVESPEED_API_KEY
+
+  # ── C6 track extractor — CoTracker (REAL physics verification from pixels) ──
+  # Needs `pip install torch cotracker` matching your CUDA. Omit `checkpoint`
+  # to pull weights via torch.hub on first use. Without a GPU, set name back to
+  # "mock-track" (physics then degrades to neutral — p2 stays 1.0, honest).
+  track_extractor:
+    name: "cotracker"
+    device: "cuda"
+    # checkpoint: "/data/ckpts/cotracker3.pth"
+
+  # ── Keyframe local editor (HSI Tier-0) — still a mock in v0.4 ──
+  # No real image-edit backend is wired yet; Tier-0 keyframe edits are no-ops
+  # on real runs (the loop still works via Tier-1/2 prompt-level repair).
+  image_edit:
+    name: "mock-image-edit"
+
+  # ── Optional world-model physics reward (WMReward / V-JEPA-2) ──
+  # Real "vjepa2" backend is a skeleton; leave commented unless you wire it.
+  # world_reward:
+  #   name: "vjepa2"
+
+# ── Planning ──
+plan:
+  n_shots: 3
+  max_shots: 6
+  shot_duration: 3.0
+  max_plan_iters: 3
+
+# ── Generation + self-improve loop ──
+compose:
+  fps: 8
+  n_candidates: 2            # best-of-N tournament pool per shot
+  max_revisions: 5           # cap on HSI self-improve rounds
+  k_retries: 2               # per-tier retries before escalating
+
+# ── Metric suite (weighted_total drives the monotonic Verifier) ──
+metrics:
+  weights:
+    m1_semantic: 0.22
+    m2_temporal: 0.13
+    p1_physics: 0.22             # VLM-judged physics failure modes (C1)
+    p2_law_consistency: 0.10     # measured reference-free law verification (C6)
+    id1_identity: 0.13
+    m5_rhythm: 0.10
+    aesthetic: 0.10
+    # wm_reward: 0.0             # add a weight here IF you enable world_reward
+
+# ── Physics (C6 v0.4 — reference-free verification; no simulator) ──
+physics:
+  violation_threshold: 0.40
+  post_accept_strictness: 1.0   # >1.0 = log-only quality watchdog after accept
+
+# ── Multi-Layer Memory (C7 skills + C8 entity/preference/episodic) ──
+# base_dir defaults to <output>/memory; persists across runs (skills, entity
+# identity registers, lessons). Point a stable memory_dir at all jobs for one
+# user so the library and character banks compound.
+memory:
+  user_id: "default"
+  enable_skills: true
+  enable_entities: true
+  enable_preferences: true
+  enable_episodes: true
+  enable_skill_admission: true   # "skill CI" — admit only verified skills
+  skill_distill_severity_threshold: 0.5
+  skill_perf_ema_alpha: 0.3
+  skill_eviction_floor: 0.4

@@ -27,11 +27,20 @@ class MockLLMClient(BaseLLMClient):
 
 
 def build_llm(spec: str | dict | None) -> BaseLLMClient:
-    """Factory. v0.1 always returns a mock; v0.2 dispatches on spec['backend']."""
+    """Factory: name None or 'mock*' → MockLLMClient; else a real backend.
+
+    Real backends (openai / deepseek / qwen / vllm / openai-compat / anthropic)
+    live in llm_backends and are imported lazily so the mock/smoke path needs no
+    `requests` and no keys. Mock stays the default — every existing test and the
+    `maestro smoke` path is untouched."""
     name = "mock-llm"
+    config: dict | None = None
     if isinstance(spec, dict):
         name = spec.get("name", name)
+        config = spec
     elif isinstance(spec, str):
         name = spec
-    # DESIGN_DECISION: real backends (deepseek/openai/anthropic/vllm) plug in here.
-    return MockLLMClient(name=name)
+    if name is None or name.lower().startswith("mock"):
+        return MockLLMClient(name=name or "mock-llm")
+    from .llm_backends import build_real_llm
+    return build_real_llm(name, config)

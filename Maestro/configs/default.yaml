@@ -1,9 +1,21 @@
-# ── Models (v0.1 all mock; set backend in v0.2) ──
+# ── Models (default = mock, CPU-only; flip a name to wire a real backend) ──
 models:
+  # LLM (planning brain). Real backends in models/llm_backends.py (raw requests,
+  # no SDK dep). Set name + model, supply the key via config.api_key or env:
+  #   name: "deepseek"   model: "deepseek-chat"     $DEEPSEEK_API_KEY
+  #   name: "openai"     model: "gpt-4o"            $OPENAI_API_KEY
+  #   name: "qwen"       model: "qwen-plus"         $QWEN_API_KEY
+  #   name: "anthropic"  model: "claude-sonnet-4-6" $ANTHROPIC_API_KEY
+  #   name: "vllm"       model: "<served-id>"  base_url: http://host:8000/v1
   llm:
-    name: "mock-llm"          # v0.2: deepseek-v3 / claude / gpt / vllm-local
+    name: "mock-llm"          # real: deepseek / openai / qwen / anthropic / vllm
+  # MLLM/VLM judge & critic. Real backends in models/mllm_backends.py.
+  #   name: "gpt-4o"   model: "gpt-4o"       $OPENAI_API_KEY
+  #   name: "qwen-vl"  model: "qwen-vl-max"  $QWEN_API_KEY
+  # A non-decodable clip (mock text placeholder) yields NO vlm verdicts — the
+  # judge never fabricates a verdict without pixels (no-signal-from-no-evidence).
   mllm:
-    name: "mock-mllm"         # v0.2: qwen-vl judge/critic
+    name: "mock-mllm"         # real: gpt-4o / qwen-vl
   video_gen:
     name: "mock-video-gen"    # v0.2: omniweaving / wan / veo-api
     # weights_path: "/data/ckpts/omniweaving"   # for local backends

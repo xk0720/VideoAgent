@@ -137,7 +137,7 @@ def create_app(output_root: str | Path = "outputs"):
         images: list[str] = []
         music: Optional[str] = None
 
-    app = FastAPI(title="Maestro", version="0.2.2")
+    app = FastAPI(title="Maestro", version="0.4.0")
 
     @app.get("/health")
     def health() -> dict:
@@ -145,7 +145,7 @@ def create_app(output_root: str | Path = "outputs"):
         return {
             "status": "ok",
             "service": "maestro",
-            "version": "0.2.2",
+            "version": "0.4.0",
             "n_tools": len(default_registry().names()),
         }
 

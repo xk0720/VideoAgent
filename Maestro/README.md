@@ -1,599 +1,299 @@
 # Maestro
 
-**Training-free, self-improving, physically-grounded agentic video generation.**
+> **Training-free, multi-agent, self-improving, physically-grounded video generation.**
+> Input = a natural-language instruction (+ optional source videos / reference images / a music track).
+> Output = a multi-shot `.mp4`, produced by a multi-agent loop that **plans → generates → reviews → repairs → remembers**, with physics verified from the generated pixels.
 
-You give an instruction plus optional multimodal materials (video / image / music).
-Maestro plans with multiple agents, generates each shot, reviews it with a board of
-critics against a quantitative metric suite, and **locally repairs failing keyframes
-in a monotonic self-improvement loop** — with **physics treated as a first-class
-citizen**.
+This README is the **production deployment guide**: it documents the *real* backends and the *real* config to run Maestro on a server. There is no training step anywhere — every model is called at inference time only.
 
-- **Mock-first (default):** the full control flow, self-improvement loop,
-  physics verification, planning validation, and logging run **end-to-end on
-  CPU with no API keys**. The `.mp4` it writes is a *placeholder* (see "Why no
-  pixels yet" below).
-- **Real pixels (v0.4):** flip `models.video_gen.name: wavespeed` with a
-  `$WAVESPEED_API_KEY` (hosted REST API, fully implemented, no local GPU) — or
-  wire a local backend behind the same interface. See "Going real" below.
-
-Design rationale & differentiation vs UniVA / VideoAgent / ViMax / VISTA / M3 /
-event-graph: see `REPORT_AND_INSTRUCTIONS.md`. **Side-by-side comparison vs
-UniVA / CutClaw / VISTA / M3 / VideoAgent / ViMax / Event-Graph with measured
-effect of each Maestro innovation: see `COMPARISON.md`.** **v0.3 research:
-agentic memory + skill paradigms survey, the gap, and the C7+C8 task-specific
-design: see `RESEARCH_MEMORY_SKILL.md`.** **v0.4 physics (reference-free
-verification): literature survey `docs/research/survey_physics_2026_06.md` +
-positioning `docs/research/INNOVATION_PLAN_2026_06.md` §3.2
-(`PHYSICS_LITERATURE_REVIEW.md` is the earlier, partially superseded review).**
-End-to-end data flow & config: see
-`DATAFLOW.md`. Incremental modules & citations: see `IMPROVEMENTS.md`.
+If you only want a key-free local healthcheck, jump to [Smoke test](#0-smoke-test-no-keys-no-gpu). For the design rationale and per-innovation source/feasibility analysis, read [`docs/INNOVATIONS_v0.4.md`](./docs/INNOVATIONS_v0.4.md).
 
 ---
 
-## Eight core innovations
+## What is real vs what is a skeleton
 
-1. **Physics as a first-class citizen (C1)** — a *critic layer* + a
-   *measurement layer*, and **nothing is ever injected into the generator**:
-   physics is *verified from the generated pixels*. The old sketch/simulator
-   line is gone entirely (v0.4) — a synthetic sketch cannot control a frozen
-   video model, and comparing against *one* simulated rollout presumes
-   masses/friction/scale that are unknowable from a prompt (see
-   `PHYSICS_LITERATURE_REVIEW.md` + `docs/research/survey_physics_2026_06.md`).
-   The critic layer (VLM-judged, `p1_physics`) localizes failures by mode
-   (penetration / gravity / collision / fluid / object-permanence /
-   deformation / conservation) to specific frames, each mapped to an
-   executable fix. The measurement layer (C6 below) recovers the **observed**
-   motion from the clip and asks the reference-free, parameter-free question
-   *"is there ANY physically consistent explanation for this track?"*. Physics
-   improvement is then driven by **test-time search** — best-of-N tournament +
-   monotonic Verifier (+ optional world-model reward, à la WMReward) — plus
-   HSI targeted repair. All training-free.
-2. **Keyframe-level local self-improvement (C2)** — M3's "checklist → local edit →
-   monotonic Verifier → escape hatch", extended from images to video.
-3. **Self-loop = multi-agent review × metric suite (C3)** — a `ReviewBoard` of
-   critics drives a quantitative, non-black-box loop.
-4. **Cross-task experience memory (C4)** — a `LessonLibrary` distills failures +
-   fixes and injects them into future plans ("gets better the more you use it").
-5. **Hierarchical Self-Improvement (C5, v0.2.1 NEW)** — adaptive *scope*
-   escalation across three tiers. The loop tries the cheapest repair first and
-   only widens scope when needed:
-   - **Tier 0** local keyframe edit (M3-style)
-   - **Tier 1** re-annotate physics with **tightened verification strictness**
-     + regenerate with anti-violation hints distilled from the *observed*
-     failures (harder bar for the verifier, clearer target for the generator)
-   - **Tier 2** Director rewrites the `ShotSpec` (cinematography + prompt) —
-     bounded VISTA-style replan
-   - **Tier 3** escape hatch (drop the worst remaining defect)
+Maestro is built mock-first: every model sits behind an ABC so a mock and a real backend are interchangeable. As of **v0.4** the following are **fully wired real backends** — flip a name in the config and supply a key, no code changes:
 
-   Verifier's monotonic-improvement rule applies at every tier; we never accept
-   a regression. After any acceptance the next revision restarts at Tier 0 —
-   cost-amortized adaptive scope. **This fills the gap between VISTA (always
-   whole-segment) and M3 (always local patch).**
-6. **Reference-free physics-from-pixels verification (C6, v0.2.1; rewritten
-   v0.4)** — a point tracker (deterministic mock by default;
-   `cotracker`/`tapir` lazy-load torch behind the same ABC) recovers the
-   **observed** per-entity tracks from the generated clip; a **reliability
-   gate** (`physics/reliability.py`) certifies tracks *before* trusting them —
-   trackers are trained on real video and lie on generated content, and
-   cross-tracker disagreement is itself an implausibility cue (nobody else
-   quantifies tracker reliability on generated video); the **law layer**
-   (`physics/laws.py`) fits the small family of passive motion laws (static /
-   constant-velocity / constant-acceleration with a *free* gravity vector, so
-   no scale calibration) and takes the best-fit residual as the violation,
-   plus localized anomaly detectors (teleport→object-permanence, mid-air
-   reversal→gravity, energy gain→conservation, jerk spike→collision); a
-   **VerifiabilityRouter** (`physics/router.py`) assigns each annotated entity
-   the strongest tier that can actually check it (measurement / world_model /
-   vlm / none) and reports coverage explicitly — partial verification never
-   reads as full verification. Verdicts are measured, interpretable,
-   per-entity, frame-localized; reported as `p2_law_consistency`
-   (source `law_verifier`), kept separate from the VLM-judged `p1_physics`.
-   Honest degradation: on an unreadable (mock) clip the verifier stays silent;
-   a misconfigured real backend fails loudly rather than emitting a
-   fake-perfect p2.
-7. **PhysicsTyped SkillLibrary (C7, v0.3 NEW)** — *compiled shot recipes*
-   distilled when HSI converges at Tier 0 with non-trivial initial severity
-   (≥ 0.5). Skills are keyed on `PhysFailureMode` signatures (not pure text)
-   and carry pointers to coupled lessons that auto-inject on retrieval.
-   Different from Voyager (env-reward distillation) and SkillWeaver
-   (rehearsal-repeatability). Lifecycle borrowed from SkillOps. See
-   `RESEARCH_MEMORY_SKILL.md` §4.1.
-8. **Multi-Layer Memory (C8, v0.3 NEW)** — six-tier memory: working /
-   episodic (with **replay**) / semantic (extended with A-MEM bidirectional
-   links) / procedural (= C7) / entity (VideoMemory-style, **cross-run**) /
-   preference (Me-Agent-style). `MultiLayerMemory` façade exposes an
-   associative query lighting up multiple tiers at once (HippoRAG-inspired,
-   lightweight in v0.3). See `RESEARCH_MEMORY_SKILL.md` §4.2.
+| Role | Real backend(s) | Module | Needs |
+|---|---|---|---|
+| **Planning LLM** | OpenAI · DeepSeek · Qwen · Anthropic · vLLM / any OpenAI-compatible host | `models/llm_backends.py` | an API key (or a self-hosted endpoint) |
+| **VLM judge & critic** | GPT-4o · Qwen-VL (any OpenAI-compatible multimodal) | `models/mllm_backends.py` | an API key |
+| **Video generation** | **WaveSpeed** hosted API (Seedance / Wan / Hailuo / Runway / … any t2v·i2v id) | `models/video_gen_backends.py` | `WAVESPEED_API_KEY` — **no local GPU** |
+| **Physics track extractor (C6)** | **CoTracker** | `physics/track_extractor_backends.py` | `torch` + a CUDA GPU |
+| **Assembly** | **ffmpeg** (concat demuxer + optional music mux) | `tools/assembly_tool.py` | `ffmpeg` on `$PATH` |
 
-Plus: GEST-style event-graph IR, a plan-level Validate→Correct loop, VISTA
-bidirectional tournament selection, and asset-retrieval grounding (see
-`IMPROVEMENTS.md`).
+**Skeletons (raise a clear error until you implement the body):** OmniWeaving / Wan *local-weight* video backends, TAPIR tracker, V-JEPA-2 world-model reward, Qwen-Image-Edit keyframe editor, and the audio tool. None of these block a real run — the table above is a complete, working pipeline. Where a skeleton is selected the system **fails loudly**; it never silently falls back to a mock.
+
+> **Honesty contract.** Critics read the *artifact* (decoded pixels / the clip record), never a revision counter. A clip a backend cannot decode yields **no** verdict rather than a fabricated one. This is enforced by a regression test (`test_loop_signal_is_content_derived`): a generator that ignores repair instructions never converges.
 
 ---
 
-## Architecture (data flow)
+## 0. Smoke test (no keys, no GPU)
 
-```
-Inputs (prompt + optional video/image/music)
-  └─ Stage 0  Understand   → AssetMemory (shots / identities / styles / music)
-  └─ Stage 1  Plan          → Screenwriter → Director → PhysicsPlanner
-                              + PlanValidator (Validate→Correct loop)  → ShotSpec[]
-  └─ Stage 2  Generate + Hierarchical Self-Improve Loop (HSI, per shot)
-                Generator → Tournament → ReviewBoard(5 critics) → Verifier
-                if not accepted →  Tier 0 keyframe edit (Refiner)
-                              →    Tier 1 physics replan (PhysicsPlanner:
-                                          strictness↑ + anti-violation hints)
-                              →    Tier 2 spec rewrite (Director.refine_spec)
-                              →    Tier 3 escape hatch  ↺
-                LessonLibrary distills the actually-resolved failure mode
-  └─ Stage 3  Assemble (ffmpeg, graceful fallback) → demo.mp4 + report + trajectory
-```
-
-### Repo layout
-
-```
-Maestro/
-├── README.md  REPORT_AND_INSTRUCTIONS.md  DATAFLOW.md  IMPROVEMENTS.md
-├── pyproject.toml  requirements.txt  .env.example
-├── configs/
-│   └── default.yaml                 # all knobs; override with --config
-├── scripts/run_pipeline.py          # end-to-end CLI entry
-├── src/maestro/
-│   ├── types.py                     # all dataclasses / enums (incl. EventGraph)
-│   ├── config.py logging_utils.py trajectory.py embeddings.py
-│   ├── physics/                     # ← differentiation core (v0.4 reference-free)
-│   │   ├── annotate.py router.py    #   entity/motion-class annotation + verifiability tiers
-│   │   ├── tracks.py reliability.py #   observed tracks + tracker-reliability gate
-│   │   ├── laws.py verifier.py      #   best-law residual + the assembled C6 stack
-│   │   ├── track_extractor_backends.py  # real CoTracker / TAPIR (torch)
-│   │   └── failure_modes.py         #   taxonomy + localizable→actionable bridge
-│   ├── planning/event_graph.py      # GEST-style IR + validation
-│   ├── memory/lesson_library.py     # C4 cross-task memory
-│   ├── models/                      # wrappers (mock now; real = v0.2)
-│   │   ├── llm.py mllm.py image_edit.py
-│   │   ├── video_gen.py             #   factory + mock
-│   │   └── video_gen_backends.py    #   WaveSpeed (real, hosted) + OmniWeaving/Wan/Veo skeletons
-│   ├── agents/                      # screenwriter director physics_planner
-│   │                                #   plan_validator generator verifier refiner
-│   ├── critics/                     # semantic physics physics_consistency (C6)
-│   │                                #   consistency rhythm + board + tournament
-│   ├── tools/                       # metric_tool assembly_tool retrieval_tool
-│   ├── orchestration/state.py       # run state
-│   ├── pipeline/                    # understand plan generate_loop assemble run
-│   └── prompts/                     # agent prompt templates (not hardcoded)
-└── tests/                           # unit + integration (pytest)
-```
-
----
-
-## Quickstart (v0.4 — CPU, no keys, no GPU)
+Confirms the box is wired correctly before you spend any API budget. Uses mock backends end-to-end (real `ffmpeg` assembly if present).
 
 ```bash
-cd Maestro
+git clone <this-repo> && cd Maestro
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[all]'                 # CPU-only deps: numpy, pyyaml, fastapi, opencv, imageio, pillow
+maestro smoke                           # → "[smoke] OK: n_shots=3 ..."
+python -m pytest -q                     # → 211 passed
+```
+
+If `maestro smoke` prints a per-shot report and `pytest` is green, the install is sound. Now wire real backends.
+
+---
+
+## 1. Install (server, real backends)
+
+```bash
 python -m venv .venv && source .venv/bin/activate
 
-# Minimal: mock pipeline + tests (numpy + pyyaml + pytest only)
-pip install -e '.[dev]'
+# Core + server + image/video decoding (CPU, pip-only):
+pip install -e '.[all]'
 
-# Recommended on a server: also get the FastAPI server + image ops
-pip install -e '.[all]'                    # core + server + image
-# (or `pip install -r requirements.txt` for the same set)
+# Real physics verification (C6) — match your CUDA. CoTracker pulls weights via
+# torch.hub on first use, or point configs at a local checkpoint.
+pip install torch                       # the CUDA build for your driver
+pip install git+https://github.com/facebookresearch/co-tracker.git
 
-# unit + integration tests — should print "125 passed"
-pytest -q
-
-# single-shot generation (mock models, CPU)
-maestro run-once \
-  --prompt "a ball is thrown and bounces; a person runs through a city" \
-  --music data/track.mp3 --image data/hero.png \
-  -o outputs/demo.mp4
-
-# operator's healthcheck — verify the box is wired right
-maestro smoke
-
-# bring up the FastAPI server (UniVA-compatible /health)
-maestro serve --host 0.0.0.0 --port 8000
-curl http://localhost:8000/health
+# System dependency for final assembly:
+#   Debian/Ubuntu:  apt-get install -y ffmpeg
+#   macOS:          brew install ffmpeg
+ffmpeg -version                         # must be on $PATH
 ```
 
-The `maestro` command is registered by `pyproject.toml`'s `[project.scripts]`,
-so `pip install -e .` is enough to get it on PATH — no `PYTHONPATH` gymnastics.
+GPU video deps (`torch`, `cotracker`) are intentionally **not** pinned in `pyproject.toml` so they don't fight your CUDA. Everything else is in the `all` extra.
 
-CLI flags (`run-once`): `--prompt` (required), `--source` (0+ source videos),
-`--image` (0+ reference images), `--music`, `--output`, `--config`.
+> No GPU on the box? You can still run a fully real *generation* pipeline with **WaveSpeed video + an LLM + a VLM judge**, and set `track_extractor.name: mock-track` — physics verification then degrades to neutral (it reports "not measured", never a fake pass). The rest of the loop is unaffected.
+
+---
+
+## 2. Keys
+
+```bash
+cp .env.example .env        # then edit, OR just export the vars in your shell
+```
+
+Set only the keys for the backends you select in the config. The minimal real setup (single provider) needs **two** keys:
+
+```bash
+export QWEN_API_KEY=...        # planning LLM + VLM judge (one provider, two roles)
+export WAVESPEED_API_KEY=...   # real video pixels
+```
+
+All recognized variables (full list in [`.env.example`](./.env.example)):
+
+| Variable | Used by |
+|---|---|
+| `OPENAI_API_KEY` | `llm`/`mllm` name `openai` / `gpt-4o` |
+| `DEEPSEEK_API_KEY` | `llm` name `deepseek` |
+| `QWEN_API_KEY` | `llm` name `qwen`, `mllm` name `qwen-vl` |
+| `ANTHROPIC_API_KEY` | `llm` name `anthropic` / `claude*` |
+| `LLM_API_KEY` / `LLM_BASE_URL` | `llm` name `vllm` / `openai-compat` (self-hosted) |
+| `WAVESPEED_API_KEY` | `video_gen` name `wavespeed` |
+| `COTRACKER_CKPT` | optional CoTracker checkpoint path (else torch.hub) |
+| `MAESTRO_HOST` / `MAESTRO_PORT` / `MAESTRO_LOG_LEVEL` | the server |
+
+A real backend selected **without** its key raises a `RuntimeError` at call time — it will not quietly run on mocks.
+
+---
+
+## 3. Config
+
+The shipped [`configs/default.yaml`](./configs/default.yaml) is **all-mock** (so the smoke test and CI need no keys). For a real run use [`configs/server.yaml`](./configs/server.yaml), which wires every backend above. Its default is single-provider Qwen + WaveSpeed + CoTracker; mix-and-match alternatives are in its comments.
+
+The model block (the part you change most):
+
+```yaml
+models:
+  llm:                              # planning brain
+    name: "qwen"                    # or deepseek / openai / anthropic / vllm
+    model: "qwen-plus"
+  mllm:                             # VLM judge & critic
+    name: "qwen-vl"                 # or gpt-4o
+    model: "qwen-vl-max"
+    n_frames: 4                     # frames sampled from each clip to judge
+  video_gen:
+    name: "wavespeed"               # REAL pixels, no local GPU
+    model_id: "bytedance/seedance-v1-pro-t2v-480p"
+  track_extractor:
+    name: "cotracker"               # REAL physics verification (needs torch+GPU)
+    device: "cuda"
+```
+
+**Backend → key → endpoint dispatch:**
+
+| `models.llm.name` | key | default endpoint · model |
+|---|---|---|
+| `openai`, `gpt*` | `OPENAI_API_KEY` | `api.openai.com/v1` · `gpt-4o` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `api.deepseek.com/v1` · `deepseek-chat` |
+| `qwen` | `QWEN_API_KEY` | `dashscope.aliyuncs.com/compatible-mode/v1` · `qwen-plus` |
+| `anthropic`, `claude*` | `ANTHROPIC_API_KEY` | `api.anthropic.com` · `claude-sonnet-4-6` |
+| `vllm` / `openai-compat` | `LLM_API_KEY` (opt) | `LLM_BASE_URL` (e.g. `localhost:8000/v1`) · *your served id* |
+
+| `models.mllm.name` | key | default endpoint · model |
+|---|---|---|
+| `gpt-4o`, `openai-vlm` | `OPENAI_API_KEY` | `api.openai.com/v1` · `gpt-4o` |
+| `qwen-vl` | `QWEN_API_KEY` | `dashscope.aliyuncs.com/compatible-mode/v1` · `qwen-vl-max` |
+
+Other tunables in `server.yaml`: `compose.{fps,n_candidates,max_revisions,k_retries}` (the best-of-N + self-improve budget), `metrics.weights` (the 7-dim review suite — **an explicit block overrides the code defaults wholesale, so list every dimension**), `physics.{violation_threshold,post_accept_strictness}`, and the `memory.*` tier switches.
+
+---
+
+## 4. Run
+
+### One-shot (CLI / cron / batch)
+
+```bash
+maestro run-once \
+  --prompt "A red kite breaks free and tumbles down onto wet pavement, slow motion" \
+  --config configs/server.yaml \
+  -o outputs/kite.mp4
+```
+
+With source material (retrieval-grounded generation; identity anchors keep a character consistent across shots):
+
+```bash
+maestro run-once \
+  --prompt "Stitch the best action beats into a 3-shot montage on the beat" \
+  --source footage/clip1.mp4 footage/clip2.mp4 \
+  --image refs/hero.png \
+  --music track.mp3 \
+  --config configs/server.yaml \
+  -o outputs/montage.mp4
+```
+
+`--source` (1+ videos), `--image` (reference/identity images), `--music` (a track) are all optional.
 
 ### Outputs
-| File | Meaning |
+
+| File | Contents |
 |---|---|
-| `outputs/demo.mp4` | the assembled video — **v0.1 = placeholder text file** |
-| `outputs/demo.report.json` | per-shot revision count, convergence, score history, **HSI `tier_used` / `escalations`**, final metrics (incl. the measured `p2_law_consistency`) |
-| `outputs/demo.trajectory.jsonl` | every agent decision (state/action/observation) including `annotate_physics` at planning time and `replan_physics` / `refine_spec` when HSI escalates |
-| `outputs/lessons.jsonl` | cross-task experience memory (C4) — keyed on the *actually resolved* failure mode |
+| `outputs/kite.mp4` | the finished multi-shot video (real ffmpeg concat of generated clips) |
+| `outputs/kite.report.json` | per-shot revisions, HSI `tier_used` / `escalations`, final metric scores, `entities` / `transitions_committed` / `skills_learned` / `lessons_learned` |
+| `outputs/kite.trajectory.jsonl` | every agent decision (state · action · observation) — `annotate_physics`, `generate`, `review`, `verify`, `replan_physics`, `validate_plan` … |
+| `outputs/memory/` | persistent library: distilled **skills**, **entity** identity registers + state-transition log, **lessons**, preferences — compounds across runs |
 
-### Why no pixels yet
-The default config mocks every heavy model so the *orchestration* is testable on
-CPU. The loop, metrics, physics verdicts, planning validation, report and logs
-are all real; only the pixel-producing step is a stub (and the mock track
-extractor *synthesizes* tracks so the law checks have a signal path to
-exercise). To get real video, the fastest route is the WaveSpeed backend —
-see "Going real" below.
+Point a stable `memory_dir` (the directory above) at all of one user's jobs and the skill library + character banks accumulate run over run.
 
 ---
 
-## Tool library (UniVA-inspired, v0.2.2)
-
-Every tool self-describes via `BaseTool.spec` and registers with the in-process
-`ToolRegistry` (`maestro.tools.default_registry()`). Borrowed *pattern* from
-UniVA's MCP tool servers (arXiv:2511.08521) without the wire protocol.
-
-| Category | Tools | Purpose |
-|---|---|---|
-| **analysis**   | `video_probe`, `frame_extract`, `caption` | inspect / extract / describe assets before generation |
-| **generation** | `audio_gen` (+ neural T2V via `models/video_gen_backends.py`) | synthesize new media |
-| **editing**    | `assemble`, `video_concat`, `image_ops` | ffmpeg/PIL deterministic transforms |
-| **tracking**   | `detect_objects` | object/identity bboxes for grounding |
-| **metric**     | `compute_metrics` | the C3 quantitative scorer |
-| **physics**    | (annotation + verification stack; see `physics/`) | the C1/C6 differentiation core — measured verdicts from pixels, nothing injected |
-| **retrieval**  | `retrieve_assets` (constructed per run) | E1 grounding lookup |
-
-Every tool degrades gracefully when its optional system dep (ffmpeg, PIL) is
-absent — sandbox-runs always produce valid `Path` outputs so the higher loop
-keeps converging.
-
-### Plan ↔ Act
-Maestro's planning agents (Screenwriter / Director / PhysicsPlanner / Refiner)
-are domain-specialized **plan** agents. `ActAgent` is the generic **executor**
-mirroring UniVA's Act side: it takes a list of `ToolCall(name, args, kwargs)`,
-routes each through the registry, and writes a `tool_call` event into the
-trajectory. Plan→Act is now a uniform, observable handoff:
-
-```python
-from maestro.agents import ActAgent, ToolCall
-plan = [
-    ToolCall("video_probe", args=["src.mp4"]),
-    ToolCall("caption", args=["src.mp4"]),
-    ToolCall("detect_objects", kwargs={"media": "src.mp4", "query": "hero ball"}),
-]
-results = ActAgent().run(plan)   # each call logged with category + status
-```
-
----
-
-## Server (production-ready shim)
-
-Same `/health` shape as UniVA's `univa_server.py` so existing orchestrators
-(k8s liveness, docker-compose healthchecks) just work.
+## 5. Server
 
 ```bash
-maestro serve --host 0.0.0.0 --port 8000
-# or: uvicorn maestro.server:app --host 0.0.0.0 --port 8000
+maestro serve --port 8000          # or: uvicorn maestro.server:app --host 0.0.0.0 --port 8000
 ```
 
-| Endpoint | Method | Body / Purpose |
-|---|---|---|
-| `/health`   | GET  | `{status, service, version, n_tools}` — liveness probe |
-| `/tools`    | GET  | machine-readable manifest of every registered tool's `spec` |
-| `/generate` | POST | `{prompt, source_videos?, images?, music?}` → enqueues a job, returns `job_id` |
-| `/jobs/{id}` | GET  | poll job state (`queued/running/done/error`), output path, report |
-
-Jobs run in an in-process `ThreadPoolExecutor` (v0.2.2; v0.3 swaps for
-Redis/Celery — the interface in `server.JobStore` is stable for the upgrade).
-
-### Docker (CPU-friendly)
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | UniVA-compatible liveness (`{status, service, version, n_tools}`) |
+| `GET /tools` | the registered tool inventory |
+| `POST /generate` | submit a job → `{job_id, state}` (async; the run happens in a worker thread) |
+| `GET /jobs/{job_id}` | poll job state + result paths |
 
 ```bash
-docker build -t maestro:0.2.2 .
-docker run --rm -p 8000:8000 maestro:0.2.2
-curl http://localhost:8000/health
+curl -s localhost:8000/generate \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"a paper boat drifts down a rain gutter","images":["refs/boat.png"]}'
+# → {"job_id":"...","state":"running"}
+curl -s localhost:8000/jobs/<job_id>      # poll until state == "done"
 ```
 
-The image is `python:3.11-slim + ffmpeg` (no GPU dep). `HEALTHCHECK` hits
-`/health` so k8s & docker-compose probe out-of-the-box. v0.3 GPU image: swap
-the base to `nvidia/cuda:12.4.0-runtime-ubuntu22.04` and add torch in a
-separate stage — application contract above does NOT change.
+The server reads the same config/env. Set `MAESTRO_SANDBOX=1` to make the tool-executing agent refuse side-effecting tools (useful for untrusted prompts).
+
+### Docker (CPU host; WaveSpeed for pixels, no GPU)
+
+```dockerfile
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y ffmpeg git && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY . .
+RUN pip install -e '.[all]'
+EXPOSE 8000
+CMD ["maestro", "serve", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```bash
+docker build -t maestro:0.4 .
+docker run --rm -p 8000:8000 \
+  -e QWEN_API_KEY -e WAVESPEED_API_KEY \
+  -v "$PWD/outputs:/app/outputs" maestro:0.4
+```
+
+For real physics verification add a CUDA base image + `pip install torch cotracker` and run with `--gpus all`; otherwise keep `track_extractor.name: mock-track`.
 
 ---
 
-## Configuration reference (`configs/default.yaml`)
+## 6. How a run flows
 
-```yaml
-models:                      # all mock by default; flip a name to go real
-  llm:        {name: mock-llm}
-  mllm:       {name: mock-mllm}
-  video_gen:  {name: mock-video-gen}   # "wavespeed" = real pixels via hosted API
-                                       # ($WAVESPEED_API_KEY, no GPU); local:
-                                       # "omniweaving" / "wan" (weights_path/device)
-  image_edit: {name: mock-image-edit}
-  # --- optional physics backends (omit / mock = identical CPU behavior) ---
-  track_extractor: {name: mock-track}  # C6 observed tracks: "cotracker" / "tapir"
-                                       # (need torch + real decoded frames)
-  # world_reward:  {name: mock-world-reward}   # adds wm_reward (V-JEPA-2 / WMReward)
-
-plan:
-  n_shots: 3            # default shots (follows music section count if music given)
-  max_shots: 6
-  shot_duration: 3.0
-  max_plan_iters: 3     # plan-level Validate→Correct loop cap
-
-compose:
-  fps: 8
-  n_candidates: 2       # tournament pool per shot (E3)
-  max_revisions: 5      # self-improvement rounds cap (C2/C5)
-  k_retries: 2          # per-revision retries WITHIN each HSI tier (C5)
-
-metrics:                # weighted_total drives Verifier's monotonic check
-  weights:
-    m1_semantic: 0.22
-    m2_temporal: 0.13
-    p1_physics:  0.22   # native physics-failure modes (C1 critic layer, VLM-judged)
-    p2_law_consistency: 0.10   # measured law-residual verification (C6 v0.4)
-    id1_identity: 0.13
-    m5_rhythm:   0.10
-    aesthetic:   0.10
-
-physics:
-  acceptance_severity: 0.30    # a failure mode below this is "resolved"
-
-memory:                  # C8 Multi-Layer Memory (v0.3) — all tiers on by default
-  user_id: default
-  enable_skills: true          # C7 SkillLibrary (procedural memory)
-  enable_entities: true        # cross-run identity persistence
-  enable_preferences: true     # per-user cinematic / strictness biases
-  enable_episodes: true        # episodic trace store
-  skill_distill_severity_threshold: 0.5
+```
+instruction (+ source / images / music)
+        │
+  Stage 0  Understanding ── perceive source assets → AssetMemory (identity / style / music)
+        │
+  Stage 1  Plan ───────── Screenwriter → Director → PlanValidator (Critique·Correct·Verify)
+        │                  → ShotSpecs, each annotated with physics (entities + motion class)
+        │
+  Stage 2  Generate + Self-Improve (per shot, the core loop)
+        │     best-of-N candidates  →  Review Board (semantic · physics VLM · law verifier
+        │     · consistency · rhythm) + metric suite  →  Verifier (monotonic)
+        │       repair, cheapest scope first:
+        │         Tier 0  keyframe-local edit
+        │         Tier 1  regenerate with verdict-derived anti-violation hints (unchanged bar)
+        │         Tier 2  director rewrites the shot spec
+        │         Tier 3  escape hatch (logged, accounted)
+        │       → distill a Lesson + (if verified) a Skill; commit verified entity-state writes
+        │
+  Stage 3  Assemble ───── ffmpeg concat of accepted clips (+ music) → final .mp4
 ```
 
-Tuning intuition: quality↑ → raise `compose.max_revisions` / `n_candidates`
-(slower); native physics↑ → raise `metrics.weights.p1_physics`, lower
-`physics.acceptance_severity`; measured-law verification↑ → raise
-`metrics.weights.p2_law_consistency`. Any value is overridable via
-`--config your.yaml`. Memory persists to `<output_dir>/memory/` across runs;
-delete that dir for a cold start.
+The five **innovations** (full sourcing & feasibility in [`docs/INNOVATIONS_v0.4.md`](./docs/INNOVATIONS_v0.4.md)):
+
+- **Unified skill lifecycle** — creation / review / memory skills under one training-free *distill → admission ("skill CI") → retrieve → EMA → evolve/evict* loop; the agent's only learnable substrate.
+- **Reference-free physics-from-pixels (C6)** — no sketch, no simulator. A tracker recovers observed motion; a reliability gate certifies it (trackers lie on generated video); the law layer asks *"is there any physically consistent explanation?"* (best passive-law residual + localized anomaly detection), driving best-of-N selection and targeted repair.
+- **Dual-register entity memory** — immutable canonical identity ⊕ mutable state via a typed transition log, with **verification-gated writes**: a state change commits only when confirmed in the rendered clip.
+- **Hierarchical Self-Improvement (HSI)** — adaptive-scope repair (Tier 0→3) with a monotonic verifier and cross-task lesson reuse.
+- **Real tool/asset spine** — UniVA-style tool registry, retrieval-grounded generation, hosted-API video so a real run needs no local GPU.
 
 ---
 
-## Going real (real pixels / real physics — GPU)
+## 7. Troubleshooting
 
-> The CPU mock pipeline above runs with no GPU and no keys. The **fastest route
-> to real pixels needs no GPU either**: set `models.video_gen.name: wavespeed`
-> with a `$WAVESPEED_API_KEY` (hosted REST API — the same service UniVA uses).
-> For local backends, swap a mock wrapper for a real backend (each is a stable
-> ABC) and install that backend's own heavy deps (torch etc.) to match your
-> CUDA — they are intentionally not pinned in this repo.
-
-### What is already wired vs what you implement
-
-| Wrapper | Factory | Default | Real backend |
-|---|---|---|---|
-| **video_gen** | `build_video_gen` | mock | **`wavespeed` fully implemented** (hosted REST: submit → poll → download; `$WAVESPEED_API_KEY`; default `model_id: bytedance/seedance-v1-pro-t2v-480p`, auto-switches to the i2v variant when a `first_frame` is given). OmniWeaving / Wan / Veo are local-weights **skeletons** — fill `generate()` |
-| **mllm** (judge/critic) | `build_mllm` | mock | add a `BaseMLLMClient` subclass + extend the factory |
-| **llm** (planning) | `build_llm` | mock | add a `BaseLLMClient` subclass + extend the factory |
-| **image_edit** | `build_image_edit` | mock | add a `BaseImageEditClient` subclass + extend the factory |
-| **track_extractor** (C6) | `build_track_extractor` | mock (synthesizes tracks) | `cotracker` / `tapir` **wired** behind the same ABC — install torch + weights to track real frames |
-
-The factories for `video_gen` and `track_extractor` already dispatch to real
-backends by `name`; the other factories currently always return the mock
-(extend them the same way).
-
-### Prerequisites
-- For `wavespeed`: just an API key — no GPU, no torch.
-- For local backends: a GPU + extra Python deps (torch, the model's package, etc.).
-- `ffmpeg` on PATH (real assembly; without it, assembly falls back to a manifest).
-
-### Recommended order (highest payoff first)
-1. **`video_gen` = `wavespeed`** — first real pixels in minutes, no GPU.
-2. **`mllm`** — let `PhysicsCritic`/`SemanticCritic` use a real VLM so p1
-   verdicts are grounded (PhyGenEval-style), not mock.
-3. **`track_extractor` = `cotracker`/`tapir`** — measured `p2_law_consistency`
-   from *real* tracked pixels (the mock synthesizes tracks to exercise the
-   law checks; the real path needs torch + weights).
-4. **`llm`** — smarter Screenwriter/Director planning.
-
-### Step 1 — install deps & set keys
-```bash
-pip install -e '.[all]'               # wavespeed needs `requests` (in [all])
-cp .env.example .env                  # then fill in:
-#   WAVESPEED_API_KEY=...                            (fastest: hosted video gen)
-#   OMNIWEAVING_WEIGHTS=/data/ckpts/omniweaving      (or WAN_WEIGHTS / VEO_API_KEY)
-#   QWEN_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY  (when wiring mllm/llm)
-```
-
-### Step 2 — point the config at a real backend
-```yaml
-# configs/local.yaml
-models:
-  video_gen:
-    name: "wavespeed"                 # fully implemented — real pixels, no GPU
-    model_id: "bytedance/seedance-v1-pro-t2v-480p"   # any WaveSpeed t2v/i2v id
-    # api_key: ...                    # or $WAVESPEED_API_KEY
-  # local alternative (fill the skeleton first):
-  # video_gen: {name: "omniweaving", weights_path: "/data/ckpts/omniweaving", device: "cuda"}
-```
-
-### Step 3 — (local backends only) implement the backend body
-`wavespeed` works out of the box. For a local model, open
-`src/maestro/models/video_gen_backends.py`, pick your class
-(`OmniWeavingClient` recommended — native text + multi-image conditioning),
-and fill the two TODOs:
-- `_ensure_loaded()` — load the pipeline from `self.weights_path` onto `self.device`.
-- `generate(...)` — the contract is **identical to the mock**, so nothing else in
-  the data flow changes. The conditioning inputs:
-  - `first_frame` → I2V anchor (continuity across keyframe-local repairs, C2).
-  - `reference_images` → identity/style anchors from `RetrievalTool` (consistency, E1).
-
-> There is **no physics control signal** (v0.4): physics is *verified from the
-> generated pixels*, never injected into the generator. That is why a text-only
-> API backend is now perfectly fine — the C6 verifier measures whatever pixels
-> come back, regardless of how they were conditioned. `first_frame` /
-> `reference_images` buy continuity (C2) and identity (E1), not physics.
-
-### Step 4 — run
-```bash
-python scripts/run_pipeline.py \
-  --prompt "a glass of water is poured onto a table; it splashes" \
-  --image data/hero.png \
-  --output outputs/real.mp4 \
-  --config configs/local.yaml
-```
-With `ffmpeg` present, `outputs/real.mp4` is now a real, assembled clip; inspect
-`outputs/real.report.json` to see how many self-improvement rounds each shot took
-and how the physics score climbed.
-
-### Wiring the other wrappers (same pattern)
-For `mllm` / `llm` / `image_edit`: add a subclass implementing the ABC in the
-respective `models/*.py`, then extend its `build_*` factory to dispatch on `name`
-(mirror how `build_video_gen` does it). For `mllm`, implement `assess_semantic`,
-`assess_physics`, and optionally `compare` (for the tournament).
+| Symptom | Cause / fix |
+|---|---|
+| `RuntimeError: ...needs an API key` | a real backend is selected but its env var is unset — export it or switch the name to `mock-*`. |
+| Final `.mp4` exists but isn't playable | `ffmpeg` not on `$PATH`, or the video backend returned non-video bytes — the assembler logged `mock assembly`. Install ffmpeg; confirm `video_gen.name: wavespeed` + a valid `WAVESPEED_API_KEY`. |
+| `p2_law_consistency` is always `1.0` | physics not measured: `track_extractor.name` is `mock-track`, or torch/CoTracker isn't installed, or the clip didn't decode. This is "not verified", not "verified perfect" — wire CoTracker on a GPU to get a real signal. |
+| VLM judge returns no verdicts | the clip couldn't be decoded into frames (install `opencv-python-headless` / `imageio[ffmpeg]`, already in `.[all]`), or the model returned unparseable JSON (logged as a warning). |
+| WaveSpeed `TimeoutError` | raise `video_gen.timeout`; check the model id exists at wavespeed.ai. |
+| Server returns 422 on `/generate` | send the body as JSON (`-H 'content-type: application/json'`), not query params. |
+| `pip install -e '.[all]'` then `ModuleNotFoundError: maestro` | transient pip/network failure mid-install — re-run the install; `pythonpath=["src"]` is already set for pytest. |
 
 ---
 
-## Tests & CI
+## 8. Tests & layout
 
 ```bash
-pytest -q
+python -m pytest -q          # 211 passed — CPU-only, no keys, no network
 ```
 
-Root-repo GitHub Actions is currently disabled (it targeted the old project). To
-run CI on Maestro only, set the workflow's `working-directory` to `Maestro/`,
-install `Maestro/requirements.txt`, and run `Maestro/tests`.
+```
+src/maestro/
+├── cli.py  config.py  server.py          # entry points
+├── agents/        screenwriter · director · physics_planner · generator · refiner · verifier · act
+├── critics/       semantic · physics (VLM) · physics_consistency (law verifier) · consistency · rhythm · board · tournament
+├── physics/       annotate · router · tracks · reliability · laws · verifier · track_extractor_backends   (C6, reference-free)
+├── memory/        skill_library · skill_admission · entity_store · write_gate · multi_layer · lesson_library
+├── models/        llm · llm_backends · mllm · mllm_backends · video_gen(+backends) · world_reward · image_edit · mock_signals
+├── tools/         registry + retrieval · assembly · metric · captioning · detection · audio_gen · …
+└── pipeline/      understand · plan · generate_loop · assemble · run
+configs/   default.yaml (mock) · server.yaml (real)
+docs/      INNOVATIONS_v0.4.md · DATAFLOW.md · COMPARISON.md · research/ (surveys + plan + UniVA map)
+```
 
 ---
 
-## Status
+## License
 
-- **v0.1** = scaffold, all heavy models mocked, CPU-only.
-- **v0.2** swaps mocks for real models (WaveSpeed/OmniWeaving/Wan/Veo ·
-  Qwen-VL · DeepSeek/GPT/Claude) behind the same wrapper ABCs — at that
-  point API keys / GPU are needed (see `.env.example`). The orchestration,
-  self-improvement loop, physics verification and evaluation harness do not
-  change between mock and real — only the model wrappers do.
-- **v0.4 (current)** — *physics rewritten: reference-free
-  "physics-from-pixels" verification*. The sketch/simulator line
-  (v0.2.1–v0.3) is **gone entirely** — both halves failed scrutiny: a
-  synthetic sketch cannot control a frozen video model, and comparing the
-  clip against *one* simulated rollout presumes masses/friction/scale that
-  are unknowable from a prompt. v0.4 keeps the question, removes the
-  reference (rationale: `docs/research/INNOVATION_PLAN_2026_06.md` §3.2 +
-  `docs/research/survey_physics_2026_06.md`):
-  - **`physics/` rebuilt**: `annotate.py` (entities + motion class
-    [ballistic/rigid/fluid/agentive/static] + interactions + expected modes
-    + strictness — *verification seeds*, never trajectories or control),
-    `router.py` (VerifiabilityRouter: measurement / world_model / vlm /
-    none, with an explicit coverage report — partial verification never
-    reads as full verification), `tracks.py` +
-    `track_extractor_backends.py` (observed tracks from the generated clip;
-    deterministic mock on CPU, real CoTracker/TAPIR wired but needing
-    torch + weights), `reliability.py` (certify tracks before trusting
-    them — trackers lie on generated video; cross-tracker disagreement is
-    itself an implausibility cue, which nobody else quantifies), `laws.py`
-    (best fit over static / constant-velocity / constant-acceleration with
-    a *free* gravity vector → residual = violation; anomaly detectors:
-    teleport→object_permanence, mid-air reversal→gravity_inertia, energy
-    gain→conservation, jerk spike→collision), `verifier.py` (the assembled
-    stack). **Deleted:** `sketch.py`, `sim_wrapper.py`, `control_render.py`,
-    `oracle.py`.
-  - **API renames**: `PhysicsSketch` → `PhysicsAnnotation`;
-    `ShotSpec.physics_sketch` → `ShotSpec.physics_annotation`; metric
-    `p2_sketch_consistency` → `p2_law_consistency` (measured law verdicts,
-    `source="law_verifier"`; `p1_physics` stays VLM-judged); trajectory
-    actions `build_sketch` / `replan_sketch` → `annotate_physics` /
-    `replan_physics`. HSI Tier 1 is now "tighten verification strictness +
-    regenerate with anti-violation hints from the *observed* failures".
-  - **`models/video_gen.py`**: `generate()` has no `control_signal` param —
-    conditioning is `first_frame` + `reference_images` only. New
-    **fully-implemented `WaveSpeedClient`** (hosted REST: submit → poll →
-    download; `$WAVESPEED_API_KEY`; default model
-    `bytedance/seedance-v1-pro-t2v-480p`) — the fastest no-GPU route to
-    real pixels, the same service UniVA uses. A text-only backend is now
-    fine because physics is *verified*, not injected.
-  - **Positioning vs literature** (see `COMPARISON.md`): PSIVG / PhyRPR /
-    PhysCtrl inject simulation open-loop and never verify; WMReward closes
-    the loop with an opaque scalar (can't localize or explain); PhyT2V
-    closes it through a lossy VLM-text bottleneck; Morpheus / PISA measure
-    but only for benchmarking. The intersection — measured + interpretable
-    + localized + drives selection AND targeted regen + training-free — is
-    unoccupied, and the new framing has no "your simulator is wrong"
-    attack surface.
-  - Tests: **125 passed** (CPU, no GPU, no keys) —
-    `tests/unit/test_physics_laws.py` + `test_physics_verifier.py` replace
-    the deleted `test_physics.py` / `test_physics_oracle.py`.
-- **v0.3** — *memory + skill: two more innovations*. Adds two
-  task-specific extensions on top of C1-C6 (see `RESEARCH_MEMORY_SKILL.md`
-  for the survey + design). No model changes; mock pipeline still CPU-only.
-  - **C7 PhysicsTyped SkillLibrary** — a *compiled shot recipe* is born when
-    HSI converges at Tier 0 with non-trivial initial severity (≥ 0.5). Skills
-    are keyed on `PhysFailureMode` signatures (not text) and carry pointers
-    to their coupled lessons; retrieval auto-injects them into the next
-    plan. Differentiates from Voyager (env-reward distillation) /
-    SkillWeaver (rehearsal repeatability).
-  - **C8 Multi-Layer Memory** — six tiers (working / episodic / semantic /
-    procedural / entity / preference). `LessonLibrary` extended with A-MEM
-    bidirectional links + confidence + stable `lesson_id`; new
-    `SkillLibrary` / `EntityStore` (cross-run identity persistence, à la
-    VideoMemory but cross-run) / `PreferenceStore` (Me-Agent style) /
-    `EpisodicStore` (with replay). `MultiLayerMemory` façade exposes an
-    associative query that lights up multiple tiers at once.
-  - Wired into the pipeline: `plan_shots` calls `skill_library.retrieve` and
-    attaches `spec.matched_skill`; `generate_shot` calls
-    `skill_library.distill` post-acceptance; `understand` consults
-    `EntityStore` for cross-run dedup; `run_maestro` writes one
-    `EpisodicTrace` per task.
-  - Report adds `skills_learned`, `entities_persisted`, per-shot
-    `matched_skill_id` / `distilled_skill_id` / `distilled_lesson_id`.
-  - Configurable under `memory:` in `configs/default.yaml`; persisted to
-    `<output_dir>/memory/{lessons,skills,entities,preferences,episodes}.{jsonl,json}`.
-  - *(historical — **superseded by v0.4**)* Physics was repositioned to
-    "sketch-as-oracle" in this release: a rigid-body simulator computed an
-    *expected* trajectory and a `TrajectoryOracle` scored observed-vs-expected
-    Trajectory-L2. v0.4 deleted that line (`sketch.py` / `sim_wrapper.py` /
-    `oracle.py`) because the comparison still presumed simulator parameters a
-    prompt cannot supply — see the v0.4 entry above. What survives: the
-    track-extractor factory (`mock-track` default, real `cotracker`/`tapir`)
-    and the optional `world_reward` (`models/world_reward.py`, WMReward /
-    V-JEPA-2) adding a `wm_reward` metric.
-  - Tests at v0.3: 113 passed (now **125** after the v0.4 physics rewrite).
-
-- **v0.2.2** — *UniVA borrowing for breadth*. Same six core innovations
-  preserved; pulls in UniVA-style infrastructure to make the framework
-  server-deployable:
-  - **ToolRegistry** with 7-category taxonomy (analysis / generation / editing /
-    tracking / physics / metric / retrieval). 9 default tools self-register;
-    every tool exposes a `spec` for discovery.
-  - **ActAgent** — UniVA's Act-side dual-agent executor. Takes
-    `list[ToolCall]`, routes through the registry, logs every call.
-  - **FastAPI server** (`maestro serve`) — UniVA-compatible `/health` +
-    `/tools` manifest + `/generate` job submission + `/jobs/{id}` polling.
-    Optional dep — graceful degradation when fastapi is absent.
-  - **CLI** (`maestro {smoke,serve,run-once}`) registered via
-    `pyproject.toml [project.scripts]`. `maestro smoke` is the one-command
-    operator healthcheck.
-  - **Dockerfile** (`python:3.11-slim + ffmpeg`, `HEALTHCHECK` on `/health`)
-    for "upload to server and run" literally.
-  - Tests: 54 passed (CPU, ~0.6s). 8 new tools tests + 4 server tests +
-    ActAgent Plan→Act handoff test.
-
-- **v0.2.1** deepens the agentic paradigm itself, *without* model
-  changes (physics passages below are **historical — superseded by v0.4**,
-  where the sketch line was removed entirely):
-  - **C5 HSI** — generation-time self-improvement is now hierarchical
-    (Tier 0 keyframe edit → Tier 1 physics replan → Tier 2 spec rewrite
-    → Tier 3 escape). Verifier's monotonic-improvement rule still applies at
-    every tier. *(Tier 1 was "rebuild the physics sketch" here; since v0.4 it
-    is "tighten verification strictness + anti-violation hints".)*
-  - **C6 Sketch↔Video consistency** *(superseded by v0.4's reference-free
-    verifier)* — the original `PhysicsConsistencyCritic` flagged rendered
-    clips that diverged from the sketch's predicted trajectory; it surfaced
-    as `p2_sketch_consistency` (now `p2_law_consistency`).
-  - **Logic hardening** — `ReviewBoard.recompute_metrics` refreshes scores
-    after the escape hatch so the Verifier's next comparison is honest;
-    `LessonLibrary` now distills from the *actually resolved* failure mode
-    rather than `expected_modes[0]`.
-  - **Observability** — the JSON report now includes per-shot `tier_used` and
-    `escalations`, and the trajectory log adds replan / `refine_spec`
-    actions when HSI escalates (the replan action is named `replan_physics`
-    since v0.4).
-
-  Tests: `pytest -q` → **35 passed** (CPU, ~0.1s) at v0.2.1; →
-  **54 passed** (CPU, ~0.6s) at v0.2.2 with the new tool/server tests. See
-  `tests/unit/test_hsi_and_consistency.py` (v0.2.1) and
-  `tests/unit/test_tools_and_act.py` + `test_server.py` (v0.2.2).
+See [LICENSE](./LICENSE).

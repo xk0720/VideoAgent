@@ -110,10 +110,19 @@ class MockMLLMClient(BaseMLLMClient):
 
 
 def build_mllm(spec: str | dict | None) -> BaseMLLMClient:
+    """Factory: name None or 'mock*' → MockMLLMClient; else a real VLM judge.
+
+    Real backends (gpt-4o / qwen-vl / openai-vlm) live in mllm_backends, imported
+    lazily so the mock/smoke path needs no `requests` and no keys. Mock stays the
+    default — every existing test and the `maestro smoke` path is untouched."""
     name = "mock-mllm"
+    config: dict | None = None
     if isinstance(spec, dict):
         name = spec.get("name", name)
+        config = spec
     elif isinstance(spec, str):
         name = spec
-    # DESIGN_DECISION: real Qwen-VL/GPT-4o judge plugs in here.
-    return MockMLLMClient(name=name)
+    if name is None or name.lower().startswith("mock"):
+        return MockMLLMClient(name=name or "mock-mllm")
+    from .mllm_backends import build_real_mllm
+    return build_real_mllm(name, config)
