@@ -85,6 +85,38 @@
   VLM+tracker；②"坏技能固化"——AutoSkill 的教训正是设计动机，三道门 + EMA 淘汰 +
   回归门是直接回应。
 
+### Capability routing is a skill, not config（能力路由是技能，不是配置）
+
+把"WHEN 调用 WHICH 生成能力（t2v/i2v/flf2v/edit）"建模为**三层**，关键论断是
+第三层属于技能基质而非静态配置：
+
+| 层 | 含义 | 落地 |
+|---|---|---|
+| **adapter** | 怎么调一个模型 | 后端方法（`models/video_gen_backends.py` 的 `generate`/`frame_to_frame`/`edit_video`） = **工具**（I5 工具脊柱） |
+| **provider binding** | 哪个后端支撑某能力 | `models.video_gen.*` = **配置** |
+| **capability routing** | 这一镜需要哪种能力 | `agents/capability_router.py` = **技能** |
+
+- **为什么是技能**：选哪种能力依赖镜头意图与"相似镜头上次什么成功"——是程序性
+  知识，不是常量。创作技能因此**记录**它的物理/视觉签名下成功的
+  `gen_capability + gen_params`（`Skill.gen_capability/gen_params`，随 JSONL 持久化、
+  缺键向后兼容默认 t2v）；下一相似镜头检索命中该技能即**复用**该路由决策
+  （`CapabilityRouter.route` 路径 (a)："the skill decides which model"）。
+- **冷启动启发式（诚实声明的 bootstrap）**：技能尚不存在时，
+  `route` 走确定性意图启发式（路径 (b)）——源视频被标记编辑→edit；首尾关键帧齐备→flf2v；
+  有身份/参考锚→i2v；否则 t2v。该启发式是 bootstrap，会被学到的技能**逐步替换**
+  （真实部署可把它换成 LLM 导演，`route(...)->(capability,params)` 契约不变）。
+- **诚实边界（绝不冒称能力）**：路由结果**只在后端 `capabilities()` 内取值**
+  （mock 仅 {t2v,i2v}）；想要 edit/flf2v 但后端不支持时降级到 i2v（有锚）或 t2v 并
+  **记录降级**（`route_capability` 轨迹事件 + GeneratorAgent 的 `capability_downgrade` 日志），
+  没有静默的能力声明。
+- **补的空白（vs UniVA 2511.08521）**：UniVA 每次运行都让 Act-LLM **重新临时决定**路由，
+  决策即用即弃；Maestro 把验证收敛过的路由决策**蒸馏进技能**并复用——
+  能力路由从每运行重算变成可积累、可审计的程序性知识。
+- **mock 已验证**：13 个专项测试（`test_capability_router.py`）覆盖技能复用、四个启发式
+  分支、降级永不越界（mock 后端 edit→t2v/i2v 且降级被报告）、GeneratorAgent 派发到正确
+  WaveSpeed 方法（stub，无网络）/在 mock 后端回落、以及"蒸馏能力跨持久化往返并在第二次
+  计划被复用"。端到端 mock 流水线全部路由到 t2v/i2v，既有行为不变。
+
 ---
 
 ## I2 · 参考自由的"像素物理验证器"（physics-from-pixels）

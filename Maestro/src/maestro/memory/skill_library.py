@@ -135,6 +135,10 @@ class SkillLibrary:
                 skill_class=d.get("skill_class", "creation"),
                 version=int(d.get("version", 1)),
                 admission=dict(d.get("admission") or {}),
+                # Phase-2 capability routing — back-compat: pre-Phase-2 JSONL
+                # records lack these keys and load as plain t2v skills.
+                gen_capability=d.get("gen_capability", "t2v"),
+                gen_params=dict(d.get("gen_params") or {}),
             )
             self.skills.append(skill)
             self._by_id[skill.skill_id] = skill
@@ -182,6 +186,8 @@ class SkillLibrary:
                     "skill_class": s.skill_class,
                     "version": s.version,
                     "admission": s.admission,
+                    "gen_capability": s.gen_capability,
+                    "gen_params": s.gen_params,
                 }, ensure_ascii=False) + "\n")
         os.replace(tmp, self.path)
 
@@ -230,6 +236,8 @@ class SkillLibrary:
         weighted_total: float = 0.0,
         skill_class: str = "creation",
         evidence: Optional[dict] = None,
+        gen_capability: str = "t2v",
+        gen_params: Optional[dict] = None,
     ) -> Optional[Skill]:
         """Freeze a successful HSI outcome into a Skill. Idempotent on
         (name, physical_signature) — re-distillation bumps `version` and
@@ -267,6 +275,10 @@ class SkillLibrary:
             # identically — the legacy path used to bump `version` while
             # silently keeping stale acceptance_thresholds.
             existing.acceptance_thresholds = dict(thresholds)
+            # Re-confirm the capability that succeeded this time (Phase-2):
+            # the recorded routing decision follows the latest verified episode.
+            existing.gen_capability = gen_capability
+            existing.gen_params = dict(gen_params or {})
             existing.version += 1
             # Confirm: rolling-average the new weighted_total in.
             existing.perf_score = (
@@ -306,6 +318,10 @@ class SkillLibrary:
             uses=1,
             last_used_ts=time.time(),
             skill_class=skill_class,
+            # Phase-2: record the capability + params that succeeded so the
+            # next similar shot reuses this routing decision.
+            gen_capability=gen_capability,
+            gen_params=dict(gen_params or {}),
         )
         if self.admission is not None:
             verdict = self.admission.review(skill, evidence)

@@ -228,6 +228,14 @@ class ShotSpec:
     injected_lessons: list[str] = field(default_factory=list)  # C4 (fix texts)
     injected_lesson_ids: list[str] = field(default_factory=list)  # C4 lesson ids (skill coupling)
     matched_skill: Optional["Skill"] = None                    # C7 (v0.3)
+    # Phase-2 capability routing (skill-driven, NOT static config): which
+    # generation capability THIS shot needs (t2v|i2v|flf2v|edit) and any
+    # capability-specific args (e.g. {"last_frame":…} for flf2v,
+    # {"source_video":…, "backend":…, "task":…} for edit). Set by
+    # CapabilityRouter (agents/capability_router.py) — a matched_skill's
+    # recorded capability wins; otherwise a deterministic cold-start heuristic.
+    gen_capability: str = "t2v"
+    gen_params: dict = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -352,6 +360,13 @@ class Skill:
     skill_class: str = "creation"                                # "creation" | "review" | "memory"
     version: int = 1                                             # bumped on re-distill
     admission: dict = field(default_factory=dict)                # {passed, judge, score, reasons}
+    # Phase-2: a creation skill RECORDS which generation capability + params
+    # succeeded for its physical/visual signature, so the next similar shot
+    # reuses that routing decision ("the skill decides which model"). This is
+    # capability routing distilled as procedural knowledge — UniVA re-decides
+    # routing via its Act-LLM every run, ephemerally; Maestro persists it.
+    gen_capability: str = "t2v"
+    gen_params: dict = field(default_factory=dict)
 
 
 @dataclass

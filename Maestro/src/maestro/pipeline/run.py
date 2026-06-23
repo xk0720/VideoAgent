@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..agents.act import ActAgent
+from ..agents.capability_router import CapabilityRouter
 from ..agents.director import DirectorAgent
 from ..agents.generator import GeneratorAgent
 from ..agents.physics_planner import PhysicsPlannerAgent
@@ -256,7 +257,30 @@ def run_maestro(
     lessons_before = len(mlm.lessons)
     results = []
     clips = []
+    # Phase-2 — capability routing (skill-driven). At the top of each shot, the
+    # matched_skill (from plan_shots) and asset_memory are both in hand, so this
+    # is the seam where WHICH generation capability the shot needs is decided:
+    # a matched skill's RECORDED capability wins (the skill decides the model);
+    # otherwise a deterministic cold-start heuristic. The decision is logged to
+    # the trajectory ("route_capability") and stored on the spec for the
+    # GeneratorAgent to dispatch on. Choice is constrained to what THIS backend
+    # actually offers — never a silent capability claim.
+    router = CapabilityRouter()
+    available_caps = comp.generator.video_gen.capabilities()
     for spec in specs:
+        decision = router.route(spec, asset_memory, available_caps)
+        spec.gen_capability = decision.capability
+        spec.gen_params = dict(decision.params)
+        trajectory.append(
+            agent_name="CapabilityRouter",
+            action="route_capability",
+            action_input={"shot_idx": spec.shot_idx,
+                          "available": sorted(available_caps)},
+            observation={"capability": decision.capability,
+                         "source": decision.source,
+                         "reason": decision.reason,
+                         "downgraded_from": decision.downgraded_from},
+        )
         res = generate_shot(
             spec, comp.board, comp.generator, comp.refiner, comp.verifier,
             cache_dir, asset_memory=asset_memory, lesson_library=mlm.lessons,

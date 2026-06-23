@@ -568,6 +568,11 @@ def generate_shot(
                               + coupled,
             weighted_total=best.metric_scores.get("weighted_total", 0.0),
             evidence=evidence,
+            # Phase-2: the distilled creation skill RECORDS the capability +
+            # params that succeeded for this shot, so the next similar shot
+            # reuses the routing decision (CapabilityRouter step (a)).
+            gen_capability=spec.gen_capability,
+            gen_params=dict(spec.gen_params),
         )
         # distill returns None when admission ("skill CI") rejects the entry.
         distilled_skill_id = skill.skill_id if skill is not None else ""
