@@ -88,6 +88,12 @@ class WaveSpeedClient(BaseVideoGenClient):
             # i2v variant if the configured id is the t2v one
             model_id = model_id.replace("-t2v-", "-i2v-")
 
+        return self._run_task(model_id, payload, out_path)
+
+    # ── shared submit → poll predictions/{id}/result → download (UniVA protocol) ──
+    def _run_task(self, model_id: str, payload: dict, out_path: Path) -> Path:
+        import requests  # std in our [all] extras; loud ImportError otherwise
+
         resp = requests.post(
             f"{self.BASE}/{model_id}", json=payload, headers=self._headers(),
             timeout=60,
@@ -119,8 +125,99 @@ class WaveSpeedClient(BaseVideoGenClient):
         raise TimeoutError(f"WaveSpeed task {task_id} did not finish within "
                            f"{self.timeout}s")
 
+    @staticmethod
+    def _video_data_uri(video_path: Path) -> str:
+        """Local video → data:video/mp4;base64,...; http(s) URL passes through.
+        Matches UniVA's os.path.exists branch in audio_gen / vace_api."""
+        import base64
+
+        vp = str(video_path)
+        if vp.startswith("http://") or vp.startswith("https://"):
+            return vp
+        p = Path(vp)
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(f"video not found: {vp}")
+        return "data:video/mp4;base64," + base64.b64encode(p.read_bytes()).decode()
+
+    def frame_to_frame(
+        self,
+        prompt: str,
+        first_frame: Path,
+        last_frame: Path,
+        out_path: Path,
+        duration: int = 5,
+        seed: int = 0,
+    ) -> Path:
+        """First-last-frame video (wan-flf2v). Ported from UniVA
+        `frame_to_frame_video`: POST {BASE}/wavespeed-ai/wan-flf2v with both
+        endpoint frames base64'd. Capability "flf2v" (optional; see
+        BaseVideoGenClient.capabilities)."""
+        import base64
+
+        first_b64 = base64.b64encode(Path(first_frame).read_bytes()).decode()
+        last_b64 = base64.b64encode(Path(last_frame).read_bytes()).decode()
+        payload = {
+            "duration": max(1, int(round(duration))),
+            "enable_safety_checker": True,
+            "first_image": f"data:image/jpeg;base64,{first_b64}",
+            "guidance_scale": 5,
+            "last_image": f"data:image/jpeg;base64,{last_b64}",
+            "negative_prompt": "",
+            "num_inference_steps": 30,
+            "prompt": prompt,
+            "seed": seed,
+            "size": "832*480",
+        }
+        return self._run_task("wavespeed-ai/wan-flf2v", payload, out_path)
+
+    def edit_video(
+        self,
+        prompt: str,
+        video_path: Path,
+        out_path: Path,
+        backend: str = "runway",
+        task: str = "depth",
+        seed: int = 0,
+    ) -> Path:
+        """Edit existing footage. Capability "edit" (optional). Two ported routes:
+          • backend="runway" → POST {BASE}/runwayml/gen4-aleph  (UniVA
+            `runway_video_editing` — free-form prompt edit)
+          • backend="vace"   → POST {BASE}/wavespeed-ai/wan-2.1-14b-vace (UniVA
+            `vace_api` — structure-guided edit; `task` is depth/pose/etc.)
+        """
+        video_data_uri = self._video_data_uri(video_path)
+        if backend == "runway":
+            payload = {
+                "aspect_ratio": "16:9",
+                "prompt": prompt,
+                "video": video_data_uri,
+            }
+            return self._run_task("runwayml/gen4-aleph", payload, out_path)
+        if backend == "vace":
+            payload = {
+                "context_scale": 1,
+                "duration": 5,
+                "flow_shift": 16,
+                "guidance_scale": 5,
+                "images": [],
+                "negative_prompt": "",
+                "num_inference_steps": 40,
+                "prompt": prompt,
+                "seed": seed,
+                "size": "1280*720",
+                "task": task,
+                "video": video_data_uri,
+            }
+            return self._run_task("wavespeed-ai/wan-2.1-14b-vace", payload, out_path)
+        raise ValueError(f"edit_video backend must be 'runway' or 'vace', got '{backend}'")
+
     def supported_conditions(self) -> set[str]:
         return {"first_frame"}
+
+    def capabilities(self) -> set[str]:
+        # Phase-2 routing seed: t2v/i2v via generate(), plus the optional
+        # frame_to_frame (flf2v) and edit_video (edit) methods.
+        return {"t2v", "i2v", "flf2v", "edit"}
 
 
 # ─────────────────────────────────────────────────────────────

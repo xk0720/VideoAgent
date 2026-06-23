@@ -41,7 +41,29 @@ models:
     model_id: "bytedance/seedance-v1-pro-t2v-480p"
     poll_interval: 2.0
     timeout: 600
-    # api_key: "..."        # or $WAVESPEED_API_KEY
+    api_key: "..."        # or $WAVESPEED_API_KEY
+    # Extra REAL capabilities on this client (capabilities() = t2v/i2v/flf2v/edit):
+    #   flf2v → frame_to_frame() POST wavespeed-ai/wan-flf2v (first+last frame)
+    #   edit  → edit_video()     POST runwayml/gen4-aleph (prompt edit) OR
+    #                                 wavespeed-ai/wan-2.1-14b-vace (depth/pose)
+    # These are Phase-2 routing seeds; the main pipeline still drives generate().
+
+  # ── Audio generation — WaveSpeed hosted API (foley + TTS are REAL) ──
+  # foley (kind="foley") = MMAudio-v2 video→audio, needs a video to score.
+  # tts   (kind="tts")   = MiniMax speech-2.5 narration.
+  # music (kind="music") is STILL a placeholder — UniVA's verified API has no
+  # music endpoint, so AudioGenTool emits the deterministic mock motif for it.
+  # All on the SAME $WAVESPEED_API_KEY as video. NOTE: the default registry
+  # still binds AudioGenTool to the mock client (no config wiring yet); use
+  # models.build_audio_gen(cfg.models.audio_gen) to construct the real client.
+  audio_gen:
+    name: "wavespeed"
+    foley_model_id: "wavespeed-ai/mmaudio-v2"
+    speech_model_id: "minimax/speech-2.5-turbo-preview"
+    voice_id: "Wise_Woman"
+    poll_interval: 2.0
+    timeout: 600
+    # api_key: "..."      # or $WAVESPEED_API_KEY
 
   # ── C6 track extractor — CoTracker (REAL physics verification from pixels) ──
   # Needs `pip install torch cotracker` matching your CUDA. Omit `checkpoint`

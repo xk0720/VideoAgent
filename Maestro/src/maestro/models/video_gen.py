@@ -31,6 +31,18 @@ class BaseVideoGenClient(ABC):
     def supported_conditions(self) -> set[str]:
         ...
 
+    def capabilities(self) -> set[str]:
+        """Coarse capability set this backend offers ("t2v"|"i2v"|"flf2v"|"edit").
+
+        Default = {"t2v","i2v"} (every backend's `generate` covers those). This
+        is the SEED of the Phase-2 capability registry the routing skill will
+        read to pick a backend per requested task — extra capabilities
+        (flf2v / edit) live on optional methods (frame_to_frame / edit_video)
+        declared via hasattr, NOT abstractmethods, so backends that lack them
+        (Mock / OmniWeaving / Wan / Veo) are not forced to implement them.
+        """
+        return {"t2v", "i2v"}
+
 
 class MockVideoGenClient(BaseVideoGenClient):
     def __init__(self, name: str = "mock-video-gen"):

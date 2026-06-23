@@ -20,6 +20,17 @@ models:
     name: "mock-video-gen"    # v0.2: omniweaving / wan / veo-api
     # weights_path: "/data/ckpts/omniweaving"   # for local backends
     # device: "cuda"
+    # WaveSpeed (real) also offers extra capabilities beyond t2v/i2v:
+    #   flf2v  (first-last-frame, wan-flf2v) and edit (runway gen4-aleph /
+    #   wan-2.1-14b-vace). See WaveSpeedClient.capabilities() — the Phase-2
+    #   routing seed. Mock exposes only the t2v/i2v generate() path.
+  # ── Audio generation (TTS / foley / music) — models/audio_gen_backends.py ──
+  # Default mock writes deterministic placeholder bytes (key-free, CPU). Real
+  # backend "wavespeed" makes foley (MMAudio-v2, video→audio) and tts (MiniMax
+  # speech-2.5) REAL on $WAVESPEED_API_KEY; music stays a placeholder (no music
+  # endpoint in UniVA's verified API). See configs/server.yaml for the real block.
+  audio_gen:
+    name: "mock-audio-gen"    # real: "wavespeed" (foley + tts; music = mock)
   image_edit:
     name: "mock-image-edit"   # v0.2: qwen-image-edit
   # Optional world-model reward (WMReward arXiv:2601.10553 / VJEPA-2 Reward
