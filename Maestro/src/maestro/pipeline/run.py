@@ -74,6 +74,21 @@ def build_components(
     video_gen = build_video_gen(cfg.get("models", {}).get("video_gen"))
     image_edit = build_image_edit(cfg.get("models", {}).get("image_edit"))
 
+    # Bind the AudioGenTool to the CONFIGURED audio client (last-write-wins
+    # over the registry's mock default) so `models.audio_gen: wavespeed` is not
+    # a hollow claim — the tool is REAL when invoked. NB: generated audio is not
+    # yet a deterministic pipeline STAGE (a clip's sound still comes only from
+    # the user's --music track muxed at assembly); this makes foley/TTS real for
+    # any ActAgent tool_call, which is where the future sound-director stage hooks.
+    audio_spec = cfg.get("models", {}).get("audio_gen")
+    if audio_spec and str(
+        audio_spec.get("name") if isinstance(audio_spec, dict) else audio_spec
+    ).startswith("mock") is False:
+        from ..models.audio_gen_backends import build_audio_gen
+        from ..tools.audio_gen import AudioGenTool
+        from ..tools.base import default_registry
+        default_registry().register(AudioGenTool(client=build_audio_gen(audio_spec)))
+
     metric_tool = MetricTool(
         cfg.get("metrics", {}).get("weights"),
         world_reward=build_world_reward(cfg.get("models", {}).get("world_reward")),
