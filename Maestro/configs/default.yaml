@@ -45,6 +45,11 @@ models:
     name: "mock-track"           # real: "cotracker" / "tapir"
     # checkpoint: "/data/ckpts/cotracker3.pth"   # or omit for torch.hub
     # device: "cuda"
+    # detector:                  # grounds each entity in frame 0 → CoTracker seed.
+    #   name: "mock"             # default: text-deterministic, ignores pixels →
+    #                            # seeding is HEURISTIC (per-entity verdict unreliable
+    #                            # on real video). Set name: "groundingdino" for REAL
+    #                            # grounding (needs torch+transformers) — see server.yaml.
 
 # ── Planning ──
 plan:

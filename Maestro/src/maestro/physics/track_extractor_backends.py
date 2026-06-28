@@ -12,10 +12,14 @@ There is no expected trajectory anywhere (the sketch line is dead). The
 extractor's only job is to recover what actually moves in the clip:
 
   1. decode the generated clip into frames (H×W×3);
-  2. seed ONE query point per annotated entity at t=0. v0.4 seeds evenly
-     spaced points in the upper-center band (we do not know where entities
-     are); the real upgrade is open-vocabulary detection (GroundingDINO /
-     Sa2VA) to seed each entity at its detected centroid — same contract;
+  2. seed ONE query point per annotated entity at t=0 by DETECTION: each
+     entity is grounded in frame 0 with an open-vocabulary detector
+     (GroundingDINO, models/detection_backends.py) and CoTracker is seeded at
+     the detected centroid — so it tracks the ACTUAL named entity, not an
+     arbitrary pixel. If an entity can't be grounded (or the default
+     MockDetector path, which ignores pixels) the seed falls back to an
+     evenly-spaced heuristic and a WARNING marks that entity's verdict
+     unreliable on real video;
   3. run CoTracker / TAPIR → per-frame pixel tracks (+ visibility);
   4. normalize pixel tracks to [0,1] screen space (÷W, ÷H; y grows downward)
      for physics/laws.py.
@@ -114,26 +118,81 @@ def _decode_frames(path: Path):
         return None
 
 
-def _seed_queries(entities, width: int, height: int):
-    """Build CoTracker queries [t, x_px, y_px]: one seed per entity, evenly
-    spaced across the upper-center band (no detection yet — see module
-    docstring for the GroundingDINO upgrade path). Returns (queries, names)."""
+def _heuristic_seed_xy(i: int, k: int, width: int, height: int):
+    """Heuristic seed for entity i of k: evenly spaced across the upper-center
+    band. Used ONLY when detection can't ground the entity in frame 0 — a blind
+    fallback, so the per-entity physics verdict is unreliable on real video."""
+    return (i + 1) / (k + 1) * width, 0.35 * height
+
+
+def _heuristic_seed(entities, width: int, height: int):
+    """Build CoTracker queries [t, x_px, y_px] without detection — one evenly
+    spaced seed per entity. Returns (queries, names). (Detection-grounded
+    seeding is _grounded_seed; this is the no-detector / fallback path.)"""
     names = [e.name for e in entities]
     k = len(names)
     queries = [
-        [0.0, (i + 1) / (k + 1) * width, 0.35 * height] for i in range(k)
+        [0.0, *_heuristic_seed_xy(i, k, width, height)] for i in range(k)
     ]
+    return queries, names
+
+
+def _grounded_seed(frames, entities, detector, width: int, height: int):
+    """Detection-grounded CoTracker seeding (the closed break).
+
+    For each entity, run `detector.detect(frames[0], entity.name)`; if a box is
+    found seed at its centroid (in PIXELS); otherwise fall back to the heuristic
+    position for THAT entity and WARN (its physics verdict is unreliable). Order
+    is preserved. Pure function → unit-testable without torch.
+
+    Returns (queries [[0.0, x_px, y_px], ...], names).
+    """
+    names = [e.name for e in entities]
+    k = len(names)
+    queries = []
+    for i, ent in enumerate(entities):
+        box = None
+        try:
+            dets = detector.detect(frames[0], ent.name, max_results=1)
+            if dets:
+                box = dets[0].get("bbox")
+        except Exception as exc:  # detector blew up → heuristic + warn
+            log.warning(
+                "detector raised on entity '%s': %r; seeding heuristically "
+                "(physics verdict for it is unreliable)", ent.name, exc,
+            )
+        if box is not None:
+            cx, cy = detector.centroid(box)        # normalized
+            x_px, y_px = cx * width, cy * height
+        else:
+            x_px, y_px = _heuristic_seed_xy(i, k, width, height)
+            log.warning(
+                "could not ground entity '%s' in frame 0; seeding heuristically "
+                "(physics verdict for it is unreliable)", ent.name,
+            )
+        queries.append([0.0, x_px, y_px])
     return queries, names
 
 
 class CoTrackerExtractor(BaseTrackExtractor):
     """CoTracker point tracking. One query point per entity (its start centroid).
 
+    Query points are SEEDED by detection: each entity is detected in frame 0
+    (config `detector` sub-block → models/detection_backends.build_detector) and
+    CoTracker is seeded at the detected centroid, so it tracks the ACTUAL named
+    entity, not an arbitrary pixel. If the detector can't ground an entity (or
+    is the default MockDetector, which ignores pixels) the seed falls back to an
+    evenly-spaced heuristic and a WARNING marks that entity's verdict unreliable.
+
     config:
       models.track_extractor:
         name: "cotracker"
         checkpoint: "/path/cotracker3.pth"   # or omit to use torch.hub
         device: "cuda"
+        detector:                            # → real grounding (else heuristic)
+          name: "groundingdino"
+          model: "IDEA-Research/grounding-dino-tiny"
+          device: "cuda"
     """
 
     def __init__(self, name: str = "cotracker", config: Optional[dict] = None):
@@ -142,6 +201,10 @@ class CoTrackerExtractor(BaseTrackExtractor):
         self.checkpoint = self.config.get("checkpoint") or os.getenv("COTRACKER_CKPT")
         self.device = self.config.get("device", "cuda")
         self._model = None
+        # Detector that grounds each entity in frame 0 (default → MockDetector,
+        # which is text-deterministic → heuristic seeding on real video).
+        from ..models.detection_backends import build_detector
+        self.detector = build_detector(self.config.get("detector"))
 
     def _ensure_loaded(self):
         if self._model is not None:
@@ -188,7 +251,10 @@ class CoTrackerExtractor(BaseTrackExtractor):
             import torch
 
             T, H, W = frames.shape[0], frames.shape[1], frames.shape[2]
-            queries, names = _seed_queries(entities, W, H)
+            # Detection-grounded seeding: track WHERE the named entity is, not a
+            # fixed pixel (falls back to the heuristic + warns per ungrounded
+            # entity). This is the closed physics-from-pixels break.
+            queries, names = _grounded_seed(frames, entities, self.detector, W, H)
             if not queries:
                 return None
             video = (

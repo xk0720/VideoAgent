@@ -75,6 +75,16 @@ models:
     name: "cotracker"
     device: "cuda"
     # checkpoint: "/data/ckpts/cotracker3.pth"
+    # The detector is what makes CoTracker track the ACTUAL named entity: it
+    # grounds each prompt entity in frame 0 and seeds CoTracker at the bbox
+    # centroid. WITHOUT it, seeding is a fixed heuristic position — CoTracker
+    # tracks an arbitrary pixel and the per-entity physics verdict is unreliable
+    # on real video. HF-hub loaded (no separate key; GROUNDINGDINO_MODEL env override).
+    detector:
+      name: "groundingdino"
+      model: "IDEA-Research/grounding-dino-tiny"
+      device: "cuda"
+      box_threshold: 0.3
 
   # ── Keyframe local editor (HSI Tier-0) — still a mock in v0.4 ──
   # No real image-edit backend is wired yet; Tier-0 keyframe edits are no-ops

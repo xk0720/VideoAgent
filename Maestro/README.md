@@ -19,7 +19,7 @@ Maestro is built mock-first: every model sits behind an ABC so a mock and a real
 | **Planning LLM** | OpenAI · DeepSeek · Qwen · Anthropic · vLLM / any OpenAI-compatible host | `models/llm_backends.py` | an API key (or a self-hosted endpoint) |
 | **VLM judge & critic** | GPT-4o · Qwen-VL (any OpenAI-compatible multimodal) | `models/mllm_backends.py` | an API key |
 | **Video generation** | **WaveSpeed** hosted API (Seedance / Wan / Hailuo / Runway / … any t2v·i2v id) | `models/video_gen_backends.py` | `WAVESPEED_API_KEY` — **no local GPU** |
-| **Physics track extractor (C6)** | **CoTracker** | `physics/track_extractor_backends.py` | `torch` + a CUDA GPU |
+| **Physics track extractor (C6)** | **CoTracker** + **GroundingDINO** entity seeding | `physics/track_extractor_backends.py` · `models/detection_backends.py` | `torch` (+ `transformers` for the detector) + a CUDA GPU |
 | **Assembly** | **ffmpeg** (concat demuxer + optional music mux) | `tools/assembly_tool.py` | `ffmpeg` on `$PATH` |
 
 **Skeletons (raise a clear error until you implement the body):** OmniWeaving / Wan *local-weight* video backends, TAPIR tracker, V-JEPA-2 world-model reward, Qwen-Image-Edit keyframe editor, and the audio tool. None of these block a real run — the table above is a complete, working pipeline. Where a skeleton is selected the system **fails loudly**; it never silently falls back to a mock.
@@ -56,6 +56,7 @@ pip install -e '.[all]'
 # torch.hub on first use, or point configs at a local checkpoint.
 pip install torch                       # the CUDA build for your driver
 pip install git+https://github.com/facebookresearch/co-tracker.git
+pip install transformers                 # GroundingDINO entity seeding (HF hub; no key)
 
 # System dependency for final assembly:
 #   Debian/Ubuntu:  apt-get install -y ffmpeg
@@ -66,6 +67,8 @@ ffmpeg -version                         # must be on $PATH
 GPU video deps (`torch`, `cotracker`) are intentionally **not** pinned in `pyproject.toml` so they don't fight your CUDA. Everything else is in the `all` extra.
 
 > No GPU on the box? You can still run a fully real *generation* pipeline with **WaveSpeed video + an LLM + a VLM judge**, and set `track_extractor.name: mock-track` — physics verification then degrades to neutral (it reports "not measured", never a fake pass). The rest of the loop is unaffected.
+
+> **CoTracker alone is not enough for a real per-entity verdict.** It tracks whatever point you seed, so it needs to be told *where* the named entity is. That seeding comes from the **GroundingDINO detector** (`track_extractor.detector.name: groundingdino`, needs `transformers`): it grounds each prompt entity in frame 0 and seeds CoTracker at the bbox centroid. Without a real detector the seed is a fixed heuristic position — CoTracker then tracks an arbitrary pixel and the per-entity law verdict is **unreliable on real video** (the extractor logs a WARNING per ungrounded entity).
 
 ---
 
@@ -93,6 +96,7 @@ All recognized variables (full list in [`.env.example`](./.env.example)):
 | `LLM_API_KEY` / `LLM_BASE_URL` | `llm` name `vllm` / `openai-compat` (self-hosted) |
 | `WAVESPEED_API_KEY` | `video_gen` name `wavespeed` |
 | `COTRACKER_CKPT` | optional CoTracker checkpoint path (else torch.hub) |
+| `GROUNDINGDINO_MODEL` | optional GroundingDINO HF model-id override (default `IDEA-Research/grounding-dino-tiny`; HF-hub-loaded, no key) |
 | `MAESTRO_HOST` / `MAESTRO_PORT` / `MAESTRO_LOG_LEVEL` | the server |
 
 A real backend selected **without** its key raises a `RuntimeError` at call time — it will not quietly run on mocks.
@@ -221,7 +225,7 @@ docker run --rm -p 8000:8000 \
   -v "$PWD/outputs:/app/outputs" maestro:0.4
 ```
 
-For real physics verification add a CUDA base image + `pip install torch cotracker` and run with `--gpus all`; otherwise keep `track_extractor.name: mock-track`.
+For real physics verification add a CUDA base image + `pip install torch cotracker transformers` (the last is for the GroundingDINO entity-seeding detector) and run with `--gpus all`; otherwise keep `track_extractor.name: mock-track`.
 
 ---
 
@@ -265,6 +269,7 @@ The five **innovations** (full sourcing & feasibility in [`docs/INNOVATIONS_v0.4
 | `RuntimeError: ...needs an API key` | a real backend is selected but its env var is unset — export it or switch the name to `mock-*`. |
 | Final `.mp4` exists but isn't playable | `ffmpeg` not on `$PATH`, or the video backend returned non-video bytes — the assembler logged `mock assembly`. Install ffmpeg; confirm `video_gen.name: wavespeed` + a valid `WAVESPEED_API_KEY`. |
 | `p2_law_consistency` is always `1.0` | physics not measured: `track_extractor.name` is `mock-track`, or torch/CoTracker isn't installed, or the clip didn't decode. This is "not verified", not "verified perfect" — wire CoTracker on a GPU to get a real signal. |
+| `p2` measured but per-entity verdict looks wrong | CoTracker is running but seeding is heuristic — no real `detector` is wired (or it didn't ground the entity, see the WARNING logs). CoTracker alone tracks an arbitrary point; set `track_extractor.detector.name: groundingdino` (needs `transformers`) so it tracks the **actual** named entity. |
 | VLM judge returns no verdicts | the clip couldn't be decoded into frames (install `opencv-python-headless` / `imageio[ffmpeg]`, already in `.[all]`), or the model returned unparseable JSON (logged as a warning). |
 | WaveSpeed `TimeoutError` | raise `video_gen.timeout`; check the model id exists at wavespeed.ai. |
 | Server returns 422 on `/generate` | send the body as JSON (`-H 'content-type: application/json'`), not query params. |

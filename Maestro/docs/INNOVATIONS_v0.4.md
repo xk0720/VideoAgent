@@ -154,7 +154,9 @@ annotate.py   实体 + 运动类别(ballistic/rigid/fluid/agentive/static) + 预
 router.py     可验证性路由：每实体分配最强可行档位 measurement/world_model/vlm/none
    ↓ 覆盖率显式上报（部分验证绝不冒充全量验证）
 tracks.py     观测轨迹提取（mock 确定性合成；CoTracker/TAPIR 在 backends 同约定）
-   ↓
+   ↓           实体种子=检测定中心：GroundingDINO 在 frame0 检测每个实体→bbox 质心→
+   ↓           CoTracker 在该质心播种（跟踪"真正的那个实体"，非任意像素；
+   ↓           检测不到→回退均匀播种 + WARNING：该实体判据不可靠）
 reliability.py  先认证 tracker 再相信 verdict（S2）：
    ↓             完整性/抖动(churn>0.55 拒)/跨tracker一致性；不可读=clip_unreadable
 laws.py       核心："是否存在任何物理解释"
@@ -182,13 +184,21 @@ verifier.py   组装 + 失信降级（认证失败的 measurement 实体降到 v
 - **mock 已验证**：违例轨迹（含 tracker 式噪声底）被定位检出（severity≈0.5、帧段非全片），
   应用物理修复指令后的再生成通过；负对照（不带修复指令的再生成）保持被标记。
 - **真实部署条件**：CoTracker3（torch.hub 一行加载，已接）或 TAPIR；
-  实体种子点目前是均匀带状播种，升级路径=开放词汇检测（GroundingDINO/Sa2VA）定中心，
-  ABC 契约不变。world_model 档位挂 V-JEPA 2 reward（`models/world_reward.py` 接口已留）。
+  **实体种子点已改为检测定中心**（GroundingDINO，`models/detection_backends.py`，
+  HF transformers 零样本检测）：每个 prompt 实体在第 0 帧被检测→取 bbox 质心→
+  CoTracker 在该质心播种，从而跟踪"真正的那个实体"而非任意像素——
+  数据流 `prompt 实体名 → detect(frame0) → 质心 → CoTracker → 定律`。
+  检测不到时回退到旧的均匀带状位置并 WARNING（该实体判据不可靠），ABC 契约不变。
+  world_model 档位挂 V-JEPA 2 reward（`models/world_reward.py` 接口已留）。
 - **已知边界（诚实声明）**：
   1. 覆盖率：measurement 档只覆盖刚体/抛体——这正是路由器存在的理由，缺口显式交给
      world_model/vlm 档并上报，**部分验证透明化本身是贡献**（对比 PSIVG 假装全覆盖）；
   2. tracker 在生成视频上会"对变形物体输出貌似合理的轨迹"——可靠性门控 + 跨 tracker
      分歧（本身就是不合理线索）是直接回应，量化研究（G4）可独立成文；
+  2b. 检测播种的剩余边界=**检测质量**：GroundingDINO 在真实图像上训练，对生成视频的
+     零样本检测可能漏检/误定位，且需 GPU+权重；检测不到时回退均匀播种且该实体判据被
+     标记为不可靠（诚实声明）。MockDetector（仅按名词出 bbox、忽略像素）是 CPU 冷启动路径，
+     此路径下播种本质仍是启发式——单实体判据在真实视频上不可靠；
   3. 随机游走式漂移噪声仍可能通过抖动门（文档已注明，平滑性检验是后续工作）；
   4. p2=1.0 的语义是"无测量违例"而非"已验证"——提取失败时 WARNING 日志 + 覆盖率记录，
      不会无声扮演完美分数；

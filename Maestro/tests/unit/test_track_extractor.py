@@ -152,6 +152,65 @@ def test_cotracker_inference_failure_warns_and_returns_none(
     assert "CoTracker inference failed" in warnings[0]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Detection-grounded seeding — the CLOSED break: CoTracker seeds on the entity's
+# detected centroid, not a fixed pixel. Tests the pure _grounded_seed helper so
+# NO torch / NO cotracker model is needed.
+# ─────────────────────────────────────────────────────────────────────────────
+class _StubDetector:
+    """Returns a known bbox for 'ball', nothing for 'ghost'. Ignores pixels."""
+
+    @staticmethod
+    def centroid(box):
+        x0, y0, x1, y1 = box
+        return ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+
+    def detect(self, frame_rgb, query, max_results=1):
+        if query == "ball":
+            return [{"label": "ball", "bbox": [0.4, 0.5, 0.6, 0.7], "score": 0.9}]
+        return []   # 'ghost' not grounded → heuristic fallback
+
+
+def test_grounded_seed_uses_detected_centroid_and_falls_back(monkeypatch):
+    """ball → seeded at the bbox centroid pixels; ghost → heuristic position +
+    a WARNING that its verdict is unreliable. Proves detection→seeding is real
+    and the fallback is honest."""
+    pytest.importorskip("numpy")
+    import numpy as np
+
+    import maestro.physics.track_extractor_backends as be
+    from maestro.types import PhysEntity
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        be.log, "warning",
+        lambda msg, *a, **k: warnings.append(msg % a if a else msg))
+
+    frames = np.zeros((3, 50, 100, 3), dtype="uint8")   # T,H,W,3 → W=100,H=50
+    W, H = 100, 50
+    entities = [PhysEntity(name="ball", motion_class="ballistic"),
+                PhysEntity(name="ghost", motion_class="static")]
+
+    queries, names = be._grounded_seed(frames, entities, _StubDetector(), W, H)
+
+    assert names == ["ball", "ghost"]
+    # ball: centroid of [0.4,0.5,0.6,0.7] = (0.5, 0.6) → (50.0, 30.0) px
+    assert queries[0] == [0.0, 0.5 * W, 0.6 * H]
+    # ghost: NOT grounded → heuristic position for entity i=1 of k=2
+    hx, hy = be._heuristic_seed_xy(1, 2, W, H)
+    assert queries[1] == [0.0, hx, hy]
+    assert any("ghost" in w and "heuristically" in w for w in warnings), warnings
+
+
+def test_cotracker_builds_default_mock_detector():
+    """The extractor builds a detector from config; default → MockDetector (text-
+    deterministic, ignores pixels → heuristic seeding on real video)."""
+    from maestro.models.detection_backends import MockDetector
+
+    ex = build_track_extractor({"name": "cotracker", "device": "cpu"})
+    assert isinstance(ex.detector, MockDetector)
+
+
 def test_cotracker_loud_failure_on_real_video_when_unwired(tmp_path: Path, monkeypatch):
     """The crucial honesty guarantee: a DECODABLE video + missing tracker model
     must raise LOUDLY (not silently emit a perfect, wrong verdict). We fake a
