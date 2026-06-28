@@ -1,0 +1,76 @@
+# Maestro — 最基础真实配置（从这里开始）。
+#
+# 目标：把 multi-agent + 视频生成跑通，最少的真实后端，不碰 GPU / 物理 / 音频。
+#   • 纯语言大模型 → OpenAI    （$OPENAI_API_KEY）
+#   • 多模态大模型 → Qwen-VL   （$QWEN_API_KEY）
+#   • 视频生成     → WaveSpeed  （$WAVESPEED_API_KEY，云 API，无需本地 GPU）
+#   • 其余（物理 tracker / 关键帧编辑 / 音频）一律 mock —— 先不开。
+#
+# 跑：
+#   export OPENAI_API_KEY=...  QWEN_API_KEY=...  WAVESPEED_API_KEY=...
+#   maestro run-once --prompt "..." -o outputs/demo.mp4 --config configs/basic.yaml
+# 不需要起 server。
+
+models:
+  # 纯语言大模型（编剧 / 导演 / 修复 / 验证）——只用 OpenAI。
+  llm:
+    name: "openai"
+    model: "gpt-4o"        # 任意 OpenAI chat 模型；纯文本规划用
+
+  # 多模态大模型（语义/物理 VLM 评审 + 镜头对比）——只用 Qwen 系列。
+  mllm:
+    name: "qwen-vl"
+    model: "qwen-vl-max"
+    n_frames: 4            # 每个 clip 抽几帧给评审看
+
+  # 视频生成——只调 WaveSpeed API（真像素，无本地 GPU）。
+  video_gen:
+    name: "wavespeed"
+    model_id: "bytedance/seedance-v1-pro-t2v-480p"
+    poll_interval: 2.0
+    timeout: 600
+
+  # 以下先全部 mock —— 先把主链路跑通，之后再按需开启。
+  track_extractor:
+    name: "mock-track"      # 物理验证关闭：p2 中性（诚实标"未测量"，不伪造）
+  image_edit:
+    name: "mock-image-edit" # HSI Tier-0 关键帧编辑暂为 no-op
+  audio_gen:
+    name: "mock-audio-gen"  # 音频暂为占位
+
+# 规划
+plan:
+  n_shots: 3
+  max_shots: 6
+  shot_duration: 3.0
+  max_plan_iters: 3
+
+# 生成 + 自改进循环
+compose:
+  fps: 8
+  n_candidates: 2           # 每镜 best-of-N 候选数
+  max_revisions: 5          # 自改进轮数上限
+  k_retries: 2
+
+# 评审指标权重（驱动单调 Verifier）
+metrics:
+  weights:
+    m1_semantic: 0.22
+    m2_temporal: 0.13
+    p1_physics: 0.22           # VLM 判的物理失效模式
+    p2_law_consistency: 0.10   # mock-track 下中性（未测量）
+    id1_identity: 0.13
+    m5_rhythm: 0.10
+    aesthetic: 0.10
+
+physics:
+  violation_threshold: 0.40
+
+# 记忆（技能 / 实体 / 教训跨运行持久化；纯本地文件，无需配置）
+memory:
+  user_id: "default"
+  enable_skills: true
+  enable_entities: true
+  enable_preferences: true
+  enable_episodes: true
+  enable_skill_admission: true
