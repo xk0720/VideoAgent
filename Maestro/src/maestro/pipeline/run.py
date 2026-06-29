@@ -39,7 +39,7 @@ from ..tools.metric_tool import MetricTool
 from ..tools.retrieval_tool import RetrievalTool
 from ..trajectory import TrajectoryLogger
 from .assemble import assemble
-from .generate_loop import generate_shot
+from .generate_loop import generate_shot, generate_shot_orchestrated
 from .plan import plan_shots
 from .understand import build_asset_memory
 
@@ -60,6 +60,7 @@ class MaestroComponents:
     tournament: Tournament
     lesson_library: LessonLibrary
     image_edit: object
+    llm: object = None                       # the brain (orchestrator repair_mode)
     mlm: Optional[MultiLayerMemory] = None   # C8 — wired by run_maestro
 
 
@@ -123,6 +124,7 @@ def build_components(
         tournament=Tournament(judge=mllm),
         lesson_library=LessonLibrary(lesson_path),
         image_edit=image_edit,
+        llm=llm,
     )
 
 
@@ -282,6 +284,18 @@ def run_maestro(
     # actually offers — never a silent capability claim.
     router = CapabilityRouter()
     available_caps = comp.generator.video_gen.capabilities()
+    # Repair mode: "hsi" (default — the rigid HSI tier ladder, generate_shot) or
+    # "orchestrator" (the LLM brain function-calls over the tool registry,
+    # generate_shot_orchestrated). Default keeps every existing test unchanged.
+    repair_mode = str(gen_cfg.get("repair_mode", "hsi")).lower()
+    orchestrator = None
+    if repair_mode == "orchestrator":
+        from ..agents.orchestrator import OrchestratorAgent
+        orchestrator = OrchestratorAgent(
+            llm=comp.llm, generator=comp.generator, refiner=comp.refiner,
+            image_edit=comp.image_edit, retrieval=retrieval,
+            max_turns=int(gen_cfg.get("max_revisions", 5)), logger=trajectory,
+        )
     for spec in specs:
         decision = router.route(spec, asset_memory, available_caps)
         spec.gen_capability = decision.capability
@@ -296,22 +310,33 @@ def run_maestro(
                          "reason": decision.reason,
                          "downgraded_from": decision.downgraded_from},
         )
-        res = generate_shot(
-            spec, comp.board, comp.generator, comp.refiner, comp.verifier,
-            cache_dir, asset_memory=asset_memory, lesson_library=mlm.lessons,
-            image_edit=comp.image_edit, tournament=comp.tournament, retrieval=retrieval,
-            physics_planner=comp.physics_planner,  # HSI Tier-1 (C5)
-            director=comp.director,                 # HSI Tier-2 (C5)
-            skill_library=mlm.skills if mlm.enabled["skills"] else None,
-            task_id=task_id,
-            fps=fps,
-            n_candidates=int(gen_cfg.get("n_candidates", 2)),
-            max_revisions=int(gen_cfg.get("max_revisions", 5)),
-            k_retries=int(gen_cfg.get("k_retries", 2)),
-            post_accept_strictness=float(
-                cfg.get("physics", {}).get("post_accept_strictness", 1.0)
-            ),
-        )
+        if orchestrator is not None:
+            res = generate_shot_orchestrated(
+                spec, comp.board, comp.generator, comp.refiner, comp.verifier,
+                cache_dir, orchestrator,
+                asset_memory=asset_memory, lesson_library=mlm.lessons,
+                image_edit=comp.image_edit, tournament=comp.tournament,
+                retrieval=retrieval, fps=fps,
+                n_candidates=int(gen_cfg.get("n_candidates", 2)),
+                max_turns=int(gen_cfg.get("max_revisions", 5)),
+            )
+        else:
+            res = generate_shot(
+                spec, comp.board, comp.generator, comp.refiner, comp.verifier,
+                cache_dir, asset_memory=asset_memory, lesson_library=mlm.lessons,
+                image_edit=comp.image_edit, tournament=comp.tournament, retrieval=retrieval,
+                physics_planner=comp.physics_planner,  # HSI Tier-1 (C5)
+                director=comp.director,                 # HSI Tier-2 (C5)
+                skill_library=mlm.skills if mlm.enabled["skills"] else None,
+                task_id=task_id,
+                fps=fps,
+                n_candidates=int(gen_cfg.get("n_candidates", 2)),
+                max_revisions=int(gen_cfg.get("max_revisions", 5)),
+                k_retries=int(gen_cfg.get("k_retries", 2)),
+                post_accept_strictness=float(
+                    cfg.get("physics", {}).get("post_accept_strictness", 1.0)
+                ),
+            )
         results.append(res)
         clips.append(res.clip)
 

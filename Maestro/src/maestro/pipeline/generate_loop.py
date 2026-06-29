@@ -84,6 +84,9 @@ class SelfImproveResult:
     distilled_lesson_id: str = ""                         # C4 — what was saved
     escape_hatched: bool = False                          # any Tier-3 skip this episode
     skipped_modes: list[str] = field(default_factory=list)  # typed physics skips
+    # Brain-orchestrated repair (generate_shot_orchestrated): one entry per turn
+    # — the brain's raw decision {tool,args,reason} + the gate's outcome.
+    actions: list[dict] = field(default_factory=list)
 
 
 def _tournament_select(candidates: list[CandidateClip]) -> CandidateClip:
@@ -644,4 +647,208 @@ def generate_shot(
         distilled_lesson_id=distilled_lesson_id,
         escape_hatched=escape_hatched,
         skipped_modes=sorted(m.value for m in skipped_modes),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Brain-orchestrated repair loop (v0.4) — the LLM Orchestrator function-calls
+# over the tool registry, GROUNDED by the measured review + the monotonic
+# Verifier ("brain proposes, gate disposes"). This REPLACES the rigid if-else
+# tier ladder of generate_shot with genuine tool-calling; generate_shot stays
+# intact and is still the default (compose.repair_mode: "hsi").
+# ─────────────────────────────────────────────────────────────────────────────
+def _repair_router_fallback(
+    *,
+    best: CandidateClip,
+    spec: ShotSpec,
+    cache_dir: Path,
+    r: int,
+    generator: GeneratorAgent,
+    board: ReviewBoard,
+    asset_memory,
+    fps: int,
+    retrieval: Optional[RetrievalTool],
+) -> Optional[CandidateClip]:
+    """Execute ONE deterministic RepairRouter action — the SAFETY-NET when the
+    brain's reply is unusable, so the orchestrated loop never stalls. Mirrors the
+    action→tool map of _tier1_replan_physics (a single candidate per call)."""
+    from ..agents.repair_router import RepairRouter
+
+    caps = generator.video_gen.capabilities()
+    has_source_shots = bool(asset_memory and asset_memory.video_shots)
+    action = RepairRouter().choose(
+        best, spec, capabilities=caps, has_source_shots=has_source_shots
+    )
+    log.info("shot %d turn%d FALLBACK repair action=%s (%s)",
+             spec.shot_idx, r, action.action, action.reason)
+
+    if action.action == "edit_clip":
+        out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_fb_edit.mp4"
+        vp = generator.video_gen.edit_video(
+            prompt=action.hint, video_path=best.video_path, out_path=out,
+            backend="runway",
+        )
+        cand = CandidateClip(shot_idx=spec.shot_idx, video_path=vp, revision=r)
+    elif action.action == "extend_clip":
+        out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_fb_extend.mp4"
+        vp = generator.video_gen.extend(
+            prompt=action.hint, video_path=best.video_path, out_path=out,
+            duration=max(1, int(round(spec.duration))),
+        )
+        cand = CandidateClip(shot_idx=spec.shot_idx, video_path=vp, revision=r)
+    elif action.action == "retrieve_replace" and retrieval is not None:
+        cand = None
+        for sid in retrieval.retrieve_source_shots(query=spec.prompt):
+            shot = retrieval.memory.video_shots.get(sid)
+            if shot is None or not shot.source_video:
+                continue
+            src = Path(shot.source_video)
+            if src.exists():
+                cand = CandidateClip(shot_idx=spec.shot_idx, video_path=src, revision=r)
+                break
+        if cand is None:
+            return None
+    else:  # regenerate_hint (or any unreachable action) — the guaranteed degrade
+        cand = generator.run(
+            spec, cache_dir, revision=r, seed=500 + r,
+            extra_prompt=action.hint or _tier1_hint(best), fps=fps,
+        )
+
+    board.review(cand, spec, asset_memory, fps)
+    return cand
+
+
+def generate_shot_orchestrated(
+    spec: ShotSpec,
+    board: ReviewBoard,
+    generator: GeneratorAgent,
+    refiner: RefinerAgent,
+    verifier: VerifierAgent,
+    cache_dir: Path,
+    orchestrator,
+    asset_memory=None,
+    lesson_library: Optional[LessonLibrary] = None,
+    image_edit: Optional[BaseImageEditClient] = None,
+    tournament: Optional[Tournament] = None,
+    retrieval: Optional[RetrievalTool] = None,
+    fps: int = 8,
+    n_candidates: int = 2,
+    max_turns: int = 4,
+) -> SelfImproveResult:
+    """Agentic repair loop driven by the OrchestratorAgent (the brain).
+
+    Initial best-of-N + tournament (reused), then per turn:
+      1. converged? stop.
+      2. brain reads the structured review → decides ONE tool call (decide).
+      3. invalid/garbage → deterministic RepairRouter fallback (one action);
+         "accept" → stop.
+      4. execute the tool → fresh reviewed candidate.
+      5. verifier.is_better gates it: accept (best ← cand) or reject. The
+         outcome is appended to `history`, which the brain sees next turn so it
+         never repeats a rejected action.
+
+    Every accepted/rejected decision is recorded in `result.actions` (the brain's
+    trace). Verification bar NEVER moves — the monotonic contract is identical to
+    generate_shot.
+    """
+    image_edit = image_edit or MockImageEditClient()
+    cache_dir = Path(cache_dir)
+    gen_calls = 0
+    ref_images = retrieval.retrieve_identity_refs(spec.identity_refs) if retrieval else None
+
+    # 1. Initial candidates → bidirectional tournament (reused selection).
+    candidates = []
+    for s in range(n_candidates):
+        c = generator.run(spec, cache_dir, revision=0, seed=s,
+                          reference_images=ref_images, fps=fps)
+        gen_calls += 1
+        board.review(c, spec, asset_memory, fps)
+        candidates.append(c)
+    best = tournament.select(candidates, spec) if tournament else _tournament_select(candidates)
+
+    initial_modes: set[PhysFailureMode] = {v.mode for v in best.physics_verdicts}
+    initial_severity_max = max((v.severity for v in best.physics_verdicts), default=0.0)
+    history_scores = [best.metric_scores.get("weighted_total", 0.0)]
+    actions: list[dict] = []
+    # (decision, outcome, new_total) tuples the brain sees as it iterates.
+    brain_history: list[tuple[dict, str, float]] = []
+
+    converged = board.all_passed(best)
+    turns_used = 0
+    for turn in range(1, max_turns + 1):
+        if board.all_passed(best):
+            converged = True
+            break
+        turns_used = turn
+
+        menu = orchestrator.available_actions(
+            video_gen=generator.video_gen, asset_memory=asset_memory
+        )
+        decision = orchestrator.decide(best, spec, menu, brain_history)
+
+        invalid = decision.get("tool") in ("__invalid__",)
+        if decision.get("tool") == "accept":
+            actions.append({"tool": "accept", "args": {}, "outcome": "stop",
+                            "reason": decision.get("reason", "")})
+            log.info("shot %d turn%d brain chose ACCEPT → stop", spec.shot_idx, turn)
+            break
+
+        if invalid:
+            # SAFETY-NET: deterministic RepairRouter executes ONE action so we
+            # never stall on a garbage brain reply.
+            cand = _repair_router_fallback(
+                best=best, spec=spec, cache_dir=cache_dir, r=turn,
+                generator=generator, board=board, asset_memory=asset_memory,
+                fps=fps, retrieval=retrieval,
+            )
+            gen_calls += 1
+            via = "repair_router_fallback"
+        else:
+            cand = orchestrator.execute(
+                decision, best, spec, cache_dir, turn, board,
+                asset_memory=asset_memory, fps=fps,
+            )
+            gen_calls += 1
+            via = "brain"
+
+        if cand is not None and verifier.is_better(cand, best):
+            best = cand
+            new_total = best.metric_scores.get("weighted_total", 0.0)
+            outcome = "accepted"
+        else:
+            new_total = (cand.metric_scores.get("weighted_total", 0.0)
+                         if cand is not None else history_scores[-1])
+            outcome = "rejected"
+
+        brain_history.append((decision, outcome, round(new_total, 4)))
+        history_scores.append(best.metric_scores.get("weighted_total", 0.0))
+        actions.append({
+            "tool": decision.get("tool"), "args": decision.get("args", {}),
+            "reason": decision.get("reason", ""), "via": via,
+            "outcome": outcome, "new_total": round(new_total, 4),
+        })
+        log.info("shot %d turn%d via=%s tool=%s → %s (total=%.4f)",
+                 spec.shot_idx, turn, via, decision.get("tool"), outcome, new_total)
+
+    converged = converged or board.all_passed(best)
+    best.accepted = True
+    if spec.physics_annotation is not None:
+        spec.physics_annotation.strictness = 1.0
+
+    # Distill a lesson on the mode actually resolved (same contract as the ladder;
+    # the brain loop never escape-hatches, so skipped_modes is empty).
+    distilled_lesson_id = ""
+    if lesson_library is not None:
+        result = _distill_lesson(spec, best, initial_modes, set())
+        if result is not None:
+            mode, fix = result
+            lesson = lesson_library.add(trigger=spec.prompt, fix=fix, failure_mode=mode)
+            distilled_lesson_id = lesson.lesson_id
+
+    return SelfImproveResult(
+        clip=best, score_history=history_scores, revisions_used=turns_used,
+        converged=converged, gen_calls=gen_calls,
+        initial_severity_max=initial_severity_max,
+        distilled_lesson_id=distilled_lesson_id,
+        actions=actions,
     )
