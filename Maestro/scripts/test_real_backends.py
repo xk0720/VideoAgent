@@ -37,6 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from maestro.models import build_llm, build_mllm, build_video_gen  # noqa: E402
+from maestro.physics.annotate import annotate_physics  # noqa: E402
 from maestro.types import CandidateClip, ShotSpec  # noqa: E402
 
 
@@ -73,24 +74,56 @@ def stage_video(shot_desc: str, out_path: Path, model_id: str) -> Path:
 
 
 def stage_vlm(model: str, video_path: Path, shot_desc: str) -> None:
-    """③ 多模态 VLM（OpenAI）—— build_mllm({name:openai}).assess_semantic(clip, spec).
+    """③ 多模态 VLM（OpenAI）—— 视觉评审生成的视频。
 
-    这一步把 ① 的文本和 ② 的视频串起来：VLM 真的解码 mp4 抽帧、看图判断是否
-    符合描述。返回 [] 说明 clip 解不出帧（需要装 opencv/imageio）。"""
+    把 ① 的文本和 ② 的视频串起来：VLM 真的解码 mp4 抽帧、看图判断。逻辑：
+    _sample_frames(抽帧) → _chat(帧+prompt 发 chat/completions) → _extract_json(解析)。
+    本脚本包一层 _chat，把发给模型的 prompt 和模型的【原始回复】都打印出来，
+    方便你核对逻辑，然后再展示解析后的结构化结果。"""
     _section("③ VLM (OpenAI) — 视觉评审生成的视频")
     vlm = build_mllm({"name": "openai", "model": model})
-    print(f"  backend = {type(vlm).__name__}  model = {model}")
+    print(f"  backend = {type(vlm).__name__}  model = {model}  n_frames = {vlm.n_frames}")
+
+    # —— 包一层 _chat：打印发出去的 prompt + 模型原始回复 ——
+    _orig_chat = vlm._chat
+
+    def _chat_verbose(frames, text):
+        print(f"\n  ── 发给 VLM 的 prompt（附 {len(frames)} 帧图）──")
+        print("    " + text.replace("\n", "\n    "))
+        reply = _orig_chat(frames, text)
+        print("  ── VLM 原始回复（raw reply）──")
+        shown = reply if reply is not None else "<None：HTTP 请求失败，已降级为不出判决>"
+        print("    " + str(shown).replace("\n", "\n    "))
+        return reply
+
+    vlm._chat = _chat_verbose  # type: ignore[method-assign]
+
     spec = ShotSpec(shot_idx=0, duration=5.0, prompt=shot_desc)
+    spec.physics_annotation = annotate_physics(spec)   # assess_physics 需要预期模式
     clip = CandidateClip(shot_idx=0, video_path=video_path)
-    items = vlm.assess_semantic(clip, spec)   # [(question, passed, fix), ...]
-    if not items:
-        print("  ⚠️  VLM 返回空 —— 通常是 mp4 解不出帧（pip install "
-              "opencv-python-headless imageio[ffmpeg]）或模型未返回可解析 JSON。")
+
+    # 先检查能不能抽到帧（解不出帧 → 所有判决都会是空，是 mp4/解码问题不是模型问题）
+    if vlm._sample_frames(clip) is None:
+        print("\n  ⚠️  抽不到帧：mp4 解不出来。装 `pip install opencv-python-headless "
+              "imageio[ffmpeg]`，否则 VLM 没有像素可看、只能返回空。")
         return
-    print(f"  ✅ VLM 评审 {len(items)} 条:")
+
+    print("\n  >>> assess_semantic（语义：是否展现 prompt 关键元素）")
+    items = vlm.assess_semantic(clip, spec)
+    print(f"  解析结果（{len(items)} 条）:")
     for q, passed, fix in items:
-        mark = "PASS" if passed else "FAIL"
-        print(f"     [{mark}] {q}" + (f"  → fix: {fix}" if fix else ""))
+        print(f"     [{'PASS' if passed else 'FAIL'}] {q}" + (f"  → fix: {fix}" if fix else ""))
+    if not items:
+        print("     （空：模型未返回可解析 JSON —— 看上面的 raw reply 判断原因）")
+
+    print("\n  >>> assess_physics（物理：可见的定律违例，空=合理）")
+    verdicts = vlm.assess_physics(clip, spec, fps=8)
+    print(f"  解析结果（{len(verdicts)} 条）:")
+    for v in verdicts:
+        print(f"     [{v.mode.value}] 帧{v.frame_range} 严重度={v.severity:.2f}"
+              f"  → {v.suggested_intervention}")
+    if not verdicts:
+        print("     （空：模型认为运动物理合理，或未返回可解析 JSON —— 见 raw reply）")
 
 
 def main() -> int:
