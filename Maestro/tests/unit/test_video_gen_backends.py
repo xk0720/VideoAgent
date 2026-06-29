@@ -56,9 +56,10 @@ def test_capabilities_per_client():
     assert build_video_gen({"name": "omniweaving"}).capabilities() == {"t2v", "i2v"}
     # WaveSpeed declares the extras backed by optional methods.
     wave = build_video_gen({"name": "wavespeed"})
-    assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit"}
+    assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit", "extend"}
     # Extra capabilities are optional methods, NOT abstractmethods.
     assert hasattr(wave, "frame_to_frame") and hasattr(wave, "edit_video")
+    assert hasattr(wave, "extend")
     assert not hasattr(MockVideoGenClient(), "frame_to_frame")
 
 
@@ -85,3 +86,57 @@ def test_wavespeed_edit_video_unknown_backend(tmp_path: Path, monkeypatch):
     vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00")
     with pytest.raises(ValueError):
         wave.edit_video("x", vid, tmp_path / "o.mp4", backend="nope")
+
+
+# ── video EXTEND (the capability UniVA has as video_extension; we add it) ──
+def test_wavespeed_extend_loud_without_api_key(tmp_path: Path, monkeypatch):
+    """extend() must fail LOUDLY (no key) BEFORE any decode or network POST.
+    We fake the decoder so a missing real video can't mask the key check."""
+    pytest.importorskip("numpy")
+    import numpy as np
+
+    import maestro.physics.track_extractor_backends as be
+
+    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+    # If the key check were skipped, this fake would let extend proceed — so a
+    # RuntimeError here proves the loud guard fires first (no network either).
+    monkeypatch.setattr(be, "_decode_frames",
+                        lambda p: np.zeros((3, 8, 8, 3), dtype="uint8"))
+    wave = build_video_gen({"name": "wavespeed"})
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    with pytest.raises(RuntimeError, match="API key"):
+        wave.extend("continue the shot", vid, tmp_path / "o.mp4")
+
+
+def test_wavespeed_extend_drives_i2v_on_last_frame(tmp_path: Path, monkeypatch):
+    """With a key + a fake decoder, extend() saves the LAST frame and drives an
+    i2v continuation via _run_task — recorded by a stub, NO network."""
+    pytest.importorskip("numpy")
+    import numpy as np
+
+    import maestro.physics.track_extractor_backends as be
+
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    frames = np.zeros((3, 8, 8, 3), dtype="uint8")
+    frames[-1, 0, 0, 0] = 200  # mark the last frame
+    monkeypatch.setattr(be, "_decode_frames", lambda p: frames)
+
+    wave = build_video_gen(
+        {"name": "wavespeed", "model_id": "bytedance/seedance-v1-pro-t2v-480p"}
+    )
+    calls = {}
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls["model_id"] = model_id
+        calls["payload"] = payload
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    out = wave.extend("continue the shot", vid, tmp_path / "o.mp4", duration=5)
+
+    assert out.exists()
+    assert "-i2v-" in calls["model_id"]                 # swapped to the i2v id
+    assert calls["payload"]["image"].startswith("data:image/png;base64,")
+    assert calls["payload"]["prompt"] == "continue the shot"

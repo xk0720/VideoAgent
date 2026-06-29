@@ -288,6 +288,29 @@ verifier.py   组装 + 失信降级（认证失败的 measurement 实体降到 v
 - 教训库（C4）：从**真正被解决**的失效模式蒸馏，A-MEM 式双向链接，注入后续同类 prompt；
   注入的教训 id 现在真实耦合进蒸馏技能（修复：之前读不存在的字段，恒为空）。
 
+#### Tier-1 修复是多动作、verdict 路由的（Review→Execute 桥）
+
+UniVA 把"审查 verdict → 修复"交给每次重跑都临时重决策的 Act-LLM，且实际只会
+re-prompt/重生成。Maestro 把同一座桥做成**确定性、training-free 的路由决策**
+（`agents/repair_router.py` 的 `RepairRouter.choose`），从**最严重 verdict** 选出一个
+工具支撑的修复动作，受后端能力 + 上传素材门控；每个动作仍走 `board.review` +
+`verifier.is_better`，单调改进契约不变。
+
+| 审查 verdict | 路由动作 | 工具（后端方法） | 门控条件 |
+| --- | --- | --- | --- |
+| 物理运动类（gravity_inertia / collision / conservation / penetration） | `edit_clip` | `video_gen.edit_video()`（runway gen4-aleph） | `"edit" ∈ capabilities`（更便宜、保留好的部分，免整段重 roll） |
+| 语义"缺失元素"（失败的 semantic 清单项） | `retrieve_replace` | `retrieval.retrieve_source_shots()` → 真实上传素材 | `AssetMemory` 有 source shots |
+| object_permanence / "incomplete" / "too short" | `extend_clip` | `video_gen.extend()`（末帧 i2v 续接） | `"extend" ∈ capabilities` |
+| 关键帧级局部缺陷（Tier-0） | `keyframe_edit` | `image_edit.edit()` + first_frame 锚 | `image_edit` 后端可用 |
+| 兜底（任何工具/素材不可用时） | `regenerate_hint` | `physics_planner.replan` + `generator.run`（verdict 提示） | 总是可用 |
+
+工具脊柱因此**超过 UniVA**：edit / extend / retrieve / keyframe-edit / regenerate
+五种动作，外加 UniVA 没有的**参考自由像素物理检测**（I2，正是 `edit_clip` /
+`extend_clip` 的 verdict 来源）。诚实降级：任一被选动作的能力/素材缺失时，路由器
+**绝不**返回它，而是回落到 `regenerate_hint`——所以 mock 管线（caps={t2v,i2v}、无 source
+shots）`choose` 恒返回 `regenerate_hint`，既有行为逐字保持。注：真实部署可在同一
+`choose` 签名后换上 LLM 修复规划器，路由形态不变。
+
 ### 可行性分析
 
 - mock 验证：内容驱动收敛（修复指令未应用→不收敛）；tier-1 在不变门槛下接受修复

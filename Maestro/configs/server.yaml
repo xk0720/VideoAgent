@@ -44,11 +44,19 @@ models:
     # api_key: "sk-..."   # PREFER $WAVESPEED_API_KEY in the env. Do NOT leave a
     #                     # literal "..." here — a truthy value beats the env var
     #                     # and the request 401s with the placeholder as the key.
-    # Extra REAL capabilities on this client (capabilities() = t2v/i2v/flf2v/edit):
-    #   flf2v → frame_to_frame() POST wavespeed-ai/wan-flf2v (first+last frame)
-    #   edit  → edit_video()     POST runwayml/gen4-aleph (prompt edit) OR
-    #                                 wavespeed-ai/wan-2.1-14b-vace (depth/pose)
+    # Extra REAL capabilities on this client (capabilities() =
+    # t2v/i2v/flf2v/edit/extend):
+    #   flf2v  → frame_to_frame() POST wavespeed-ai/wan-flf2v (first+last frame)
+    #   edit   → edit_video()     POST runwayml/gen4-aleph (prompt edit) OR
+    #                                  wavespeed-ai/wan-2.1-14b-vace (depth/pose)
+    #   extend → extend()         i2v continuation seeded on the clip's LAST frame
     # These are Phase-2 routing seeds; the main pipeline still drives generate().
+    # HSI Tier-1 REPAIR is multi-action + verdict-routed (RepairRouter): the
+    # edit / extend / retrieve_replace actions ACTIVATE AUTOMATICALLY when this
+    # backend declares the capability (edit/extend) and/or AssetMemory holds
+    # uploaded source shots (retrieve_replace). With the mock backend
+    # (caps={t2v,i2v}, no source shots) Tier-1 degrades to prompt-regenerate —
+    # the prior behaviour — so no config flag is needed to stay safe.
 
   # ── Audio generation — WaveSpeed hosted API (foley + TTS are REAL) ──
   # foley (kind="foley") = MMAudio-v2 video→audio, needs a video to score.

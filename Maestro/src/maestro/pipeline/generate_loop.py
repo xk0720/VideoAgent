@@ -248,21 +248,79 @@ def _tier1_replan_physics(
     asset_memory,
     ref_images,
     fps: int,
+    retrieval: Optional[RetrievalTool] = None,
 ) -> tuple[Optional[CandidateClip], int]:
-    """Replan: regenerate with VERDICT-DERIVED anti-violation hints at an
-    UNCHANGED verification bar.
+    """Tier 1 — the Review→Execute bridge: a RepairRouter picks ONE tool-backed
+    repair ACTION from the worst review verdict, gated by what the backend +
+    uploaded assets actually support, then executes it. This is richer than
+    UniVA's single fixed prompt-regenerate (which UniVA re-decides via an
+    ephemeral Act-LLM every run) — yet it DEGRADES to exactly that regenerate
+    when no richer tool/asset applies, so the mock pipeline is unchanged.
 
-    The replan re-annotates (entities may change after prompt fixes) from the
-    ORIGINAL prompt snapshot — never from the Tier-2-mutated `spec.prompt`,
-    whose '| plan-fix: <hint>' suffix would be keyword-scanned and could
-    re-introduce modes the hint merely names. Strictness stays at 1.0: a
-    tighter bar on a failing shot makes same-quality candidates accrue more
-    verdicts → lower p2 → Verifier rejection, the inverse of repair (see
-    module docstring; tightening lives in the post-acceptance watchdog)."""
+    Every action still goes through board.review + verifier.is_better: the
+    monotonic-improvement contract is UNCHANGED across all actions. The
+    "regenerate_hint" branch is the original Tier-1 code verbatim (re-annotate
+    from the ORIGINAL prompt snapshot at an UNCHANGED bar — never from the
+    Tier-2-mutated `spec.prompt`; strictness stays 1.0, see module docstring)."""
+    from ..agents.repair_router import RepairRouter
+
+    caps = generator.video_gen.capabilities()
+    has_source_shots = bool(asset_memory and asset_memory.video_shots)
+    action = RepairRouter().choose(
+        best, spec, capabilities=caps, has_source_shots=has_source_shots
+    )
+    log.info("shot %d r%d tier-1 repair action=%s (%s)",
+             spec.shot_idx, r, action.action, action.reason)
+
+    gen_calls = 0
+
+    if action.action == "edit_clip":
+        out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_t1_edit.mp4"
+        video_path = generator.video_gen.edit_video(
+            prompt=action.hint, video_path=best.video_path,
+            out_path=out, backend="runway",
+        )
+        cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
+        gen_calls += 1
+        board.review(cand, spec, asset_memory, fps)
+        if verifier.is_better(cand, best):
+            return cand, gen_calls
+        return None, gen_calls
+
+    if action.action == "retrieve_replace" and retrieval is not None:
+        shot_ids = retrieval.retrieve_source_shots(query=spec.prompt)
+        for sid in shot_ids:
+            shot = retrieval.memory.video_shots.get(sid)
+            if shot is None or not shot.source_video:
+                continue
+            src = Path(shot.source_video)
+            if not src.exists():
+                continue
+            cand = CandidateClip(shot_idx=spec.shot_idx, video_path=src, revision=r)
+            gen_calls += 1
+            board.review(cand, spec, asset_memory, fps)
+            if verifier.is_better(cand, best):
+                return cand, gen_calls
+        return None, gen_calls
+
+    if action.action == "extend_clip":
+        out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_t1_extend.mp4"
+        video_path = generator.video_gen.extend(
+            prompt=action.hint, video_path=best.video_path, out_path=out,
+            duration=max(1, int(round(spec.duration))),
+        )
+        cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
+        gen_calls += 1
+        board.review(cand, spec, asset_memory, fps)
+        if verifier.is_better(cand, best):
+            return cand, gen_calls
+        return None, gen_calls
+
+    # action.action == "regenerate_hint" (or any chosen-but-unreachable action):
+    # the ORIGINAL Tier-1 behaviour, verbatim.
     physics_planner.replan(spec, cache_dir, fps=fps, strictness=1.0,
                            base_prompt=base_prompt)
-    hint = _tier1_hint(best)
-    gen_calls = 0
+    hint = action.hint or _tier1_hint(best)
     for k in range(k_retries):
         cand = generator.run(
             spec, cache_dir, revision=r, seed=100 + k,  # offset seeds so files differ
@@ -452,7 +510,7 @@ def generate_shot(
                 cache_dir=cache_dir, r=r, k_retries=k_retries,
                 generator=generator, verifier=verifier, board=board,
                 physics_planner=physics_planner, asset_memory=asset_memory,
-                ref_images=ref_images, fps=fps,
+                ref_images=ref_images, fps=fps, retrieval=retrieval,
             )
             gen_calls += calls
 

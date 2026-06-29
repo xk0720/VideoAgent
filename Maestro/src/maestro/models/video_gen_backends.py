@@ -211,13 +211,76 @@ class WaveSpeedClient(BaseVideoGenClient):
             return self._run_task("wavespeed-ai/wan-2.1-14b-vace", payload, out_path)
         raise ValueError(f"edit_video backend must be 'runway' or 'vace', got '{backend}'")
 
+    def extend(
+        self,
+        prompt: str,
+        video_path: Path,
+        out_path: Path,
+        duration: int = 5,
+        seed: int = 0,
+    ) -> Path:
+        """Continue an existing clip beyond its last frame. Capability "extend"
+        (optional). This is the `video_extension` capability UniVA exposes and
+        Maestro lacked: there is no dedicated WaveSpeed "extend" endpoint, so we
+        synthesize it honestly the way UniVA's pipeline does for continuation —
+        decode the LAST frame of `video_path` and drive an i2v continuation from
+        it (the same base64-image payload shape `generate` uses for first_frame).
+
+        Honest limitation: this is an i2v re-roll seeded on the final frame, not
+        a latent-space continuation, so motion across the seam is only as smooth
+        as the i2v model makes it; the loud key-check + monotonic Verifier gate
+        still apply. The loud RuntimeError (no key) fires BEFORE any decode/POST.
+        """
+        import base64
+        import tempfile
+
+        headers = self._headers()  # loud RuntimeError without a key — before any work
+
+        # Lazy import so the mock pipeline never pulls the decode stack.
+        from ..physics.track_extractor_backends import _decode_frames
+
+        frames = _decode_frames(Path(video_path))
+        if frames is None or len(frames) < 1:
+            raise RuntimeError(
+                f"extend() could not decode a last frame from {video_path} "
+                "(not a real/decodable video) — extension needs real pixels."
+            )
+
+        # Save the last frame as a temp image, then i2v-continue from it.
+        last = frames[-1]
+        tmp = Path(tempfile.mkstemp(suffix=".png")[1])
+        try:
+            try:
+                import imageio.v3 as iio  # type: ignore
+
+                iio.imwrite(str(tmp), last)
+            except Exception:
+                import cv2  # type: ignore
+
+                cv2.imwrite(str(tmp), last[..., ::-1])  # RGB → BGR for cv2
+            payload: dict = {
+                "prompt": prompt,
+                "duration": max(1, int(round(duration))),
+                "seed": seed,
+                "image": "data:image/png;base64,"
+                + base64.b64encode(tmp.read_bytes()).decode(),
+            }
+            # Reuse the i2v model id (same swap generate() does for first_frame).
+            model_id = self.model_id.replace("-t2v-", "-i2v-")
+            return self._run_task(model_id, payload, out_path)
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
     def supported_conditions(self) -> set[str]:
         return {"first_frame"}
 
     def capabilities(self) -> set[str]:
         # Phase-2 routing seed: t2v/i2v via generate(), plus the optional
-        # frame_to_frame (flf2v) and edit_video (edit) methods.
-        return {"t2v", "i2v", "flf2v", "edit"}
+        # frame_to_frame (flf2v), edit_video (edit), and extend (extend) methods.
+        return {"t2v", "i2v", "flf2v", "edit", "extend"}
 
 
 # ─────────────────────────────────────────────────────────────
