@@ -73,12 +73,37 @@ def _cmd_serve(args) -> int:
 
 
 def _cmd_run_once(args) -> int:
-    """Headless single-shot generation. Useful for cron / batch."""
+    """Headless single-shot generation. Useful for cron / batch.
+
+    Output layout (everything for ONE run is discoverable in one place):
+        <base>/run_<timestamp>/        ← per-run artifacts
+            demo.mp4                    the finished video
+            demo.report.json           per-shot metrics / convergence
+            demo.trajectory.jsonl      every agent decision
+            cache/                      intermediate clips/keyframes
+        <base>/memory/                 ← STABLE, shared across runs
+            (skills / entities / lessons compound here, not per-run)
+    `--output` overrides the file path; `--out-dir` overrides <base>
+    (default: $MAESTRO_OUTPUT_ROOT or ./outputs).
+    """
+    import time
+
     from .config import load_config
     from .pipeline.run import run_maestro
 
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    base = Path(args.out_dir or os.getenv("MAESTRO_OUTPUT_ROOT", "outputs"))
+    if args.output:
+        out = Path(args.output)
+        run_dir = out.parent
+    else:
+        ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        run_dir = base / f"run_{ts}"
+        out = run_dir / "demo.mp4"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    # Memory is cross-run (skills/entities/lessons compound) → keep it OUT of the
+    # per-run dir, in a stable shared location under the same base.
+    memory_dir = base / "memory"
+
     result = run_maestro(
         user_prompt=args.prompt,
         output_path=out,
@@ -86,15 +111,19 @@ def _cmd_run_once(args) -> int:
         images=[Path(p) for p in args.image] or None,
         music=Path(args.music) if args.music else None,
         config=load_config(args.config),
-        cache_dir=out.parent / "cache",
+        cache_dir=run_dir / "cache",
         trajectory_path=out.with_suffix(".trajectory.jsonl"),
-        lesson_path=out.parent / "lessons.jsonl",
+        lesson_path=memory_dir / "lessons.jsonl",
+        memory_dir=memory_dir,
     )
     print(json.dumps({
+        "run_dir": str(run_dir.resolve()),
         "output": str(result["output_path"]),
         "report": str(result["report_path"]),
+        "memory_dir": str(memory_dir.resolve()),
         "n_shots": result["report"]["n_shots"],
     }, indent=2))
+    print(f"\n📂 本次运行的所有产物都在: {run_dir.resolve()}")
     return 0
 
 
@@ -116,7 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--source", nargs="*", default=[])
     run.add_argument("--image", nargs="*", default=[])
     run.add_argument("--music", default=None)
-    run.add_argument("--output", "-o", default="outputs/demo.mp4")
+    run.add_argument("--output", "-o", default=None,
+                     help="exact mp4 path; default = <out-dir>/run_<timestamp>/demo.mp4")
+    run.add_argument("--out-dir", default=None,
+                     help="base output dir (default $MAESTRO_OUTPUT_ROOT or ./outputs)")
     run.add_argument("--config", default=None)
     run.set_defaults(func=_cmd_run_once)
 

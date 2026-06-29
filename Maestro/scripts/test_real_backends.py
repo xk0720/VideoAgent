@@ -13,19 +13,25 @@
 我们相对 UniVA 那些扁平函数的“统一 tool call”：上层只调 .complete() /
 .assess_semantic() / .generate()，不关心背后是谁。
 
+所有产物（生成的 mp4 等）都存到带时间戳的目录：
+    <repo>/outputs/realtest_<时间戳>/        （可用 --out-dir 或 $MAESTRO_OUTPUT_ROOT 改）
+脚本结尾会打印这个目录，绝不再丢到 /tmp。
+
 用法：
     export OPENAI_API_KEY=...
     export WAVESPEED_API_KEY=...
     python scripts/test_real_backends.py
-    # 可选：--prompt "..."  --model gpt-4o  --keep（保留生成的 mp4）
+    # 可选：--prompt "..."  --model gpt-4o  --out-dir /data/maestro_out
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
-import tempfile
+import time
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # 让脚本无需 `pip install -e .` 也能 import maestro（直接指向 src/）。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -94,7 +100,8 @@ def main() -> int:
                     help="OpenAI 模型（同时用于 LLM 与 VLM）")
     ap.add_argument("--video-model", default="bytedance/seedance-v1-pro-t2v-480p",
                     help="WaveSpeed t2v 模型 id")
-    ap.add_argument("--keep", action="store_true", help="保留生成的 mp4")
+    ap.add_argument("--out-dir", default=None,
+                    help="输出根目录（默认 $MAESTRO_OUTPUT_ROOT 或 <repo>/outputs）")
     args = ap.parse_args()
 
     # 前置检查：缺 key 立即说清楚，而不是中途 401。
@@ -104,9 +111,14 @@ def main() -> int:
               f"   export OPENAI_API_KEY=...  WAVESPEED_API_KEY=...  后重试。")
         return 2
 
+    # 时间戳目录，所有产物都落在这里、明确可见（不再用 /tmp）。
+    base = Path(args.out_dir or os.getenv("MAESTRO_OUTPUT_ROOT") or REPO_ROOT / "outputs")
+    ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    run_dir = base / f"realtest_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out = run_dir / "shot.mp4"
     print(f"用户指令: {args.prompt}")
-    tmpdir = Path(tempfile.mkdtemp(prefix="maestro_realtest_"))
-    out = tmpdir / "shot.mp4"
+    print(f"输出目录: {run_dir.resolve()}")
     results = {"llm": False, "video": False, "vlm": False}
     try:
         shot_desc = stage_llm(args.model, args.prompt)
@@ -126,14 +138,9 @@ def main() -> int:
         _section("结果")
         for k in ("llm", "video", "vlm"):
             print(f"  {'✅' if results[k] else '❌'} {k}")
-        if args.keep and out.exists():
-            print(f"\n生成的视频保留在: {out}")
-        elif out.exists():
-            out.unlink()
-            try:
-                tmpdir.rmdir()
-            except OSError:
-                pass
+        print(f"\n📂 本次所有产物都在: {run_dir.resolve()}")
+        if out.exists():
+            print(f"   生成的视频: {out.resolve()}")
     return 0 if all(results.values()) else 1
 
 
