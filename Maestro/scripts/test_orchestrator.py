@@ -26,7 +26,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -35,7 +34,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from maestro.agents.defect_report import build_defect_report  # noqa: E402
 from maestro.agents.generator import GeneratorAgent          # noqa: E402
 from maestro.agents.orchestrator import OrchestratorAgent    # noqa: E402
 from maestro.agents.refiner import RefinerAgent              # noqa: E402
@@ -50,6 +48,7 @@ from maestro.models.image_edit import build_image_edit       # noqa: E402
 from maestro.memory.skill_library import SkillLibrary       # noqa: E402
 from maestro.physics.annotate import annotate_physics        # noqa: E402
 from maestro.physics.tracks import build_track_extractor     # noqa: E402
+from maestro.pipeline.generate_loop import generate_shot_orchestrated  # noqa: E402
 from maestro.tools.metric_tool import MetricTool             # noqa: E402
 from maestro.types import ShotSpec                           # noqa: E402
 
@@ -58,42 +57,9 @@ def _section(t: str) -> None:
     print(f"\n{'='*72}\n{t}\n{'='*72}")
 
 
-def _show_review(tag: str, clip) -> None:
-    print(f"  [{tag}] metric: " + "  ".join(
-        f"{k}={v}" for k, v in clip.metric_scores.items()))
-    fails = clip.checklist.failed_items
-    print(f"    语义失败项 {len(fails)}:")
-    for it in fails:
-        print(f"      - ({it.kind}) {it.question}"
-              + (f"  → fix: {it.fix_instruction}" if it.fix_instruction else ""))
-    print(f"    物理 verdict {len(clip.physics_verdicts)}:")
-    for v in clip.physics_verdicts:
-        print(f"      - [{v.mode.value}] 帧{v.frame_range} 严重度={v.severity:.2f}"
-              f" src={v.source} → {v.suggested_intervention}")
-
-
+# localized tools = those that trigger segment-level repair + downstream
+# propagation (rendered specially in the per-turn trace below).
 _LOCALIZED_TOOLS = {"regenerate_segment", "keyframe_edit_propagate", "frame_to_frame"}
-
-
-def _show_defects(spec, clip) -> None:
-    """Print the LOCALIZED DefectReport the brain reasons over this turn:
-    which entity, which frames, severity, fix modality — worst-first."""
-    rep = build_defect_report(clip, spec, fps=8)
-    print(f"  ⟶ DefectReport（定位缺陷，worst-first，n_frames={rep.n_frames}）:")
-    if not rep.defects:
-        print("      （无定位缺陷）")
-    for d in rep.sorted_by_severity():
-        print(f"      - [{d.kind}/{d.fix_modality}] entity={d.entity or '?'} "
-              f"帧{d.frame_range} 严重度={d.severity:.2f}  {d.note}")
-
-
-def _cascade_depth(out_dir, spec, turn, tool) -> int:
-    """Best-effort propagation cascade depth = number of *_cascade.mp4 segment
-    files propagate_repair wrote for this turn (0 if not a localized tool)."""
-    if tool not in _LOCALIZED_TOOLS:
-        return 0
-    prop_dir = Path(out_dir) / f"shot{spec.shot_idx:03d}_r{turn}_{tool}"
-    return len(list(prop_dir.glob("seg*_cascade.mp4"))) if prop_dir.exists() else 0
 
 
 def main() -> int:
@@ -158,103 +124,47 @@ def main() -> int:
           + ", ".join(a["name"] for a in orchestrator.available_actions(
               video_gen=video_gen, asset_memory=None)))
 
-    # ── 手写跑一遍 BRAIN 循环，逐回合打印（逻辑与 generate_shot_orchestrated 一致）──
-    _section("① 初评（WaveSpeed 真生成 best-of-N → tournament 选最优）")
-    candidates = []
-    for s in range(args.n_candidates):
-        c = generator.run(spec, run_dir, revision=0, seed=s, fps=8)
-        board.review(c, spec, None, fps=8)
-        candidates.append(c)
-        _show_review(f"候选{s}", c)
-    best = tournament.select(candidates, spec)
-    _show_review("初评 best", best)
+    # ── 调用【真实】的 generate_shot_orchestrated（不再手写平行循环，杜绝漂移）──
+    # brain 循环、retrieve-first 技能重放、片段传播、禁止过早 accept、收敛蒸馏，
+    # 全部发生在真实函数内部；demo 只负责【渲染它记录的逐回合轨迹 res.actions】。
+    _section("① 初评 + ② brain 修复循环（全部在真实 generate_shot_orchestrated 内运行）")
+    print("  （逐回合的 INFO 日志由 maestro.logger 实时打印；下面再结构化复盘）")
+    res = generate_shot_orchestrated(
+        spec, board=board, generator=generator, refiner=refiner, verifier=verifier,
+        cache_dir=run_dir, orchestrator=orchestrator, asset_memory=None,
+        image_edit=image_edit, tournament=tournament, skill_library=skill_library,
+        fps=8, n_candidates=args.n_candidates, max_turns=args.max_turns,
+    )
 
-    brain_history: list[tuple[dict, str, float]] = []
-    for turn in range(1, args.max_turns + 1):
-        if board.all_passed(best):
-            _section("收敛")
-            print(f"  评审全过，brain 无需再修复。回合用尽前收敛于第 {turn-1} 回合。")
-            break
-        _section(f"② 回合 {turn} — brain 读【定位评审】→ function-call 一个工具")
-        defect_report = build_defect_report(best, spec, fps=8)
-        _show_defects(spec, best)
-        menu = orchestrator.available_actions(video_gen=video_gen, asset_memory=None)
-        decision = orchestrator.decide(best, spec, menu, brain_history,
-                                       defect_report=defect_report)
-        via = decision.get("via", "?")
-        if via == "skill":
-            print(f"  ⟶ via=SKILL（重放【已学修复工作流】{decision.get('skill_id')} "
-                  f"步骤，而非重新推理）")
-        elif via == "llm":
-            print("  ⟶ via=LLM（无匹配技能 → 在【完整原子工具菜单】上重新推理）")
-        print("  brain 原始决策 (STRICT JSON):")
-        print("    " + json.dumps(decision, ensure_ascii=False))
-        if decision.get("tool") in _LOCALIZED_TOOLS:
-            print(f"  → brain 选了【定位工具】{decision['tool']}"
-                  "（修一个 segment → 前向级联重锚到收敛，而非整段重生成）")
-
-        if decision.get("tool") == "accept":
-            print("  → brain 选择 ACCEPT，停止修复。")
-            brain_history.append((decision, "stop", best.metric_scores.get("weighted_total", 0.0)))
-            break
-        if decision.get("tool") == "__invalid__":
-            print("  → brain 回复不可用（无法解析/越界工具）。真实环路会回落到确定性 "
-                  "RepairRouter；本 demo 直接重试下一回合。")
-            brain_history.append((decision, "invalid", best.metric_scores.get("weighted_total", 0.0)))
-            continue
-
-        print(f"  执行工具: {decision['tool']}  args={decision['args']}")
-        cand = orchestrator.execute(decision, best, spec, run_dir, turn, board, fps=8)
-        if cand is None:
-            print("  → 工具无法执行（能力/素材缺失）。回落重试。")
-            brain_history.append((decision, "noop", best.metric_scores.get("weighted_total", 0.0)))
-            continue
-
-        depth = _cascade_depth(run_dir, spec, turn, decision.get("tool"))
-        if decision.get("tool") in _LOCALIZED_TOOLS:
-            print(f"  → 传播级联深度 cascade_depth={depth}"
-                  "（修复后向下游重锚的 segment 数；相似度>=阈值即提前停止）")
-        _show_review(f"重评 turn{turn}", cand)
-        before = best.metric_scores.get("weighted_total", 0.0)
-        after = cand.metric_scores.get("weighted_total", 0.0)
-        accepted = verifier.is_better(cand, best)
-        print(f"  Verifier.is_better: 前={before:.4f} 后={after:.4f} → "
-              f"{'接受 ✅' if accepted else '拒绝 ❌'}（单调改进才接受）")
-        if accepted:
-            best = cand
-        brain_history.append((decision, "accepted" if accepted else "rejected", round(after, 4)))
+    # ── 复盘真实循环记录的逐回合轨迹（res.actions：真实发生了几回合就有几条）──
+    _section(f"③ brain 逐回合决策轨迹（真实 res.actions，共 {len(res.actions)} 回合）")
+    for turn, a in enumerate(res.actions, 1):
+        via = a.get("via", "?")
+        tag = ("SKILL（重放已学修复工作流）" if via == "skill"
+               else "LLM（在完整原子工具盘上重新推理）" if via == "llm"
+               else via)
+        print(f"\n  ── 回合 {turn} ──  via={tag}")
+        defects = a.get("defects", [])
+        print(f"    本回合定位缺陷（DefectReport，{len(defects)} 个）:")
+        for d in defects:
+            print(f"      - {d}")
+        print(f"    brain 决策: tool={a.get('tool')}  args={a.get('args', {})}")
+        if a.get("reason"):
+            print(f"      reason: {a['reason']}")
+        if a.get("tool") in _LOCALIZED_TOOLS:
+            print("      → 定位工具：修一个 segment 后向下游级联重锚（相似度收敛即停）")
+        print(f"    Verifier 裁决: outcome={a.get('outcome')}"
+              + (f"  new_total={a.get('new_total')}" if "new_total" in a else ""))
 
     _section("结果")
+    best = res.clip
+    print(f"  收敛 converged = {res.converged}")
     print(f"  最终 weighted_total = {best.metric_scores.get('weighted_total', 0.0):.4f}")
     print(f"  最终评审: 失败项 {len(best.checklist.failed_items)} 个, "
           f"物理 verdict {len(best.physics_verdicts)} 个")
-    print(f"  brain 决策轨迹（{len(brain_history)} 回合）:")
-    for i, (d, outcome, total) in enumerate(brain_history, 1):
-        print(f"    回合{i}: via={d.get('via', '?')} tool={d.get('tool')} "
-              f"→ {outcome} (total={total})")
-
-    # —— DISTILL-ON-SUCCESS：把本回合接受的修复序列蒸馏成【可检索、可重放的修复技能】 ——
-    accepted_steps = [
-        {"tool": d.get("tool"),
-         "args_template": dict(d.get("args", {}) or {}),
-         "modality": "motion"}
-        for (d, outcome, _t) in brain_history
-        if outcome in ("accepted",) and d.get("tool") not in ("accept", "__invalid__")
-    ]
-    initial_report = build_defect_report(candidates[0], spec, fps=8)
-    worst0 = initial_report.worst()
-    sig = sorted({worst0.fix_modality, (worst0.note or "").split(" ")[0].strip()} - {""}) \
-        if worst0 is not None else []
-    distilled_repair_id = ""
-    if board.all_passed(best) and accepted_steps and sig:
-        sk = skill_library.distill_repair(
-            name="demo_repair", defect_signature=sig, repair_workflow=accepted_steps,
-            evidence={"weighted_total": best.metric_scores.get("weighted_total", 0.0),
-                      "escalations": 0, "converged": True, "defect_reduced": True},
-        )
-        distilled_repair_id = sk.skill_id if sk is not None else ""
-    print(f"  蒸馏出的修复技能 id（distilled_repair_skill_id）= "
-          f"{distilled_repair_id or '（无：未收敛/无非平凡缺陷）'}")
+    # 蒸馏在真实循环内部完成（distill_repair）——这里只读取它的产物 id
+    print(f"  蒸馏出的修复技能 id（res.distilled_repair_skill_id）= "
+          f"{res.distilled_repair_skill_id or '（无：未收敛/无非平凡缺陷）'}")
     print(f"\n📂 本次所有产物在: {run_dir.resolve()}")
     return 0
 
