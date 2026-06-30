@@ -62,6 +62,14 @@ def _stable_skill_id(name: str, signature: list[PhysFailureMode]) -> str:
     return f"S{h[:12]}"
 
 
+def _stable_repair_skill_id(name: str, defect_signature: list[str]) -> str:
+    """Repair skills are keyed on (name, defect_signature) — the textual fix
+    modalities/modes the workflow resolves — not on a PhysFailureMode set."""
+    sig = ",".join(sorted(str(m) for m in defect_signature))
+    h = hashlib.md5(f"repair::{name}|{sig}".encode("utf-8")).hexdigest()
+    return f"R{h[:12]}"
+
+
 class SkillLibrary:
     """Persistent skill store with typed retrieval + lifecycle (SkillOps-style).
 
@@ -139,7 +147,16 @@ class SkillLibrary:
                 # records lack these keys and load as plain t2v skills.
                 gen_capability=d.get("gen_capability", "t2v"),
                 gen_params=dict(d.get("gen_params") or {}),
+                # v0.4 repair skills — back-compat: pre-v0.4 records lack these
+                # and default to [] (never matched by retrieve_repair). The
+                # embedding for a repair skill keys on name+defect_signature.
+                repair_workflow=list(d.get("repair_workflow") or []),
+                defect_signature=list(d.get("defect_signature") or []),
             )
+            if skill.skill_class == "repair":
+                skill.embedding = embed_text(
+                    skill.name + " " + " ".join(skill.defect_signature)
+                )
             self.skills.append(skill)
             self._by_id[skill.skill_id] = skill
 
@@ -188,6 +205,8 @@ class SkillLibrary:
                     "admission": s.admission,
                     "gen_capability": s.gen_capability,
                     "gen_params": s.gen_params,
+                    "repair_workflow": s.repair_workflow,
+                    "defect_signature": s.defect_signature,
                 }, ensure_ascii=False) + "\n")
         os.replace(tmp, self.path)
 
@@ -334,6 +353,134 @@ class SkillLibrary:
         self._by_id[skill_id] = skill
         self._persist()
         return skill
+
+    # ── repair-skill distillation (v0.4 — the headline connection) ────────
+    def distill_repair(
+        self,
+        name: str,
+        defect_signature: list[str],
+        repair_workflow: list[dict],
+        evidence: Optional[dict] = None,
+        thresholds: Optional[dict[str, float]] = None,
+    ) -> Optional[Skill]:
+        """Freeze a brain-orchestrated repair WORKFLOW into a skill_class="repair"
+        Skill, so a learned tool sequence can be RETRIEVED and replayed instead
+        of re-reasoned from scratch (Voyager-style reuse, but VERIFIED — UniVA's
+        repair workflows are hand-coded; ours are distilled from a convergence).
+
+        `defect_signature` is the list of defect fix_modalities/modes this
+        workflow resolved (the retrieval key). `repair_workflow` is the verified
+        step sequence (each {tool, args_template, modality}). Idempotent on
+        (name, defect_signature) — re-distillation bumps `version` and rolls the
+        new weighted_total into perf_score.
+
+        When an admission reviewer is configured the entry passes the SAME
+        evidence gate creation skills do (converged + weighted_total ≥ floor +
+        Tier-0-only escalations). `evidence` should also confirm the workflow
+        actually REDUCED the defect (defect_reduced); a workflow that didn't is
+        not admissible. Rejected entries are NOT persisted and None is returned.
+        """
+        if not repair_workflow or not defect_signature:
+            # Nothing verified to record — an empty workflow / signature is not
+            # a learnable skill (and would be unretrievable anyway).
+            return None
+        sig = sorted(str(m) for m in defect_signature)
+        thresholds = dict(thresholds or {})
+        evidence = dict(evidence or {})
+        skill_id = _stable_repair_skill_id(name, sig)
+        triggers = sig[:]   # the modalities double as retrieval trigger cues
+        embedding = embed_text(name + " " + " ".join(sig))
+
+        if skill_id in self._by_id:
+            existing = self._by_id[skill_id]
+            if self.admission is not None:
+                candidate = dataclasses.replace(
+                    existing,
+                    repair_workflow=list(repair_workflow),
+                    defect_signature=list(sig),
+                    acceptance_thresholds=dict(thresholds),
+                    version=existing.version + 1,
+                )
+                verdict = self.admission.review(candidate, evidence)
+                if not verdict.passed:
+                    log.info("repair-skill admission REJECTED re-distill of %s "
+                             "(v%d): %s", skill_id, existing.version + 1,
+                             "; ".join(verdict.reasons))
+                    return None
+                existing.admission = self.admission.as_record(verdict)
+            existing.repair_workflow = list(repair_workflow)
+            existing.defect_signature = list(sig)
+            existing.acceptance_thresholds = dict(thresholds)
+            existing.version += 1
+            wt = float(evidence.get("weighted_total", existing.perf_score))
+            existing.perf_score = (
+                self.perf_ema_alpha * wt
+                + (1 - self.perf_ema_alpha) * existing.perf_score
+            )
+            existing.uses += 1
+            existing.last_used_ts = time.time()
+            self._persist()
+            return existing
+
+        skill = Skill(
+            skill_id=skill_id,
+            name=name,
+            physical_signature=[],          # repair skills retrieve by defect_signature
+            triggers=triggers,
+            acceptance_thresholds=dict(thresholds),
+            embedding=embedding,
+            perf_score=float(evidence.get("weighted_total", 0.0)),
+            uses=1,
+            last_used_ts=time.time(),
+            skill_class="repair",
+            repair_workflow=list(repair_workflow),
+            defect_signature=list(sig),
+        )
+        if self.admission is not None:
+            verdict = self.admission.review(skill, evidence)
+            if not verdict.passed:
+                log.info("repair-skill admission REJECTED %s ('%s'): %s",
+                         skill_id, name, "; ".join(verdict.reasons))
+                return None
+            skill.admission = self.admission.as_record(verdict)
+        self.skills.append(skill)
+        self._by_id[skill_id] = skill
+        self._persist()
+        return skill
+
+    def retrieve_repair(self, defect_report) -> Optional[Skill]:
+        """Match a learned repair workflow to the report's WORST defect's
+        fix modalities (separate path from creation retrieve(), which feeds the
+        CapabilityRouter). Score = signature_overlap, tie-broken by perf_score
+        then recency. Returns None when nothing overlaps — the brain then falls
+        to full-palette LLM reasoning.
+
+        `defect_report` is a DefectReport (agents/defect_report.py): we take the
+        fix_modalities/modes of its worst defect(s) as the query signature."""
+        if not self.skills or defect_report is None:
+            return None
+        worst = defect_report.worst() if hasattr(defect_report, "worst") else None
+        if worst is None:
+            return None
+        # The query signature: the worst defect's modality plus the mode tag in
+        # its note (e.g. "gravity_inertia (law_verifier)") so a workflow keyed on
+        # either a modality or a physics mode can match.
+        query: set[str] = {worst.fix_modality}
+        note = getattr(worst, "note", "") or ""
+        query.add(note.split(" ")[0].strip())
+        query.discard("")
+        best: Optional[Skill] = None
+        best_key: tuple = ()
+        for s in self.skills:
+            if s.skill_class != "repair" or not s.defect_signature:
+                continue
+            overlap = len(set(s.defect_signature) & query)
+            if overlap <= 0:
+                continue
+            key = (overlap, s.perf_score, s.last_used_ts)
+            if best is None or key > best_key:
+                best, best_key = s, key
+        return best
 
     # ── registered (non-distilled) skill classes ─────────────────────────
     def _register_builtin(self, skill_class: str, name: str, tag: str,

@@ -82,6 +82,7 @@ class SelfImproveResult:
     escalations: int = 0                                  # # times we went past Tier 0
     initial_severity_max: float = 0.0                     # snapshot for C7 distill
     distilled_skill_id: str = ""                          # C7 — empty if no distill
+    distilled_repair_skill_id: str = ""                   # v0.4 — repair workflow distilled
     distilled_lesson_id: str = ""                         # C4 — what was saved
     escape_hatched: bool = False                          # any Tier-3 skip this episode
     skipped_modes: list[str] = field(default_factory=list)  # typed physics skips
@@ -732,6 +733,7 @@ def generate_shot_orchestrated(
     image_edit: Optional[BaseImageEditClient] = None,
     tournament: Optional[Tournament] = None,
     retrieval: Optional[RetrievalTool] = None,
+    skill_library: Optional[SkillLibrary] = None,
     fps: int = 8,
     n_candidates: int = 2,
     max_turns: int = 4,
@@ -773,6 +775,25 @@ def generate_shot_orchestrated(
     actions: list[dict] = []
     # (decision, outcome, new_total) tuples the brain sees as it iterates.
     brain_history: list[tuple[dict, str, float]] = []
+
+    # v0.4 repair-skill distillation bookkeeping:
+    #   • initial_defect_signature — the fix modalities/modes of the FIRST
+    #     turn's worst defects (the signature the distilled workflow resolves);
+    #   • accepted_workflow — the verifier-ACCEPTED tool calls that drove
+    #     convergence (each {tool, args_template, modality}), distilled as the
+    #     learned repair workflow;
+    #   • replayed_skill_ids — repair skills retrieved+replayed this episode, so
+    #     their usage is ledgered (mark_used) even on rejection.
+    initial_defect_signature: list[str] = []
+    accepted_workflow: list[dict] = []
+    replayed_skill_ids: set[str] = set()
+    initial_defect_report = build_defect_report(best, spec, fps)
+    _worst0 = initial_defect_report.worst()
+    if _worst0 is not None:
+        sig = {_worst0.fix_modality}
+        sig.add((_worst0.note or "").split(" ")[0].strip())
+        sig.discard("")
+        initial_defect_signature = sorted(sig)
 
     converged = board.all_passed(best)
     turns_used = 0
@@ -843,17 +864,31 @@ def generate_shot_orchestrated(
             gen_calls += 1
             via = "repair_router_fallback"
         else:
+            via = decision.get("via", "brain")
+            # Ledger replayed repair-skill usage (uses++) the moment we act on a
+            # retrieved workflow step, regardless of the gate outcome.
+            if via == "skill" and skill_library is not None and decision.get("skill_id"):
+                skill_library.mark_used(decision["skill_id"])
+                replayed_skill_ids.add(decision["skill_id"])
             cand = orchestrator.execute(
                 decision, best, spec, cache_dir, turn, board,
                 asset_memory=asset_memory, fps=fps,
             )
             gen_calls += 1
-            via = "brain"
 
         if cand is not None and verifier.is_better(cand, best):
             best = cand
             new_total = best.metric_scores.get("weighted_total", 0.0)
             outcome = "accepted"
+            # Record the verifier-ACCEPTED tool call as a workflow step (the
+            # sequence that actually drove convergence → distilled below).
+            if not invalid:
+                accepted_workflow.append({
+                    "tool": decision.get("tool"),
+                    "args_template": dict(decision.get("args", {}) or {}),
+                    "modality": (defect_report.worst().fix_modality
+                                 if defect_report.worst() is not None else ""),
+                })
         else:
             new_total = (cand.metric_scores.get("weighted_total", 0.0)
                          if cand is not None else history_scores[-1])
@@ -885,10 +920,47 @@ def generate_shot_orchestrated(
             lesson = lesson_library.add(trigger=spec.prompt, fix=fix, failure_mode=mode)
             distilled_lesson_id = lesson.lesson_id
 
+    # v0.4 — DISTILL the brain's accepted repair WORKFLOW into a learned skill
+    # (the headline connection). A repair skill is born when the loop CONVERGED
+    # on a NON-TRIVIAL initial defect via at least one verifier-accepted tool
+    # call: the accepted sequence becomes a retrievable, replayable workflow
+    # keyed on the initial defect's modalities. UniVA's repair workflows are
+    # hand-coded; ours are distilled from a verified convergence + admitted by
+    # "skill CI" (the same evidence gate creation skills pass).
+    distilled_repair_skill_id = ""
+    if (
+        skill_library is not None
+        and converged
+        and accepted_workflow
+        and initial_defect_signature
+        and initial_severity_max >= skill_library.distill_severity_threshold
+    ):
+        final_modes = {v.mode for v in best.physics_verdicts}
+        evidence = {
+            "weighted_total": best.metric_scores.get("weighted_total", 0.0),
+            "escalations": 0,   # the brain loop never escalates a HSI tier
+            "resolved_modes": sorted(m.value for m in initial_modes - final_modes),
+            "converged": converged,
+            "defect_reduced": True,   # accepted_workflow non-empty ⇒ gate accepted a repair
+        }
+        repair_name = _stable_skill_name(spec) + "__repair"
+        skill = skill_library.distill_repair(
+            name=repair_name,
+            defect_signature=initial_defect_signature,
+            repair_workflow=accepted_workflow,
+            evidence=evidence,
+            thresholds={
+                "weighted_total":
+                    max(0.0, best.metric_scores.get("weighted_total", 0.0) * 0.9),
+            },
+        )
+        distilled_repair_skill_id = skill.skill_id if skill is not None else ""
+
     return SelfImproveResult(
         clip=best, score_history=history_scores, revisions_used=turns_used,
         converged=converged, gen_calls=gen_calls,
         initial_severity_max=initial_severity_max,
+        distilled_repair_skill_id=distilled_repair_skill_id,
         distilled_lesson_id=distilled_lesson_id,
         actions=actions,
     )

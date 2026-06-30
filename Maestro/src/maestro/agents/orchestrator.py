@@ -64,11 +64,16 @@ class OrchestratorAgent:
         refiner=None,
         image_edit: Optional[BaseImageEditClient] = None,
         retrieval=None,
+        skill_library=None,
         max_turns: int = 4,
         logger=None,
     ):
         self.llm = llm or MockLLMClient()
         self.generator = generator
+        # Optional SkillLibrary: when set, decide() RETRIEVES a learned repair
+        # workflow (retrieve_repair) and replays it BEFORE re-reasoning with the
+        # LLM — UniVA's repair workflows are hand-coded; ours are learned skills.
+        self.skill_library = skill_library
         # The brain's video tools come from the generator's backend by default
         # (single source of truth for capabilities), but allow an override.
         self.video_gen = video_gen or (generator.video_gen if generator else None)
@@ -173,6 +178,23 @@ class OrchestratorAgent:
                     "backend": "str — 'runway' (free-form) or 'vace' (structure-guided)",
                 },
             })
+        if "depth" in caps and self.video_gen is not None:
+            menu.append({
+                "name": "depth_edit",
+                "description": "Depth-guided foreground/background edit (VACE). "
+                "Suitable for a BACKGROUND or FOREGROUND defect — the wrong scene "
+                "behind/in front of the subject — while preserving the rest of the "
+                "motion and layout.",
+                "args": {"prompt": "str — what the corrected fg/bg should look like"},
+            })
+        if "style" in caps and self.video_gen is not None:
+            menu.append({
+                "name": "style_edit",
+                "description": "Artistic style transfer (runway). Suitable for a "
+                "STYLE defect — wrong palette / texture / look — keeping the same "
+                "content and motion, re-rendered in the requested style.",
+                "args": {"prompt": "str — the target artistic style to render in"},
+            })
         if "extend" in caps and self.video_gen is not None:
             menu.append({
                 "name": "extend_clip",
@@ -224,9 +246,14 @@ class OrchestratorAgent:
             "You are a video-repair orchestrator. The clip was reviewed; here are "
             "its LOCALIZED DEFECTS (which entity, which frame range, severity, fix "
             "modality), the raw review, and METRIC scores. Here are the TOOLS you "
-            "may call. Target the WORST localized defect. PREFER a LOCALIZED tool "
-            "(regenerate_segment / keyframe_edit_propagate / frame_to_frame on the "
-            "defect's frame range) over a whole-clip reroll (regenerate). A "
+            "may call — the FULL atom palette. Target the WORST localized defect "
+            "and PICK THE TOOL BY ITS MODALITY: a BACKGROUND/FOREGROUND defect → "
+            "depth_edit; a STYLE (palette/texture/look) defect → style_edit; a "
+            "MOTION/physics defect → edit_clip or a localized re-gen; an "
+            "incomplete/object_permanence defect → extend_clip; a missing real "
+            "element you have footage for → retrieve_replace. PREFER a LOCALIZED "
+            "tool (regenerate_segment / keyframe_edit_propagate / frame_to_frame on "
+            "the defect's frame range) over a whole-clip reroll (regenerate). A "
             "monotonic verifier REJECTS non-improvements; if a tool was rejected "
             "(see history), pick a DIFFERENT tool or a DIFFERENT frame range — do "
             "NOT accept while defects remain. Respond STRICT JSON only: "
@@ -251,12 +278,71 @@ class OrchestratorAgent:
             + '\n\nRespond with STRICT JSON only: {"tool": ..., "args": {...}, "reason": ...}'
         )
 
-    def decide(self, clip, spec, menu, history, defect_report=None) -> dict:
-        """Ask the brain for ONE tool call; validate against the menu.
+    # ─────────────────────────────────────────────────────────────────────
+    # RETRIEVE-FIRST skill execution path (the headline connection).
+    # Before re-reasoning, replay a LEARNED, VERIFIED repair workflow if one
+    # matches this defect — Voyager-style reuse, but the workflow was distilled
+    # from a real convergence and admitted by "skill CI" (UniVA's repair
+    # workflows are hand-coded; ours are retrieved learned skills).
+    # ─────────────────────────────────────────────────────────────────────
+    def _skill_step(self, defect_report, menu, history) -> Optional[dict]:
+        """If a repair skill matches the defect, return its NEXT untried
+        workflow step as a decision dict tagged via="skill"; else None.
 
-        Returns the validated decision dict {tool, args, reason}, or the INVALID
-        sentinel (unparseable reply / tool not in the menu) so the caller falls
-        back to the deterministic RepairRouter."""
+        "Next untried" = the first step whose tool is in the current menu and
+        that has NOT already been replayed-and-rejected this episode (we scan
+        `history` for prior via="skill" decisions of THIS skill and advance past
+        them). When every step is exhausted/rejected we return None so the loop
+        falls to full-palette LLM reasoning."""
+        if self.skill_library is None or defect_report is None:
+            return None
+        skill = self.skill_library.retrieve_repair(defect_report)
+        if skill is None or not skill.repair_workflow:
+            return None
+        valid_names = {m["name"] for m in menu}
+        # How many of THIS skill's steps have already been replayed this episode.
+        tried = sum(
+            1 for (d, _outcome, _total) in history
+            if isinstance(d, dict) and d.get("via") == "skill"
+            and d.get("skill_id") == skill.skill_id
+        )
+        for idx in range(tried, len(skill.repair_workflow)):
+            step = skill.repair_workflow[idx] or {}
+            tool = str(step.get("tool", ""))
+            if tool not in valid_names:
+                continue   # menu no longer offers this tool (cap/asset gone)
+            args = dict(step.get("args_template") or {})
+            return {
+                "tool": tool,
+                "args": args,
+                "reason": f"replaying learned repair workflow '{skill.name}' "
+                          f"step {idx + 1}/{len(skill.repair_workflow)}",
+                "via": "skill",
+                "skill_id": skill.skill_id,
+                "step_idx": idx,
+            }
+        return None
+
+    def decide(self, clip, spec, menu, history, defect_report=None) -> dict:
+        """Decide ONE tool call. RETRIEVE-FIRST: if a learned repair workflow
+        matches this defect, replay its next untried step (via="skill") instead
+        of re-reasoning. Only when no skill matches OR its steps are exhausted do
+        we call the LLM for fresh full-palette reasoning (via="llm").
+
+        Returns the validated decision dict {tool, args, reason, via, ...}, or the
+        INVALID sentinel (unparseable reply / tool not in the menu) so the caller
+        falls back to the deterministic RepairRouter."""
+        skill_decision = self._skill_step(defect_report, menu, history)
+        if skill_decision is not None:
+            log.info("orchestrator REPLAY learned repair skill=%s step=%d tool=%s",
+                     skill_decision["skill_id"], skill_decision["step_idx"],
+                     skill_decision["tool"])
+            self._log("decide", {"shot_idx": spec.shot_idx},
+                      {"valid": True, "via": "skill",
+                       "skill_id": skill_decision["skill_id"],
+                       "tool": skill_decision["tool"]})
+            return skill_decision
+
         prompt = self._build_prompt(clip, spec, menu, history, defect_report)
         reply = self.llm.complete(prompt)
         data = _extract_json(reply)
@@ -273,12 +359,13 @@ class OrchestratorAgent:
             "tool": str(data["tool"]),
             "args": data.get("args", {}) if isinstance(data.get("args"), dict) else {},
             "reason": str(data.get("reason", "")),
+            "via": "llm",   # fresh full-palette reasoning (no skill matched)
         }
         log.info("orchestrator brain decided tool=%s reason=%s",
                  decision["tool"], decision["reason"])
         self._log("decide", {"shot_idx": spec.shot_idx},
-                  {"valid": True, "tool": decision["tool"], "args": decision["args"],
-                   "reason": decision["reason"]})
+                  {"valid": True, "via": "llm", "tool": decision["tool"],
+                   "args": decision["args"], "reason": decision["reason"]})
         return decision
 
     # ─────────────────────────────────────────────────────────────────────
@@ -402,6 +489,26 @@ class OrchestratorAgent:
             video_path = self.video_gen.edit_video(
                 prompt=prompt, video_path=best.video_path, out_path=out,
                 backend=backend,
+            )
+            cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
+
+        elif tool == "depth_edit":
+            if self.video_gen is None or "depth" not in self.video_gen.capabilities():
+                return None
+            out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_brain_depth.mp4"
+            prompt = str(args.get("prompt", "")) or "correct the foreground/background"
+            video_path = self.video_gen.depth_modify(
+                prompt=prompt, video_path=best.video_path, out_path=out,
+            )
+            cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
+
+        elif tool == "style_edit":
+            if self.video_gen is None or "style" not in self.video_gen.capabilities():
+                return None
+            out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_brain_style.mp4"
+            prompt = str(args.get("prompt", "")) or "match the intended visual style"
+            video_path = self.video_gen.style_transfer(
+                prompt=prompt, video_path=best.video_path, out_path=out,
             )
             cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
 

@@ -117,6 +117,57 @@
   WaveSpeed 方法（stub，无网络）/在 mock 后端回落、以及"蒸馏能力跨持久化往返并在第二次
   计划被复用"。端到端 mock 流水线全部路由到 t2v/i2v，既有行为不变。
 
+### Repair workflows are distilled skills（修复工作流是学到的技能，不是手写的）
+
+v0.4 把**修复编排**接进技能基质——这是本版的标志性连接（headline）。此前技能只记录
+**创作配方**（`gen_capability`）；brain 编排器（`agents/orchestrator.py`）每次都从零
+**重新推理**修复工具，与技能库脱节——正是 UniVA 的临时 Act-LLM 形态。现在修复
+**工作流**被蒸馏成可检索、可重放、经验证的技能。
+
+- **第四类技能 `skill_class="repair"`**（`types.py`）：`repair_workflow`（已验证的工具
+  序列，每步 `{tool, args_template, modality}`）+ `defect_signature`（该工作流解决的缺陷
+  fix_modality / 物理 mode 集合，即检索键）。v0.3/v0.4 旧记录缺这两个字段→加载默认 `[]`，
+  永不成为修复候选（向后兼容）。
+- **DISTILL-ON-SUCCESS**（`generate_shot_orchestrated`）：当编排环路在**非平凡初始缺陷**上
+  **收敛**且至少有一个 verifier-接受的工具调用时，把那段**被接受的动作序列**作为
+  `repair_workflow`、初始缺陷的 modalities 作为 `defect_signature`，连同真实 episode 证据
+  （converged + weighted_total + defect_reduced）喂给 `distill_repair`——走与创作技能**相同**
+  的"skill CI"准入证据闸门（`skill_admission.py`）。结果 id 通过
+  `SelfImproveResult.distilled_repair_skill_id` 暴露。
+- **RETRIEVE-FIRST**（`orchestrator.decide`）：调 LLM 之前，若
+  `skill_library.retrieve_repair(defect_report)` 命中（按最严重缺陷的 modality 签名重叠匹配，
+  perf_score / recency 决胜），就**重放该技能的下一个未试工作流步骤**（标记 `via="skill"`），
+  而不是重新推理；只有无技能命中**或**技能步骤用尽/被拒时才回落到 LLM 的**完整工具菜单**
+  推理（`via="llm"`）。重放的技能在执行时被 `mark_used` 计入使用账本。这是 Voyager 式复用，
+  但**经验证**（蒸馏自真实收敛 + 准入）。
+- **检索隔离 + 生命周期**：修复技能从创作技能的 `retrieve()`（喂 CapabilityRouter）中**排除**
+  ——独立检索路径；与 review/memory 技能一样**豁免** perf-floor 驱逐（其 perf 不由该信号度量）。
+- **对照 UniVA**：UniVA 的 workflow（`storyvideo_gen` 等）是**手写**的固定步骤序列；Maestro 的
+  修复 workflow 是从一次经验证的收敛**学到**的——"UniVA's workflows are hand-coded; ours are learned"。
+  Training-free：蒸馏=对成功轨迹的结构化总结，零梯度。
+- **mock 已验证**：`test_skill_library.py`（distill_repair 持久化+加载 workflow/signature、
+  retrieve_repair 按签名重叠命中/未命中返回 None、修复技能排除于创作 retrieve、perf-floor 豁免、
+  幂等版本号），`test_orchestrator.py`（命中时 decide 返回 via="skill" 步骤且不调 LLM、无技能/
+  步骤用尽时回落 via="llm"、收敛时 distill_repair 收到被接受序列、重放技能被 mark_used）。全部
+  CPU、stub、无网络/torch。
+
+### 更宽的原子工具菜单（beyond i2v/flf2v，real where possible）
+
+镜像 UniVA `plan.txt` 的原子工具集，brain 菜单（`available_actions`）按缺陷 modality 扩展，
+后端是真实的（`models/video_gen_backends.py`，全部 loud-without-key）：
+
+| brain 工具 | 缺陷 modality | WaveSpeed 端点 |
+|---|---|---|
+| `depth_edit` | 背景/前景缺陷 | `depth_modify` → `edit_video(backend='vace', task='depth')` |
+| `style_edit` | 风格（色彩/纹理/外观）缺陷 | `style_transfer` → `edit_video(backend='runway')`（风格化 prompt） |
+| `edit_clip` | 物理/运动缺陷 | `edit_video(backend='runway'\|'vace')` |
+| `extend_clip` | 不完整 / object_permanence | `extend`（i2v 续帧） |
+| `repaint` | 掩码对象替换 | **诚实骨架**：`raise RuntimeError`——需分割后端（Sa2VA/SAM, GPU），未接线，不伪造 |
+
+- `capabilities()` 增加 `"depth"`/`"style"`；`depth_modify`/`style_transfer` 是 `edit_video`
+  任务的薄映射（real，端口自 UniVA `vace_api`/`runway_video_editing`）；`repaint` 需分割
+  （GPU），故为**诚实骨架**而非假实现。
+
 ---
 
 ## I2 · 参考自由的"像素物理验证器"（physics-from-pixels）

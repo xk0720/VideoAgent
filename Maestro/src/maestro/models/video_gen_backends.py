@@ -211,6 +211,43 @@ class WaveSpeedClient(BaseVideoGenClient):
             return self._run_task("wavespeed-ai/wan-2.1-14b-vace", payload, out_path)
         raise ValueError(f"edit_video backend must be 'runway' or 'vace', got '{backend}'")
 
+    # ── widened atom palette (v0.4) — thin REAL maps to edit_video tasks,
+    #    ported from UniVA's vace_api / runway_video_editing. Each is loud
+    #    without a key (edit_video → _video_data_uri → _run_task → _headers). ──
+    def depth_modify(self, prompt: str, video_path: Path, out_path: Path,
+                     seed: int = 0) -> Path:
+        """Depth-guided foreground/background edit (UniVA `depth_modify`):
+        edit_video(backend='vace', task='depth'). Suitable for a defect that
+        is about the BACKGROUND or FOREGROUND being wrong while the rest of the
+        content should be preserved — the structure-guided VACE route keeps
+        motion/layout and re-renders by depth."""
+        return self.edit_video(prompt=prompt, video_path=video_path,
+                               out_path=out_path, backend="vace", task="depth",
+                               seed=seed)
+
+    def style_transfer(self, prompt: str, video_path: Path, out_path: Path,
+                       seed: int = 0) -> Path:
+        """Artistic style transfer (UniVA `style_transfer`): a style-framed
+        prompt through the free-form runway route (edit_video backend='runway').
+        Suitable for a STYLE defect — wrong palette/texture/look while content
+        and motion stay. We frame the prompt so the edit reads as a style render."""
+        styled = (f"Restyle this video in the following artistic style, keeping "
+                  f"the same content and motion: {prompt}")
+        return self.edit_video(prompt=styled, video_path=video_path,
+                               out_path=out_path, backend="runway", seed=seed)
+
+    def repaint(self, prompt: str, video_path: Path, label: str,
+                out_path: Path, seed: int = 0) -> Path:
+        """Mask-based object replace/inpaint (UniVA `repainting`). This needs a
+        video segmentation backend (Sa2VA/SAM, GPU) to produce the per-object
+        mask from `label` BEFORE any edit — that is not wired here, so this is an
+        HONEST skeleton that raises rather than faking a mask. Use edit_clip /
+        depth_modify for non-mask edits in the meantime."""
+        raise RuntimeError(
+            "repaint needs a segmentation backend (Sa2VA/SAM) — not wired; "
+            "use edit_clip/depth_modify"
+        )
+
     def extend(
         self,
         prompt: str,
@@ -280,7 +317,10 @@ class WaveSpeedClient(BaseVideoGenClient):
     def capabilities(self) -> set[str]:
         # Phase-2 routing seed: t2v/i2v via generate(), plus the optional
         # frame_to_frame (flf2v), edit_video (edit), and extend (extend) methods.
-        return {"t2v", "i2v", "flf2v", "edit", "extend"}
+        # v0.4 widened atom palette: "depth" (depth_modify → vace/depth) and
+        # "style" (style_transfer → runway) are real edit_video routes exposed as
+        # brain actions; both sit under the same edit-capable backend.
+        return {"t2v", "i2v", "flf2v", "edit", "extend", "depth", "style"}
 
 
 # ─────────────────────────────────────────────────────────────

@@ -289,11 +289,13 @@ def run_maestro(
     # generate_shot_orchestrated). Default keeps every existing test unchanged.
     repair_mode = str(gen_cfg.get("repair_mode", "hsi")).lower()
     orchestrator = None
+    orchestrator_skills = mlm.skills if mlm.enabled["skills"] else None
     if repair_mode == "orchestrator":
         from ..agents.orchestrator import OrchestratorAgent
         orchestrator = OrchestratorAgent(
             llm=comp.llm, generator=comp.generator, refiner=comp.refiner,
             image_edit=comp.image_edit, retrieval=retrieval,
+            skill_library=orchestrator_skills,   # RETRIEVE-FIRST learned repair workflows
             max_turns=int(gen_cfg.get("max_revisions", 5)), logger=trajectory,
         )
     for spec in specs:
@@ -316,7 +318,7 @@ def run_maestro(
                 cache_dir, orchestrator,
                 asset_memory=asset_memory, lesson_library=mlm.lessons,
                 image_edit=comp.image_edit, tournament=comp.tournament,
-                retrieval=retrieval, fps=fps,
+                retrieval=retrieval, skill_library=orchestrator_skills, fps=fps,
                 n_candidates=int(gen_cfg.get("n_candidates", 2)),
                 max_turns=int(gen_cfg.get("max_revisions", 5)),
             )

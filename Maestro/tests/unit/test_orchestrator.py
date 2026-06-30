@@ -140,6 +140,135 @@ def test_available_actions_extend_and_retrieve_gate():
     assert "retrieve_replace" not in names_no
 
 
+# ── v0.4 widened palette: depth_edit / style_edit appear with caps ───────────
+class _FullPaletteVideoGen(MockVideoGenClient):
+    def __init__(self):
+        super().__init__(name="mock-full-gen")
+        self.depth_calls: list[dict] = []
+        self.style_calls: list[dict] = []
+
+    def capabilities(self):
+        return {"t2v", "i2v", "edit", "extend", "depth", "style"}
+
+    def depth_modify(self, prompt, video_path, out_path, seed=0):
+        self.depth_calls.append({"prompt": prompt})
+        out = Path(out_path); out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(f"MOCK VIDEO\nprompt={prompt}\n", encoding="utf-8")
+        return out
+
+    def style_transfer(self, prompt, video_path, out_path, seed=0):
+        self.style_calls.append({"prompt": prompt})
+        out = Path(out_path); out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(f"MOCK VIDEO\nprompt={prompt}\n", encoding="utf-8")
+        return out
+
+
+def test_available_actions_full_palette_includes_depth_and_style():
+    gen = GeneratorAgent(video_gen=_FullPaletteVideoGen())
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
+    names = {a["name"] for a in orch.available_actions()}
+    assert {"depth_edit", "style_edit", "edit_clip", "extend_clip"} <= names
+    # The menu text describes each by defect modality (mirrors UniVA plan.txt).
+    menu = orch.available_actions()
+    depth = next(a for a in menu if a["name"] == "depth_edit")
+    assert "background" in depth["description"].lower()
+
+
+def test_execute_depth_and_style_edit_route_to_backend(tmp_path):
+    gen = GeneratorAgent(video_gen=_FullPaletteVideoGen())
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
+    best = gen.run(_spec(), tmp_path, revision=0, seed=0)
+    d_cand = orch.execute({"tool": "depth_edit", "args": {"prompt": "beach bg"}},
+                          best, _spec(), tmp_path, r=1, board=_board())
+    s_cand = orch.execute({"tool": "style_edit", "args": {"prompt": "van gogh"}},
+                          best, _spec(), tmp_path, r=2, board=_board())
+    assert d_cand is not None and gen.video_gen.depth_calls
+    assert s_cand is not None and gen.video_gen.style_calls
+
+
+# ── v0.4 RETRIEVE-FIRST decide(): replay a learned repair workflow ───────────
+class _StubSkillLibrary:
+    """Stub: retrieve_repair returns a canned repair skill (or None). mark_used
+    records the call so the loop's ledgering can be asserted."""
+
+    def __init__(self, skill):
+        self._skill = skill
+        self.used: list[str] = []
+
+    def retrieve_repair(self, defect_report):
+        return self._skill
+
+    def mark_used(self, skill_id):
+        self.used.append(skill_id)
+
+
+class _StubSkill:
+    def __init__(self, skill_id, workflow):
+        self.skill_id = skill_id
+        self.name = "fix_gravity__repair"
+        self.repair_workflow = workflow
+
+
+def test_decide_replays_skill_step_when_repair_skill_hits():
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    skill = _StubSkill("R123", [
+        {"tool": "regenerate", "args_template": {"hint": "one continuous arc"},
+         "modality": "motion"},
+    ])
+    # The LLM would say "accept" — but a skill matches, so it is NEVER called.
+    brain = StubBrainLLM('{"tool":"accept","args":{}}')
+    orch = OrchestratorAgent(llm=brain, generator=gen,
+                             skill_library=_StubSkillLibrary(skill))
+    spec = _spec()
+    v = PhysicsVerdict(PhysFailureMode.GRAVITY_INERTIA, (2, 5), 0.8,
+                       "fix arc", "law_verifier", "ball")
+    clip = _clip(verdicts=[v])
+    report = build_defect_report(clip, spec)
+    menu = orch.available_actions()
+    d = orch.decide(clip, spec, menu, history=[], defect_report=report)
+    assert d["via"] == "skill"
+    assert d["tool"] == "regenerate"
+    assert d["skill_id"] == "R123"
+    assert d["args"]["hint"] == "one continuous arc"
+    assert brain.prompts == []   # LLM never consulted — workflow replayed
+
+
+def test_decide_falls_to_llm_when_no_skill_matches():
+    gen = GeneratorAgent(video_gen=_EditCapVideoGen())
+    reply = json.dumps({"tool": "edit_clip",
+                        "args": {"prompt": "fix", "backend": "runway"},
+                        "reason": "motion"})
+    brain = StubBrainLLM(reply)
+    # No skill library → must reason fresh.
+    orch = OrchestratorAgent(llm=brain, generator=gen)
+    report = build_defect_report(_clip(), _spec())
+    d = orch.decide(_clip(), _spec(), orch.available_actions(), history=[],
+                    defect_report=report)
+    assert d["via"] == "llm"
+    assert d["tool"] == "edit_clip"
+    assert brain.prompts, "LLM consulted for fresh reasoning"
+
+
+def test_decide_falls_to_llm_when_skill_steps_exhausted():
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    skill = _StubSkill("R9", [
+        {"tool": "regenerate", "args_template": {"hint": "h"}, "modality": "motion"},
+    ])
+    reply = json.dumps({"tool": "regenerate", "args": {"hint": "fresh"},
+                        "reason": "llm"})
+    brain = StubBrainLLM(reply)
+    orch = OrchestratorAgent(llm=brain, generator=gen,
+                             skill_library=_StubSkillLibrary(skill))
+    spec = _spec()
+    report = build_defect_report(_clip(), spec)
+    # History already shows the skill's single step replayed → exhausted.
+    history = [({"via": "skill", "skill_id": "R9", "tool": "regenerate"},
+                "rejected", 0.5)]
+    d = orch.decide(_clip(), spec, orch.available_actions(), history, report)
+    assert d["via"] == "llm"
+    assert brain.prompts
+
+
 # ── decide(): valid JSON → validated; garbage → INVALID sentinel ─────────────
 def test_decide_returns_validated_decision_for_known_tool():
     gen = GeneratorAgent(video_gen=_EditCapVideoGen())
@@ -258,6 +387,96 @@ def test_orchestrated_loop_converges_and_records_trace(tmp_path):
     assert all(h[i] <= h[i + 1] + 1e-9 for i in range(len(h) - 1)), h
     assert res.clip.accepted
     assert res.converged  # content-derived convergence
+
+
+class _DistillRecorderLibrary:
+    """Records distill_repair calls and replays a canned skill via
+    retrieve_repair. distill_severity_threshold mirrors the real default so the
+    loop's gate fires on a non-trivial initial defect."""
+
+    distill_severity_threshold = 0.5
+
+    def __init__(self, retrieve_skill=None):
+        self.distilled: list[dict] = []
+        self.used: list[str] = []
+        self._retrieve = retrieve_skill
+
+    def retrieve_repair(self, defect_report):
+        return self._retrieve
+
+    def mark_used(self, skill_id):
+        self.used.append(skill_id)
+
+    def distill_repair(self, name, defect_signature, repair_workflow,
+                       evidence=None, thresholds=None):
+        self.distilled.append({
+            "name": name, "defect_signature": defect_signature,
+            "repair_workflow": repair_workflow, "evidence": evidence,
+        })
+
+        class _S:
+            skill_id = "Rdistilled"
+        return _S()
+
+
+def test_orchestrated_loop_distills_repair_workflow_on_convergence(tmp_path):
+    """On a stub-driven convergence with a non-trivial initial defect, the loop
+    must call distill_repair with the verifier-ACCEPTED action sequence as the
+    repair_workflow and the initial defect modalities as the signature."""
+    reply1 = json.dumps({"tool": "regenerate",
+                         "args": {"hint": "one continuous passive ballistic arc "
+                                  "under gravity | resolve the wall collision with "
+                                  "momentum conserved"},
+                         "reason": "worst verdict is gravity_inertia"})
+    reply2 = json.dumps({"tool": "regenerate",
+                         "args": {"hint": "one continuous passive ballistic arc "
+                                  "under gravity | resolve the wall collision with "
+                                  "momentum conserved | strengthen depiction of "
+                                  "'bounces'"},
+                         "reason": "remaining semantic miss"})
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    lib = _DistillRecorderLibrary()
+    orch = OrchestratorAgent(llm=StubBrainLLM([reply1, reply2]), generator=gen,
+                             refiner=RefinerAgent(), skill_library=lib)
+    spec = _spec()
+    res = generate_shot_orchestrated(
+        spec, _board(), gen, RefinerAgent(), VerifierAgent(), tmp_path, orch,
+        skill_library=lib, n_candidates=2, max_turns=5,
+    )
+    assert res.converged
+    # A repair workflow was distilled from the accepted sequence.
+    assert lib.distilled, "distill_repair must be called on convergence"
+    rec = lib.distilled[-1]
+    assert rec["repair_workflow"], "workflow must carry the accepted steps"
+    assert all(step["tool"] == "regenerate" for step in rec["repair_workflow"])
+    assert rec["defect_signature"], "signature must carry initial defect modalities"
+    assert res.distilled_repair_skill_id == "Rdistilled"
+
+
+def test_orchestrated_loop_marks_replayed_repair_skill_used(tmp_path):
+    """When a repair skill is retrieved and replayed, the loop ledgers its
+    usage via mark_used."""
+    skill = _StubSkill("Rreplay", [
+        {"tool": "regenerate",
+         "args_template": {"hint": "one continuous passive ballistic arc under "
+                           "gravity | resolve the wall collision with momentum "
+                           "conserved | strengthen depiction of 'bounces'"},
+         "modality": "motion"},
+    ])
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    lib = _DistillRecorderLibrary(retrieve_skill=skill)
+    # The LLM is never needed — the skill is replayed.
+    orch = OrchestratorAgent(llm=StubBrainLLM('{"tool":"accept","args":{}}'),
+                             generator=gen, refiner=RefinerAgent(),
+                             skill_library=lib)
+    spec = _spec()
+    res = generate_shot_orchestrated(
+        spec, _board(), gen, RefinerAgent(), VerifierAgent(), tmp_path, orch,
+        skill_library=lib, n_candidates=2, max_turns=5,
+    )
+    assert "Rreplay" in lib.used, "replayed repair skill must be marked used"
+    # The replayed step shows up tagged via="skill" in the action trace.
+    assert any(a.get("via") == "skill" for a in res.actions), res.actions
 
 
 def test_orchestrated_loop_garbage_falls_back_to_router(tmp_path):

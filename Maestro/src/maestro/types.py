@@ -371,6 +371,16 @@ class Skill:
     # routing via its Act-LLM every run, ephemerally; Maestro persists it.
     gen_capability: str = "t2v"
     gen_params: dict = field(default_factory=dict)
+    # v0.4 repair skills (skill_class="repair"): a VERIFIED tool sequence the
+    # brain's orchestrated loop drove to convergence, distilled so it can be
+    # RETRIEVED and replayed instead of re-reasoned every run (UniVA's repair
+    # workflows are hand-coded; ours are learned). Each step is
+    # {tool, args_template, modality}; `defect_signature` is the set of defect
+    # fix_modalities/modes this workflow resolves (the retrieval key). Back-compat:
+    # v0.3/v0.4 creation/review/memory records lack these and load as [] (loader
+    # defaults), so they never become repair candidates.
+    repair_workflow: list[dict] = field(default_factory=list)
+    defect_signature: list[str] = field(default_factory=list)
 
 
 @dataclass

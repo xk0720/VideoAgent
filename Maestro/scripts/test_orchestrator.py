@@ -47,6 +47,7 @@ from maestro.critics.semantic import SemanticCritic          # noqa: E402
 from maestro.critics.tournament import Tournament            # noqa: E402
 from maestro.models import build_llm, build_mllm, build_video_gen  # noqa: E402
 from maestro.models.image_edit import build_image_edit       # noqa: E402
+from maestro.memory.skill_library import SkillLibrary       # noqa: E402
 from maestro.physics.annotate import annotate_physics        # noqa: E402
 from maestro.physics.tracks import build_track_extractor     # noqa: E402
 from maestro.tools.metric_tool import MetricTool             # noqa: E402
@@ -140,9 +141,12 @@ def main() -> int:
     generator = GeneratorAgent(video_gen=video_gen)
     refiner = RefinerAgent()
     verifier = VerifierAgent()
+    # RETRIEVE-FIRST repair skills (the headline): a learned, verified repair
+    # workflow is replayed (via=skill) before the LLM re-reasons (via=llm).
+    skill_library = SkillLibrary(run_dir / "skills.jsonl")
     orchestrator = OrchestratorAgent(
         llm=llm, generator=generator, refiner=refiner, image_edit=image_edit,
-        max_turns=args.max_turns,
+        skill_library=skill_library, max_turns=args.max_turns,
     )
 
     tournament = Tournament(judge=mllm)
@@ -177,6 +181,12 @@ def main() -> int:
         menu = orchestrator.available_actions(video_gen=video_gen, asset_memory=None)
         decision = orchestrator.decide(best, spec, menu, brain_history,
                                        defect_report=defect_report)
+        via = decision.get("via", "?")
+        if via == "skill":
+            print(f"  ⟶ via=SKILL（重放【已学修复工作流】{decision.get('skill_id')} "
+                  f"步骤，而非重新推理）")
+        elif via == "llm":
+            print("  ⟶ via=LLM（无匹配技能 → 在【完整原子工具菜单】上重新推理）")
         print("  brain 原始决策 (STRICT JSON):")
         print("    " + json.dumps(decision, ensure_ascii=False))
         if decision.get("tool") in _LOCALIZED_TOOLS:
@@ -220,7 +230,31 @@ def main() -> int:
           f"物理 verdict {len(best.physics_verdicts)} 个")
     print(f"  brain 决策轨迹（{len(brain_history)} 回合）:")
     for i, (d, outcome, total) in enumerate(brain_history, 1):
-        print(f"    回合{i}: tool={d.get('tool')} → {outcome} (total={total})")
+        print(f"    回合{i}: via={d.get('via', '?')} tool={d.get('tool')} "
+              f"→ {outcome} (total={total})")
+
+    # —— DISTILL-ON-SUCCESS：把本回合接受的修复序列蒸馏成【可检索、可重放的修复技能】 ——
+    accepted_steps = [
+        {"tool": d.get("tool"),
+         "args_template": dict(d.get("args", {}) or {}),
+         "modality": "motion"}
+        for (d, outcome, _t) in brain_history
+        if outcome in ("accepted",) and d.get("tool") not in ("accept", "__invalid__")
+    ]
+    initial_report = build_defect_report(candidates[0], spec, fps=8)
+    worst0 = initial_report.worst()
+    sig = sorted({worst0.fix_modality, (worst0.note or "").split(" ")[0].strip()} - {""}) \
+        if worst0 is not None else []
+    distilled_repair_id = ""
+    if board.all_passed(best) and accepted_steps and sig:
+        sk = skill_library.distill_repair(
+            name="demo_repair", defect_signature=sig, repair_workflow=accepted_steps,
+            evidence={"weighted_total": best.metric_scores.get("weighted_total", 0.0),
+                      "escalations": 0, "converged": True, "defect_reduced": True},
+        )
+        distilled_repair_id = sk.skill_id if sk is not None else ""
+    print(f"  蒸馏出的修复技能 id（distilled_repair_skill_id）= "
+          f"{distilled_repair_id or '（无：未收敛/无非平凡缺陷）'}")
     print(f"\n📂 本次所有产物在: {run_dir.resolve()}")
     return 0
 

@@ -138,3 +138,130 @@ def test_skill_age_and_evict_drops_underperformers(tmp_path: Path):
     evicted = lib.age_and_evict()
     assert evicted == 1
     assert len(lib) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v0.4 — Repair skills: distilled, retrieved, replayed WORKFLOWS (the headline)
+# ─────────────────────────────────────────────────────────────────────────────
+class _FakeDefect:
+    def __init__(self, fix_modality="motion", note="gravity_inertia (law_verifier)"):
+        self.fix_modality = fix_modality
+        self.note = note
+
+
+class _FakeReport:
+    def __init__(self, defect):
+        self._d = defect
+
+    def worst(self):
+        return self._d
+
+
+_WORKFLOW = [
+    {"tool": "edit_clip", "args_template": {"prompt": "straighten the arc",
+                                            "backend": "runway"}, "modality": "motion"},
+    {"tool": "regenerate", "args_template": {"hint": "one continuous arc"},
+     "modality": "motion"},
+]
+_EVIDENCE = {"weighted_total": 0.9, "escalations": 0, "converged": True,
+             "defect_reduced": True}
+
+
+def test_distill_repair_persists_and_loads_workflow_and_signature(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    skill = lib.distill_repair(
+        name="fix_gravity__repair",
+        defect_signature=["motion", "gravity_inertia"],
+        repair_workflow=_WORKFLOW,
+        evidence=_EVIDENCE,
+        thresholds={"weighted_total": 0.8},
+    )
+    assert skill is not None
+    assert skill.skill_class == "repair"
+    assert skill.skill_id.startswith("R")
+    assert skill.repair_workflow == _WORKFLOW
+    assert set(skill.defect_signature) == {"motion", "gravity_inertia"}
+
+    # Reload from disk — workflow + signature recovered, embedding rebuilt.
+    lib2 = SkillLibrary(tmp_path / "skills.jsonl")
+    assert len(lib2) == 1
+    s2 = lib2.skills[0]
+    assert s2.skill_class == "repair"
+    assert s2.repair_workflow == _WORKFLOW
+    assert set(s2.defect_signature) == {"motion", "gravity_inertia"}
+    assert s2.embedding is not None
+
+
+def test_distill_repair_idempotent_bumps_version(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    s1 = lib.distill_repair("r", ["motion"], _WORKFLOW, _EVIDENCE)
+    s2 = lib.distill_repair("r", ["motion"], _WORKFLOW,
+                            {**_EVIDENCE, "weighted_total": 0.95})
+    assert s2.skill_id == s1.skill_id
+    assert s2.version == 2
+    assert len(lib) == 1
+
+
+def test_distill_repair_rejects_empty_inputs(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    assert lib.distill_repair("r", [], _WORKFLOW, _EVIDENCE) is None
+    assert lib.distill_repair("r", ["motion"], [], _EVIDENCE) is None
+    assert len(lib) == 0
+
+
+def test_retrieve_repair_matches_by_signature_overlap(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    lib.distill_repair("fix_gravity", ["motion", "gravity_inertia"],
+                       _WORKFLOW, _EVIDENCE)
+    # Worst defect is a motion / gravity_inertia defect → overlaps the signature.
+    report = _FakeReport(_FakeDefect("motion", "gravity_inertia (law_verifier)"))
+    hit = lib.retrieve_repair(report)
+    assert hit is not None
+    assert hit.name == "fix_gravity"
+
+
+def test_retrieve_repair_returns_none_on_miss(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    lib.distill_repair("fix_gravity", ["motion", "gravity_inertia"],
+                       _WORKFLOW, _EVIDENCE)
+    # A style defect overlaps nothing in the signature.
+    report = _FakeReport(_FakeDefect("content", "wrong palette"))
+    assert lib.retrieve_repair(report) is None
+    # Empty library → None.
+    assert SkillLibrary(tmp_path / "empty.jsonl").retrieve_repair(report) is None
+
+
+def test_retrieve_repair_tie_break_by_perf_then_recency(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    low = lib.distill_repair("low", ["motion"], _WORKFLOW,
+                             {**_EVIDENCE, "weighted_total": 0.6})
+    high = lib.distill_repair("high", ["motion"], _WORKFLOW,
+                              {**_EVIDENCE, "weighted_total": 0.95})
+    report = _FakeReport(_FakeDefect("motion", "x"))
+    hit = lib.retrieve_repair(report)
+    assert hit.skill_id == high.skill_id   # higher perf wins the overlap tie
+
+
+def test_repair_skills_excluded_from_creation_retrieve(tmp_path: Path):
+    spec, sketch = _sketch(tmp_path)
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    # A creation skill with a gravity signature + a repair skill.
+    lib.distill("projectile", spec.prompt, sketch, CinematographyTags(), {},
+                weighted_total=0.9)
+    lib.distill_repair("fix_gravity", ["motion", "gravity_inertia"],
+                       _WORKFLOW, _EVIDENCE)
+    hits = lib.retrieve("a ball is thrown",
+                        [PhysFailureMode.GRAVITY_INERTIA], top_k=5)
+    # creation retrieve() must never surface a repair skill.
+    assert all(h.skill_class == "creation" for h in hits)
+    assert any(h.name == "projectile" for h in hits)
+
+
+def test_repair_skill_exempt_from_perf_floor_eviction(tmp_path: Path):
+    lib = SkillLibrary(tmp_path / "skills.jsonl")
+    skill = lib.distill_repair("r", ["motion"], _WORKFLOW, _EVIDENCE)
+    skill.uses = 10
+    skill.perf_score = 0.1   # below floor — would evict a creation skill
+    lib._persist()
+    assert lib.age_and_evict() == 0   # repair skills are perf-floor exempt
+    assert len(lib) == 1

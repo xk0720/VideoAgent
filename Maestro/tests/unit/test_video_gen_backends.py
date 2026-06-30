@@ -54,12 +54,16 @@ def test_capabilities_per_client():
     # Default base = t2v/i2v only.
     assert MockVideoGenClient().capabilities() == {"t2v", "i2v"}
     assert build_video_gen({"name": "omniweaving"}).capabilities() == {"t2v", "i2v"}
-    # WaveSpeed declares the extras backed by optional methods.
+    # WaveSpeed declares the extras backed by optional methods, plus the v0.4
+    # widened atom palette (depth_modify → vace/depth, style_transfer → runway).
     wave = build_video_gen({"name": "wavespeed"})
-    assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit", "extend"}
+    assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit", "extend",
+                                   "depth", "style"}
     # Extra capabilities are optional methods, NOT abstractmethods.
     assert hasattr(wave, "frame_to_frame") and hasattr(wave, "edit_video")
     assert hasattr(wave, "extend")
+    assert hasattr(wave, "depth_modify") and hasattr(wave, "style_transfer")
+    assert hasattr(wave, "repaint")
     assert not hasattr(MockVideoGenClient(), "frame_to_frame")
 
 
@@ -86,6 +90,74 @@ def test_wavespeed_edit_video_unknown_backend(tmp_path: Path, monkeypatch):
     vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00")
     with pytest.raises(ValueError):
         wave.edit_video("x", vid, tmp_path / "o.mp4", backend="nope")
+
+
+# ── widened atom palette (v0.4): depth_modify / style_transfer / repaint ──
+def test_wavespeed_depth_modify_loud_without_api_key(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+    wave = build_video_gen({"name": "wavespeed"})
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    with pytest.raises(RuntimeError, match="API key"):
+        wave.depth_modify("replace the background with a beach", vid,
+                          tmp_path / "o.mp4")
+
+
+def test_wavespeed_style_transfer_loud_without_api_key(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+    wave = build_video_gen({"name": "wavespeed"})
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    with pytest.raises(RuntimeError, match="API key"):
+        wave.style_transfer("van gogh oil painting", vid, tmp_path / "o.mp4")
+
+
+def test_wavespeed_depth_modify_routes_to_vace_depth(tmp_path: Path, monkeypatch):
+    """depth_modify maps to edit_video(backend='vace', task='depth') — verified
+    via a stubbed _run_task, NO network."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    captured = {}
+
+    def _fake_run_task(model_id, payload, out_path):
+        captured["model_id"] = model_id
+        captured["payload"] = payload
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    wave.depth_modify("replace bg", vid, tmp_path / "o.mp4")
+    assert "vace" in captured["model_id"]
+    assert captured["payload"]["task"] == "depth"
+
+
+def test_wavespeed_style_transfer_routes_to_runway(tmp_path: Path, monkeypatch):
+    """style_transfer maps to the runway route with a style-framed prompt."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    captured = {}
+
+    def _fake_run_task(model_id, payload, out_path):
+        captured["model_id"] = model_id
+        captured["payload"] = payload
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    wave.style_transfer("van gogh", vid, tmp_path / "o.mp4")
+    assert "runway" in captured["model_id"]
+    assert "van gogh" in captured["payload"]["prompt"]
+    assert "style" in captured["payload"]["prompt"].lower()
+
+
+def test_wavespeed_repaint_honest_skeleton_error(tmp_path: Path, monkeypatch):
+    """repaint needs a segmentation backend (Sa2VA/SAM, GPU) — it must raise an
+    HONEST error rather than fake a mask. Loud even with a key set."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    with pytest.raises(RuntimeError, match="segmentation backend"):
+        wave.repaint("a red car", vid, "car", tmp_path / "o.mp4")
 
 
 # ── video EXTEND (the capability UniVA has as video_extension; we add it) ──
