@@ -108,7 +108,12 @@ def test_available_actions_base_menu_no_caps_no_assets():
     gen = GeneratorAgent(video_gen=MockVideoGenClient())  # caps = {t2v,i2v}
     orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
     names = {a["name"] for a in orch.available_actions(asset_memory=None)}
-    assert names == {"regenerate", "keyframe_edit", "accept"}
+    # Whole-clip + the LOCALIZED-propagated tools (offered for any backend with
+    # a video capability); no edit/extend/retrieve/flf2v without those caps/assets.
+    assert names == {"regenerate", "keyframe_edit", "accept",
+                     "regenerate_segment", "keyframe_edit_propagate"}
+    assert "frame_to_frame" not in names   # flf2v not in {t2v,i2v}
+    assert "edit_clip" not in names and "extend_clip" not in names
 
 
 def test_available_actions_edit_appears_with_edit_cap():
@@ -272,3 +277,104 @@ def test_orchestrated_loop_garbage_falls_back_to_router(tmp_path):
     assert res.clip.accepted
     h = res.score_history
     assert all(h[i] <= h[i + 1] + 1e-9 for i in range(len(h) - 1)), h
+
+
+# ── v0.4 LOCALIZED / PROPAGATED repair: defect report + routing + no-accept ──
+from maestro.agents.defect_report import build_defect_report  # noqa: E402
+
+
+def test_decide_prompt_includes_localized_defects():
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    orch = OrchestratorAgent(llm=StubBrainLLM('{"tool":"accept","args":{}}'),
+                             generator=gen)
+    spec = _spec()
+    v = PhysicsVerdict(PhysFailureMode.GRAVITY_INERTIA, (2, 5), 0.8,
+                       "fix arc", "law_verifier", "ball")
+    clip = _clip(verdicts=[v])
+    report = build_defect_report(clip, spec)
+    menu = orch.available_actions()
+    orch.decide(clip, spec, menu, history=[], defect_report=report)
+    prompt = orch.llm.prompts[-1]
+    assert "localized_defects" in prompt
+    assert '"fix_modality": "motion"' in prompt
+    assert '"entity": "ball"' in prompt
+
+
+def test_execute_regenerate_segment_routes_to_propagate_repair(tmp_path, monkeypatch):
+    # Brain picks a LOCALIZED tool → execute builds a timeline and calls
+    # propagate_repair (monkeypatched to a fake spliced clip).
+    import maestro.pipeline.timeline as tl
+
+    captured = {}
+
+    class _FakeTimeline:
+        degraded = False
+        segments = [object()]
+
+    def fake_from_clip(clip, cache_dir, n_segments=3):
+        return _FakeTimeline()
+
+    def fake_propagate(timeline, defect, **kw):
+        captured["defect"] = defect
+        captured["hint"] = kw.get("hint")
+        out = Path(kw["cache_dir"]) / "spliced.mp4"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("MOCK VIDEO\nprompt=spliced\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(tl.ClipTimeline, "from_clip", classmethod(
+        lambda cls, clip, cache_dir, n_segments=3: fake_from_clip(clip, cache_dir)))
+    monkeypatch.setattr(tl, "propagate_repair", fake_propagate)
+
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
+    best = gen.run(_spec(), tmp_path, revision=0, seed=0)
+    decision = {"tool": "regenerate_segment",
+                "args": {"frame_start": 2, "frame_end": 5, "hint": "fix the arc"},
+                "reason": "localized motion defect"}
+    cand = orch.execute(decision, best, _spec(), tmp_path, r=1, board=_board())
+    assert cand is not None
+    assert "spliced" in str(cand.video_path)
+    assert captured["defect"].frame_range == (2, 5)
+    assert captured["hint"] == "fix the arc"
+    assert cand.metric_scores  # board.review ran
+
+
+def test_execute_regenerate_segment_degrades_to_none_on_mock_clip(tmp_path):
+    # Real path: mock clip has no decodable frames → timeline degraded →
+    # propagate_repair returns None → execute returns None (no-op).
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
+    best = gen.run(_spec(), tmp_path, revision=0, seed=0)
+    decision = {"tool": "regenerate_segment",
+                "args": {"frame_start": 0, "frame_end": 3, "hint": "x"},
+                "reason": "r"}
+    assert orch.execute(decision, best, _spec(), tmp_path, r=1,
+                        board=_board()) is None
+
+
+def test_loop_does_not_accept_while_defects_remain(tmp_path):
+    # Brain says "accept" on turn 1 while the review still has unresolved defects.
+    # The loop must OVERRIDE the accept with a deterministic fallback action
+    # instead of stopping, and only really stop once converged / out of turns.
+    accept = json.dumps({"tool": "accept", "args": {},
+                        "reason": "looks fine to me"})
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    orch = OrchestratorAgent(llm=StubBrainLLM([accept]), generator=gen,
+                             refiner=RefinerAgent())
+    spec = _spec()
+    res = generate_shot_orchestrated(
+        spec, _board(), gen, RefinerAgent(), VerifierAgent(), tmp_path, orch,
+        n_candidates=2, max_turns=4,
+    )
+    # An accept-while-defects turn was overridden (not a clean stop) at least once.
+    assert any(a["tool"] == "accept_overridden" for a in res.actions), res.actions
+    # The override took a real fallback repair, not a stop.
+    assert any(a.get("via") == "repair_router_fallback"
+               for a in res.actions if a["tool"] == "accept_overridden")
+    # Terminates within budget, ships a clip, monotonic history.
+    assert res.clip.accepted
+    h = res.score_history
+    assert all(h[i] <= h[i + 1] + 1e-9 for i in range(len(h) - 1)), h
+    # Every recorded turn carries its localized defect snapshot.
+    assert all("defects" in a for a in res.actions)

@@ -91,6 +91,7 @@ class PhysicsConsistencyCritic(BaseCritic):
                 frame_range=frame_range,
                 severity=report.violation,
                 source="law_verifier",
+                entity=report.entity,   # localize the blame to this entity
                 suggested_intervention=(
                     f"observed motion of '{report.entity}' has no physical "
                     f"explanation ({why}); regenerate this span with the "

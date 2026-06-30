@@ -343,6 +343,58 @@ source shots 时出现。`decide` 用与真实 VLM critic 同一个 `_extract_js
 我们不主张它一定优于阶梯，只主张它把修复从**固定 if-else** 变成**接地的工具调用**，
 且单调契约与降级安全网保证它不会比阶梯更差地卡死或回退。
 
+#### 局部化、可传播的修复（Localized, propagated repair，v0.4 新增）
+
+旧 brain 的实际失败：读一坨扁平 verdict，只会挑一个**整段** `edit_clip`，两回合就
+"放弃"（accept）。三个 training-free 算法把修复变成**定位的、被评审引导的、跨 segment
+传播的**：
+
+- **① 评审→定位（`agents/defect_report.py`）**：`build_defect_report` 把评审重新表达成
+  worst-first 的 `Defect` 列表——每条携带**哪个实体 / 哪段帧 / 严重度 / 修复模态**。
+  物理 verdict → physics Defect（实体与帧段来自 verdict；`PhysicsVerdict.entity` 新增字段，
+  由 `PhysicsConsistencyCritic` 从 law report 的 `report.entity` 穿进来）；模态由 mode 派生
+  （gravity_inertia/collision/conservation/penetration→`motion`，object_permanence→`presence`）；
+  失败的 **semantic** 清单项 → content Defect（语义 critic 不定位帧，故覆盖整段；实体尽力
+  从问题文本解析）。`to_brain_json()` 把它压成紧凑 dict 列表进 brain prompt——brain 读的是
+  **定位指南**，不是一坨 blob。
+- **② Segment 时间线 + 传播算法（`pipeline/timeline.py`）**：`ClipTimeline.from_clip` 用
+  共享的 `_decode_frames` 把 clip 切成 N 段等长 span，把每段首/尾边界帧落 PNG（懒加载
+  imageio/PIL）；mock 文本 clip 无可解帧 → 单退化段 + `degraded=True`，调用方优雅 no-op。
+  `propagate_repair` 是核心算法（**i2v 边界锚定的前向级联 + 相似度提前停止**）：
+
+  ```
+  propagate_repair(timeline, defect):
+    if timeline.degraded: return None                       # 退化 → 调用方回落整段动作
+    S_i = 找与 defect.frame_range 重叠的 segment
+    若 modality=="motion" 且有 flf2v 且 S_i 双边界齐 → flf2v(S_{i-1}.last, S_{i+1}.first)  # 双锚最强连续
+    否则 → i2v generate(first_frame = S_i.first[或 image_edit 修正帧], extra_prompt=hint)
+    for j in i+1 .. i+max_cascade:                          # 前向级联（连续性锁）
+        S_j = i2v generate(first_frame = S_{j-1}.NEW_last)  # 在上游"新尾帧"上重锚
+        if frame_similarity(S_j.NEW_last, S_j.OLD_last) >= 阈值: break   # 连续性已收敛 → 停
+    splice([未动的头 | 修复+级联段 | 未动的尾]) via ffmpeg   # ffmpeg 缺 → None（退化）
+  ```
+
+  直觉：编辑 S_i 改了它的尾帧，于是 S_{i+1} 不再无缝衔接，故在 S_i 的**新尾帧**上重锚
+  S_{i+1}，再到 S_{i+2}……但编辑影响会衰减——一旦某段重生成的边界又**匹配回它原来的边界**
+  （相似度≥阈值），其下游本就仍然有效，立即停止级联。`frame_similarity` = 1−clamp(归一化
+  像素 MSE)；缺库/缺图返回 0.0（当"不同"处理→**绝不**在缺证据时提前停，保守）。
+- **③ brain：定位、多工具、不放弃（`agents/orchestrator.py` + `generate_shot_orchestrated`）**：
+  菜单新增三个经 `propagate_repair` 路由的工具——`regenerate_segment`（帧段）/
+  `keyframe_edit_propagate`（帧→修正帧→传播）/ `frame_to_frame`（flf2v 双锚，仅当后端有
+  flf2v）。`decide` 的 prompt 现含 `DefectReport.to_brain_json()` 并指令"**针对最严重的定位
+  缺陷，优先用定位工具而非整段重 roll；被拒过就换工具或换帧段，缺陷未清时不许 accept**"。
+  环路每回合**重建** DefectReport（重新定位）传给 `decide`；**禁止过早 accept**：若 brain 在
+  缺陷未清且回合未尽时返回 accept，记录后改取**一个**确定性 RepairRouter 动作（不停），
+  只有 `all_passed` 或回合用尽才真正停。`execute` 把三个新工具路由到 `propagate_repair`
+  （从 `best` 建 timeline、匹配 brain 帧段对应的 Defect、包装结果）；degraded/None →
+  no-op 返回 None（调用方回落整段动作）。
+
+**诚实降级**：mock 管线里 clip 是文本占位符无可解帧 → timeline `degraded` → 三个定位工具
+全部 no-op → brain 自然回落到既有整段动作（`regenerate` 等），既有 mock 行为不变。
+真实视频缺 ffmpeg 时 splice 返回 None 同样退化。我们不主张定位修复在所有情形都更优——
+只主张它把修复从"一个整段重 roll、两回合放弃"变成"局部修一段→向下游传播到连续性收敛、
+缺陷不清不收手"，且单调闸门与逐处退化保证它不会更差地卡死。
+
 ### 可行性分析
 
 - mock 验证：内容驱动收敛（修复指令未应用→不收敛）；tier-1 在不变门槛下接受修复
@@ -351,6 +403,14 @@ source shots 时出现。`decide` 用与真实 VLM critic 同一个 `_extract_js
   返回 canned JSON——菜单门控正确、合法 JSON 被 `decide` 验证通过、垃圾回复→`INVALID`；
   `execute` 正确路由 edit_clip/retrieve_replace/accept；整环用 mock 评审收敛、决策轨迹
   被记录、单调闸门至少裁决一次；brain 抽风时回落 RepairRouter 仍终止不崩。
+- 定位/传播验证（`tests/unit/test_defect_report.py`、`test_timeline.py`、`test_propagation.py`，
+  CPU、无 ffmpeg/torch/网络）：DefectReport 把物理 verdict 定位成 physics Defect（实体+帧段+
+  模态）、semantic 失败成整段 content Defect、worst-first 排序；timeline 在 monkeypatch 的假
+  (T,H,W,3) ndarray 上切 N 段带边界帧、mock 文本 clip→`degraded`、`frame_similarity` 同图≈1.0
+  异图低；propagation 用 STUB video_gen（记录 generate/frame_to_frame 调用）+ 桩 splice 断言
+  ——缺陷段被修复、前向级联在上游**新尾帧**上重锚、相似度≥阈值**提前停止**（断言调用数）、
+  degraded timeline→None。brain 在缺陷未清时返回 accept→环路改取一个回落修复动作而非停止
+  （专项测试）。
 - 真实部署：层级结构与真实后端无耦合——Tier 0 需要 image_edit 后端（接口已留），
   Tier 1/2 即刻可用（prompt 级杠杆）。
 - 边界：跨阶段归因（G8：坏成片该怪剧本还是生成器）只到"镜头内 tier"粒度，

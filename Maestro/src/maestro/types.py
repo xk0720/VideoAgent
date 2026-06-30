@@ -178,6 +178,10 @@ class PhysicsVerdict:
     severity: float                # 0-1, higher = worse
     suggested_intervention: str
     source: str = "vlm"
+    entity: str = ""               # which annotated entity this verdict blames
+                                   # (threaded from the law report so localized
+                                   # repair knows WHICH object to fix); "" = the
+                                   # verdict is not bound to a single entity.
 
 
 # ─────────────────────────────────────────────────────────────

@@ -35,6 +35,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from maestro.agents.defect_report import build_defect_report  # noqa: E402
 from maestro.agents.generator import GeneratorAgent          # noqa: E402
 from maestro.agents.orchestrator import OrchestratorAgent    # noqa: E402
 from maestro.agents.refiner import RefinerAgent              # noqa: E402
@@ -68,6 +69,30 @@ def _show_review(tag: str, clip) -> None:
     for v in clip.physics_verdicts:
         print(f"      - [{v.mode.value}] 帧{v.frame_range} 严重度={v.severity:.2f}"
               f" src={v.source} → {v.suggested_intervention}")
+
+
+_LOCALIZED_TOOLS = {"regenerate_segment", "keyframe_edit_propagate", "frame_to_frame"}
+
+
+def _show_defects(spec, clip) -> None:
+    """Print the LOCALIZED DefectReport the brain reasons over this turn:
+    which entity, which frames, severity, fix modality — worst-first."""
+    rep = build_defect_report(clip, spec, fps=8)
+    print(f"  ⟶ DefectReport（定位缺陷，worst-first，n_frames={rep.n_frames}）:")
+    if not rep.defects:
+        print("      （无定位缺陷）")
+    for d in rep.sorted_by_severity():
+        print(f"      - [{d.kind}/{d.fix_modality}] entity={d.entity or '?'} "
+              f"帧{d.frame_range} 严重度={d.severity:.2f}  {d.note}")
+
+
+def _cascade_depth(out_dir, spec, turn, tool) -> int:
+    """Best-effort propagation cascade depth = number of *_cascade.mp4 segment
+    files propagate_repair wrote for this turn (0 if not a localized tool)."""
+    if tool not in _LOCALIZED_TOOLS:
+        return 0
+    prop_dir = Path(out_dir) / f"shot{spec.shot_idx:03d}_r{turn}_{tool}"
+    return len(list(prop_dir.glob("seg*_cascade.mp4"))) if prop_dir.exists() else 0
 
 
 def main() -> int:
@@ -115,12 +140,12 @@ def main() -> int:
     generator = GeneratorAgent(video_gen=video_gen)
     refiner = RefinerAgent()
     verifier = VerifierAgent()
-    tournament = Tournament(judge=mllm)
     orchestrator = OrchestratorAgent(
         llm=llm, generator=generator, refiner=refiner, image_edit=image_edit,
         max_turns=args.max_turns,
     )
 
+    tournament = Tournament(judge=mllm)
     spec = ShotSpec(shot_idx=0, duration=5.0, prompt=args.prompt)
     spec.physics_annotation = annotate_physics(spec)
     print(f"\n物理标注: 实体={[(e.name, e.motion_class) for e in spec.physics_annotation.entities]}"
@@ -146,11 +171,17 @@ def main() -> int:
             _section("收敛")
             print(f"  评审全过，brain 无需再修复。回合用尽前收敛于第 {turn-1} 回合。")
             break
-        _section(f"② 回合 {turn} — brain 读评审 → function-call 一个工具")
+        _section(f"② 回合 {turn} — brain 读【定位评审】→ function-call 一个工具")
+        defect_report = build_defect_report(best, spec, fps=8)
+        _show_defects(spec, best)
         menu = orchestrator.available_actions(video_gen=video_gen, asset_memory=None)
-        decision = orchestrator.decide(best, spec, menu, brain_history)
+        decision = orchestrator.decide(best, spec, menu, brain_history,
+                                       defect_report=defect_report)
         print("  brain 原始决策 (STRICT JSON):")
         print("    " + json.dumps(decision, ensure_ascii=False))
+        if decision.get("tool") in _LOCALIZED_TOOLS:
+            print(f"  → brain 选了【定位工具】{decision['tool']}"
+                  "（修一个 segment → 前向级联重锚到收敛，而非整段重生成）")
 
         if decision.get("tool") == "accept":
             print("  → brain 选择 ACCEPT，停止修复。")
@@ -169,6 +200,10 @@ def main() -> int:
             brain_history.append((decision, "noop", best.metric_scores.get("weighted_total", 0.0)))
             continue
 
+        depth = _cascade_depth(run_dir, spec, turn, decision.get("tool"))
+        if decision.get("tool") in _LOCALIZED_TOOLS:
+            print(f"  → 传播级联深度 cascade_depth={depth}"
+                  "（修复后向下游重锚的 segment 数；相似度>=阈值即提前停止）")
         _show_review(f"重评 turn{turn}", cand)
         before = best.metric_scores.get("weighted_total", 0.0)
         after = cand.metric_scores.get("weighted_total", 0.0)

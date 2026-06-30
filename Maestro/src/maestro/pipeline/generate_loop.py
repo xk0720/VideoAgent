@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from ..agents.defect_report import build_defect_report
 from ..agents.director import DirectorAgent
 from ..agents.generator import GeneratorAgent
 from ..agents.physics_planner import PhysicsPlannerAgent
@@ -781,15 +782,53 @@ def generate_shot_orchestrated(
             break
         turns_used = turn
 
+        # Re-localize EVERY turn from the freshly-reviewed best: which entity,
+        # which frames, severity — the brain reads this guide, not a flat blob.
+        defect_report = build_defect_report(best, spec, fps)
         menu = orchestrator.available_actions(
             video_gen=generator.video_gen, asset_memory=asset_memory
         )
-        decision = orchestrator.decide(best, spec, menu, brain_history)
+        decision = orchestrator.decide(
+            best, spec, menu, brain_history, defect_report=defect_report
+        )
 
         invalid = decision.get("tool") in ("__invalid__",)
         if decision.get("tool") == "accept":
+            # NO PREMATURE ACCEPT: the brain may not stop while defects remain
+            # and turns are left. We log the attempt, then take ONE deterministic
+            # RepairRouter action instead of stopping (only all_passed / exhausted
+            # turns is a legitimate stop, handled by the loop guards).
+            if not board.all_passed(best) and turn < max_turns:
+                log.info("shot %d turn%d brain chose ACCEPT but %d defect(s) "
+                         "remain → overriding with one fallback repair action",
+                         spec.shot_idx, turn, len(defect_report.defects))
+                cand = _repair_router_fallback(
+                    best=best, spec=spec, cache_dir=cache_dir, r=turn,
+                    generator=generator, board=board, asset_memory=asset_memory,
+                    fps=fps, retrieval=retrieval,
+                )
+                gen_calls += 1
+                if cand is not None and verifier.is_better(cand, best):
+                    best = cand
+                    new_total = best.metric_scores.get("weighted_total", 0.0)
+                    outcome = "accepted"
+                else:
+                    new_total = (cand.metric_scores.get("weighted_total", 0.0)
+                                 if cand is not None else history_scores[-1])
+                    outcome = "rejected"
+                brain_history.append((decision, "accept_overridden", round(new_total, 4)))
+                history_scores.append(best.metric_scores.get("weighted_total", 0.0))
+                actions.append({
+                    "tool": "accept_overridden", "args": {},
+                    "reason": decision.get("reason", ""),
+                    "via": "repair_router_fallback", "outcome": outcome,
+                    "new_total": round(new_total, 4),
+                    "defects": defect_report.to_brain_json(),
+                })
+                continue
             actions.append({"tool": "accept", "args": {}, "outcome": "stop",
-                            "reason": decision.get("reason", "")})
+                            "reason": decision.get("reason", ""),
+                            "defects": defect_report.to_brain_json()})
             log.info("shot %d turn%d brain chose ACCEPT → stop", spec.shot_idx, turn)
             break
 
@@ -826,6 +865,7 @@ def generate_shot_orchestrated(
             "tool": decision.get("tool"), "args": decision.get("args", {}),
             "reason": decision.get("reason", ""), "via": via,
             "outcome": outcome, "new_total": round(new_total, 4),
+            "defects": defect_report.to_brain_json(),
         })
         log.info("shot %d turn%d via=%s tool=%s → %s (total=%.4f)",
                  spec.shot_idx, turn, via, decision.get("tool"), outcome, new_total)

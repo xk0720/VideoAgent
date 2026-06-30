@@ -121,6 +121,47 @@ class OrchestratorAgent:
                 },
             },
         ]
+        # ── LOCALIZED, propagated tools (v0.4) ──────────────────────────────
+        # All three route through pipeline.timeline.propagate_repair: repair the
+        # segment the defect overlaps, then re-anchor downstream segments until
+        # continuity reconverges. They are offered whenever ANY video capability
+        # exists (the timeline degrades to a whole-clip no-op when the clip has
+        # no decodable frames or ffmpeg is missing — execute() guards that).
+        if vg is not None and caps:
+            menu.append({
+                "name": "regenerate_segment",
+                "description": "Re-generate ONLY the time segment a defect lives "
+                "in (by frame range), then re-anchor downstream segments forward "
+                "until continuity converges. The localized counterpart to a whole "
+                "reroll; PREFER this for a span-localized defect.",
+                "args": {
+                    "frame_start": "int — defect span start frame",
+                    "frame_end": "int — defect span end frame",
+                    "hint": "str — anti-defect instruction for the regenerated span",
+                },
+            })
+            menu.append({
+                "name": "keyframe_edit_propagate",
+                "description": "Edit the corrected keyframe at a frame, re-generate "
+                "the segment anchored on it, then propagate forward. Use when one "
+                "frame's CONTENT is wrong and the fix should ripple downstream.",
+                "args": {
+                    "frame_idx": "int — frame whose segment to repair",
+                    "edit_instruction": "str — what to correct in that frame",
+                },
+            })
+            if "flf2v" in caps:
+                menu.append({
+                    "name": "frame_to_frame",
+                    "description": "Re-generate a segment double-anchored on its "
+                    "boundary frames (flf2v), then propagate forward. Strongest "
+                    "continuity for a MOTION defect on a specific frame range.",
+                    "args": {
+                        "frame_start": "int — defect span start frame",
+                        "frame_end": "int — defect span end frame",
+                        "hint": "str — corrected-motion instruction",
+                    },
+                })
         if "edit" in caps and self.video_gen is not None:
             menu.append({
                 "name": "edit_clip",
@@ -178,19 +219,23 @@ class OrchestratorAgent:
                               for k, val in clip.metric_scores.items()},
         }
 
-    def _build_prompt(self, clip, spec, menu, history) -> str:
+    def _build_prompt(self, clip, spec, menu, history, defect_report=None) -> str:
         system = (
             "You are a video-repair orchestrator. The clip was reviewed; here are "
-            "its DEFECTS (semantic failed items + measured/judged physics verdicts "
-            "with mode/severity/frame-range/intervention) and METRIC scores. Here "
-            "are the TOOLS you may call. Choose ONE tool call that best fixes the "
-            "WORST defect. A monotonic verifier will REJECT your result unless it "
-            "strictly improves — if a prior action was rejected (see history), DO "
-            "NOT repeat it; try a different tool or accept. Respond STRICT JSON "
-            'only: {"tool": str, "args": {...}, "reason": str}.'
+            "its LOCALIZED DEFECTS (which entity, which frame range, severity, fix "
+            "modality), the raw review, and METRIC scores. Here are the TOOLS you "
+            "may call. Target the WORST localized defect. PREFER a LOCALIZED tool "
+            "(regenerate_segment / keyframe_edit_propagate / frame_to_frame on the "
+            "defect's frame range) over a whole-clip reroll (regenerate). A "
+            "monotonic verifier REJECTS non-improvements; if a tool was rejected "
+            "(see history), pick a DIFFERENT tool or a DIFFERENT frame range — do "
+            "NOT accept while defects remain. Respond STRICT JSON only: "
+            '{"tool": str, "args": {...}, "reason": str}.'
         )
         user = {
             "shot_prompt": spec.prompt,
+            "localized_defects": (defect_report.to_brain_json()
+                                  if defect_report is not None else []),
             "review": self._review_payload(clip),
             "tools": menu,
             "history": [
@@ -201,18 +246,18 @@ class OrchestratorAgent:
         }
         return (
             system
-            + "\n\nREVIEW + TOOLS + HISTORY (JSON):\n"
+            + "\n\nLOCALIZED DEFECTS + REVIEW + TOOLS + HISTORY (JSON):\n"
             + json.dumps(user, ensure_ascii=False, indent=2)
             + '\n\nRespond with STRICT JSON only: {"tool": ..., "args": {...}, "reason": ...}'
         )
 
-    def decide(self, clip, spec, menu, history) -> dict:
+    def decide(self, clip, spec, menu, history, defect_report=None) -> dict:
         """Ask the brain for ONE tool call; validate against the menu.
 
         Returns the validated decision dict {tool, args, reason}, or the INVALID
         sentinel (unparseable reply / tool not in the menu) so the caller falls
         back to the deterministic RepairRouter."""
-        prompt = self._build_prompt(clip, spec, menu, history)
+        prompt = self._build_prompt(clip, spec, menu, history, defect_report)
         reply = self.llm.complete(prompt)
         data = _extract_json(reply)
 
@@ -235,6 +280,70 @@ class OrchestratorAgent:
                   {"valid": True, "tool": decision["tool"], "args": decision["args"],
                    "reason": decision["reason"]})
         return decision
+
+    # ─────────────────────────────────────────────────────────────────────
+    # LOCALIZED PROPAGATED tools — build a timeline from `best`, match the
+    # brain's frame range to a Defect, run propagate_repair, wrap the result.
+    # Returns None on any degrade (mock clip / no ffmpeg / bad args) so the
+    # caller treats it as a no-op.
+    # ─────────────────────────────────────────────────────────────────────
+    def _execute_propagated(
+        self, tool, args, best, spec, cache_dir, r, fps
+    ) -> Optional[CandidateClip]:
+        from ..pipeline.timeline import ClipTimeline, propagate_repair
+        from .defect_report import Defect, build_defect_report
+
+        cache_dir = Path(cache_dir)
+        vg = self.video_gen
+        if vg is None:
+            return None
+
+        # Resolve the target frame range + a fix modality for the chosen tool.
+        if tool == "keyframe_edit_propagate":
+            try:
+                idx = int(args.get("frame_idx", 0))
+            except (TypeError, ValueError):
+                return None
+            frame_range = (idx, idx + 1)
+            modality = "content"
+            hint = str(args.get("edit_instruction", "")) or "correct this frame"
+            image_edit = self.image_edit
+        else:
+            try:
+                fs = int(args.get("frame_start", 0))
+                fe = int(args.get("frame_end", 0))
+            except (TypeError, ValueError):
+                return None
+            if fe <= fs:
+                fe = fs + 1
+            frame_range = (fs, fe)
+            modality = "motion"
+            hint = str(args.get("hint", "")) or "regenerate this span faithfully"
+            image_edit = None
+
+        # Prefer the matching real Defect (carries the right modality/entity);
+        # fall back to a synthetic one built from the brain's args.
+        report = build_defect_report(best, spec, fps)
+        defect = None
+        for d in report.sorted_by_severity():
+            lo, hi = d.frame_range
+            if min(hi, frame_range[1]) > max(lo, frame_range[0]):  # overlap
+                defect = d
+                break
+        if defect is None:
+            defect = Defect(kind="physics", entity="", frame_range=frame_range,
+                            severity=0.5, fix_modality=modality, note=tool)
+
+        prop_dir = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_{tool}"
+        timeline = ClipTimeline.from_clip(best, prop_dir, n_segments=3)
+        spliced = propagate_repair(
+            timeline, defect, video_gen=vg, image_edit=image_edit,
+            hint=hint, cache_dir=prop_dir,
+        )
+        if spliced is None:
+            return None
+        return CandidateClip(shot_idx=spec.shot_idx, video_path=Path(spliced),
+                             revision=r)
 
     # ─────────────────────────────────────────────────────────────────────
     # EXECUTE — map the chosen tool to the real call; review the output.
@@ -307,6 +416,13 @@ class OrchestratorAgent:
                 duration=max(1, int(round(spec.duration))),
             )
             cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
+
+        elif tool in ("regenerate_segment", "keyframe_edit_propagate", "frame_to_frame"):
+            cand = self._execute_propagated(
+                tool, args, best, spec, cache_dir, r, fps
+            )
+            if cand is None:
+                return None
 
         elif tool == "retrieve_replace":
             if self.retrieval is None:
