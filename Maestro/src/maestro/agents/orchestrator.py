@@ -82,6 +82,11 @@ class OrchestratorAgent:
         self.retrieval = retrieval
         self.max_turns = int(max_turns)
         self.logger = logger
+        # The brain's instructions live in an editable skill file (prompts/
+        # orchestrator.txt) — like UniVA's plan.txt but for repair: role, how to
+        # read the review, tool-by-modality logic, output format + examples.
+        # Falls back to a terse inline default if the file is missing.
+        self._skill_prompt = self._load_skill_prompt()
 
     @property
     def name(self) -> str:
@@ -241,26 +246,29 @@ class OrchestratorAgent:
                               for k, val in clip.metric_scores.items()},
         }
 
-    def _build_prompt(self, clip, spec, menu, history, defect_report=None) -> str:
-        system = (
-            "You are a video-repair orchestrator. The clip was reviewed; here are "
-            "its LOCALIZED DEFECTS (which entity, which frame range, severity, fix "
-            "modality), the raw review, and METRIC scores. Here are the TOOLS you "
-            "may call — the FULL atom palette. Target the WORST localized defect "
-            "and PICK THE TOOL BY ITS MODALITY: a BACKGROUND/FOREGROUND defect → "
-            "depth_edit; a STYLE (palette/texture/look) defect → style_edit; a "
-            "MOTION/physics defect → edit_clip or a localized re-gen; an "
-            "incomplete/object_permanence defect → extend_clip; a missing real "
-            "element you have footage for → retrieve_replace. PREFER a LOCALIZED "
-            "tool (regenerate_segment / keyframe_edit_propagate / frame_to_frame on "
-            "the defect's frame range) over a whole-clip reroll (regenerate). A "
-            "monotonic verifier REJECTS non-improvements; if a tool was rejected "
-            "(see history), pick a DIFFERENT tool or a DIFFERENT frame range — do "
-            "NOT accept while defects remain. Respond STRICT JSON only: "
-            '{"tool": str, "args": {...}, "reason": str}.'
-        )
+    # Terse fallback if prompts/orchestrator.txt is missing (keeps the brain
+    # functional even without the file). The file is the source of truth.
+    _INLINE_SKILL = (
+        "You are a video-repair orchestrator. Read the review, pick ONE tool from "
+        "`tools` that best fixes the WORST localized defect (by its fix_modality), "
+        "prefer a localized tool over a whole reroll, never repeat a REJECTED "
+        "action (see history), and do not accept while defects remain. Respond "
+        'STRICT JSON only: {"tool": str, "args": {...}, "reason": str}.'
+    )
+
+    def _load_skill_prompt(self) -> str:
+        from .base import load_prompt
+        path = Path(__file__).resolve().parent.parent / "prompts" / "orchestrator.txt"
+        return load_prompt(path) or self._INLINE_SKILL
+
+    def _build_prompt(self, clip, spec, menu, history, defect_report=None,
+                      review_brief=None) -> str:
         user = {
             "shot_prompt": spec.prompt,
+            # A consolidated, prioritized brief produced by the review-summarizer
+            # (when wired); empty until then — the brain still has the raw review
+            # + localized defects below.
+            "review_brief": review_brief or "",
             "localized_defects": (defect_report.to_brain_json()
                                   if defect_report is not None else []),
             "review": self._review_payload(clip),
@@ -272,8 +280,8 @@ class OrchestratorAgent:
             ],
         }
         return (
-            system
-            + "\n\nLOCALIZED DEFECTS + REVIEW + TOOLS + HISTORY (JSON):\n"
+            self._skill_prompt
+            + "\n\nTHIS TURN (JSON):\n"
             + json.dumps(user, ensure_ascii=False, indent=2)
             + '\n\nRespond with STRICT JSON only: {"tool": ..., "args": {...}, "reason": ...}'
         )
