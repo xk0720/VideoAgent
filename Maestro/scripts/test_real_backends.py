@@ -131,7 +131,7 @@ def main() -> int:
     ap.add_argument("--prompt", default="a red kite tumbling onto wet pavement")
     ap.add_argument("--model", default="gpt-4o",
                     help="OpenAI 模型（同时用于 LLM 与 VLM）")
-    ap.add_argument("--video-model", default="bytedance/seedance-v1-pro-t2v-480p",
+    ap.add_argument("--video-model", default="bytedance/seedance-2.0/text-to-video",
                     help="WaveSpeed t2v 模型 id")
     ap.add_argument("--out-dir", default=None,
                     help="输出根目录（默认 $MAESTRO_OUTPUT_ROOT 或 <repo>/outputs）")

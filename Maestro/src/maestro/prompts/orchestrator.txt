@@ -70,11 +70,12 @@ LOCALIZED + PROPAGATED (repair a time span, then ripple downstream):
 EDIT THE RENDERED CLIP IN PLACE (preserves the good parts; no reroll):
 - `edit_clip`        (only when the backend has the "edit" capability)
     · Edits the existing clip via a video-editing model. Backend routes:
+      "seedance" = best free-form prompt edit (seedance-2.0/video-edit, DEFAULT);
       "runway" = free-form prompt edit (runwayml/gen4-aleph); "vace" =
       structure-guided edit (wan-2.1-14b-vace).
     · Use for: a physics MOTION defect (gravity/inertia, collision, conservation,
       penetration) — fix the motion without rerolling.
-    · args: {"prompt": "describe the corrected motion", "backend": "runway"|"vace"}
+    · args: {"prompt": "describe the corrected motion", "backend": "seedance"|"runway"|"vace"}
 - `depth_edit`       (only when the backend has the "depth" capability)
     · Depth-guided foreground/background edit (VACE). Replaces the wrong scene
       behind/in front of the subject while keeping the subject's motion + layout.

@@ -1,8 +1,9 @@
 """Real audio-generation backends (v0.4).
 
 Two capabilities are REAL (hosted WaveSpeed API, no local GPU, training-free):
-  • foley  — video → ambient sound (MMAudio-v2 scores the moving pixels)
-  • speech — text → narration (MiniMax speech-2.5 TTS)
+  • foley  — video → ambient sound (hunyuan-video-foley, 48 kHz; mmaudio-v2
+    schema kept for the legacy id)
+  • speech — text → narration (MiniMax speech-2.6-hd TTS; 2.5 ids still work)
 Music remains a PLACEHOLDER: UniVA's verified `utils/wavespeed_api.py` exposes
 no music endpoint, so `supported_kinds()` honestly omits it on the real client
 and the AudioGenTool keeps emitting the deterministic mock motif for now.
@@ -114,16 +115,17 @@ class MockAudioGenClient(BaseAudioGenClient):
 class WaveSpeedAudioClient(BaseAudioGenClient):
     """WaveSpeed REST audio backend. Ports UniVA `utils/wavespeed_api.py`:
 
-      • foley  ← `audio_gen`  → POST {BASE}/wavespeed-ai/mmaudio-v2
-      • speech ← `speech_gen` → POST {BASE}/minimax/speech-2.5-turbo-preview
+      • foley  → POST {BASE}/wavespeed-ai/hunyuan-video-foley (default) or
+                 wavespeed-ai/mmaudio-v2 (UniVA's route; schema auto-switches)
+      • speech → POST {BASE}/minimax/speech-2.6-hd (default; 2.5 ids still live)
 
     Both follow the same submit → poll predictions/{id}/result → download
     outputs[0] protocol as WaveSpeedClient (video). One key powers everything.
 
     config (models.audio_gen):
       name: "wavespeed"
-      foley_model_id:  "wavespeed-ai/mmaudio-v2"
-      speech_model_id: "minimax/speech-2.5-turbo-preview"
+      foley_model_id:  "wavespeed-ai/hunyuan-video-foley"
+      speech_model_id: "minimax/speech-2.6-hd"
       voice_id: "Wise_Woman"
       api_key: ...          # or $WAVESPEED_API_KEY
       poll_interval: 2.0
@@ -136,9 +138,10 @@ class WaveSpeedAudioClient(BaseAudioGenClient):
         self.name = name
         self.config = config or {}
         self.api_key = self.config.get("api_key") or os.getenv("WAVESPEED_API_KEY")
-        self.foley_model_id = self.config.get("foley_model_id", "wavespeed-ai/mmaudio-v2")
+        self.foley_model_id = self.config.get(
+            "foley_model_id", "wavespeed-ai/hunyuan-video-foley")
         self.speech_model_id = self.config.get(
-            "speech_model_id", "minimax/speech-2.5-turbo-preview"
+            "speech_model_id", "minimax/speech-2.6-hd"
         )
         self.default_voice = self.config.get("voice_id", "Wise_Woman")
         self.poll_interval = float(self.config.get("poll_interval", 2.0))
@@ -196,19 +199,15 @@ class WaveSpeedAudioClient(BaseAudioGenClient):
         duration: int = 5,
         seed: int = 0,
     ) -> Path:
-        """video → audio via MMAudio-v2 (ported from UniVA `audio_gen`).
-
-        MMAudio scores the moving pixels, so a real VIDEO is required. A LOCAL
-        path is read + base64-encoded into a data:video/<mime>;base64,... URI
-        exactly like UniVA's os.path.exists branch; an http(s) URL is passed
-        through. A missing/non-video path raises (never silently produces
-        nothing)."""
-        import base64
-
+        """video → audio. Default `wavespeed-ai/hunyuan-video-foley` (48 kHz,
+        the best foley model on WaveSpeed per the 2026-07 doc check);
+        `wavespeed-ai/mmaudio-v2` (UniVA's route) still supported — the payload
+        switches per model. The video is UPLOADED and passed by URL (the docs
+        list URL input; base64 data URIs are the 400-prone legacy path).
+        A missing/non-video path raises (never silently produces nothing)."""
+        self._headers()                  # loud RuntimeError sans key, before IO
         vp = str(video_path)
-        if vp.startswith("http://") or vp.startswith("https://"):
-            video_data_uri = vp
-        else:
+        if not (vp.startswith("http://") or vp.startswith("https://")):
             p = Path(vp)
             if not p.exists() or not p.is_file():
                 raise FileNotFoundError(
@@ -219,19 +218,21 @@ class WaveSpeedAudioClient(BaseAudioGenClient):
                 raise ValueError(
                     f"foley() needs a video (.mp4/.mov/.avi/.mkv) to score, got '{ext}': {vp}"
                 )
-            mime = "mp4"  # MMAudio accepts mp4 container; matches UniVA default
-            video_b64 = base64.b64encode(p.read_bytes()).decode()
-            video_data_uri = f"data:video/{mime};base64,{video_b64}"
+        from .video_gen_backends import upload_media
 
-        payload = {
-            "duration": max(1, int(round(duration))),
-            "guidance_scale": 4.5,
-            "mask_away_clip": False,
-            "negative_prompt": "",
-            "num_inference_steps": 25,
-            "prompt": prompt,
-            "video": video_data_uri,
-        }
+        video_url = upload_media(self.api_key, video_path)
+        if "hunyuan-video-foley" in self.foley_model_id:
+            payload = {"prompt": prompt, "seed": seed, "video": video_url}
+        else:                             # mmaudio-v2 schema (UniVA-ported)
+            payload = {
+                "duration": max(1, int(round(duration))),
+                "guidance_scale": 4.5,
+                "mask_away_clip": False,
+                "negative_prompt": "",
+                "num_inference_steps": 25,
+                "prompt": prompt,
+                "video": video_url,
+            }
         return self._run_task(self.foley_model_id, payload, out_path)
 
     def speech(

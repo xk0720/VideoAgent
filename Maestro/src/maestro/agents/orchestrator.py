@@ -180,7 +180,8 @@ class OrchestratorAgent:
                 "(gravity/inertia, collision, conservation, penetration).",
                 "args": {
                     "prompt": "str — edit instruction describing the corrected motion",
-                    "backend": "str — 'runway' (free-form) or 'vace' (structure-guided)",
+                    "backend": "str — 'seedance' (default, best free-form) | "
+                               "'runway' (free-form) | 'vace' (structure-guided)",
                 },
             })
         if "depth" in caps and self.video_gen is not None:
@@ -494,9 +495,9 @@ class OrchestratorAgent:
                 return None
             out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_brain_edit.mp4"
             prompt = str(args.get("prompt", "")) or "correct the implausible motion"
-            backend = str(args.get("backend", "runway")) or "runway"
-            if backend not in ("runway", "vace"):
-                backend = "runway"
+            backend = str(args.get("backend", "seedance")) or "seedance"
+            if backend not in ("seedance", "runway", "vace"):
+                backend = "seedance"
             video_path = self.video_gen.edit_video(
                 prompt=prompt, video_path=best.video_path, out_path=out,
                 backend=backend,

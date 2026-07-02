@@ -27,33 +27,88 @@ from typing import Optional
 
 from .video_gen import BaseVideoGenClient
 
+_UPLOAD_URL = "https://api.wavespeed.ai/api/v3/media/upload/binary"
+
+
+def upload_media(api_key: str, path) -> str:
+    """Upload a local image/video/audio to WaveSpeed's official media endpoint
+    (multipart `file`, ≤300 MB) and return its public URL. http(s) inputs pass
+    through. The 2026 models take media by URL — runwayml/gen4-aleph outright
+    400s on base64 data URIs. Shared by the video AND audio clients."""
+    import requests  # std in our [all] extras; loud ImportError otherwise
+
+    vp = str(path)
+    if vp.startswith("http://") or vp.startswith("https://"):
+        return vp
+    p = Path(vp)
+    if not p.exists() or not p.is_file():
+        raise FileNotFoundError(f"media not found: {vp}")
+    with p.open("rb") as fh:
+        resp = requests.post(
+            _UPLOAD_URL, headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": (p.name, fh)}, timeout=300,
+        )
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"WaveSpeed media upload of '{p.name}' failed: HTTP "
+            f"{resp.status_code} — {resp.text[:2000]}"
+        )
+    return resp.json()["data"]["download_url"]
+
 
 # ─────────────────────────────────────────────────────────────
 # WaveSpeed — hosted API backend (no local GPU; UniVA's route)
 # ─────────────────────────────────────────────────────────────
 class WaveSpeedClient(BaseVideoGenClient):
-    """WaveSpeed REST API (https://wavespeed.ai). Pattern mirrors UniVA's
-    `utils/wavespeed_api.py`: POST the task → poll predictions/{id}/result →
-    download the output URL to `out_path`.
+    """WaveSpeed REST API (https://wavespeed.ai). Protocol (verified against the
+    official docs 2026-07, see docs/research/wavespeed_api_reference_2026_07.md):
+    POST {BASE}/{model-id} → poll predictions/{id}/result → download outputs[0].
+
+    Defaults target the BEST-quality family on WaveSpeed (cost no object, per
+    the user's ruling): bytedance/seedance-2.0 — t2v/i2v (native first+last
+    frame via `last_image`), video-edit, video-extend; duration any int 4–15 s;
+    resolution up to 4k. Legacy seedance-v1 / wan-flf2v ids keep their old
+    schemas ({5,10} s enums) — the payload builder switches per family.
+
+    Media inputs (images/videos) are UPLOADED to the official media endpoint
+    and passed by URL: the 2026 models document URL/upload input, and
+    runwayml/gen4-aleph outright 400s on base64 data URIs.
 
     config:
       models.video_gen:
         name: "wavespeed"
-        model_id: "bytedance/seedance-v1-pro-t2v-480p"   # or any t2v/i2v id
-        api_key: ...          # or $WAVESPEED_API_KEY
+        model_id: "bytedance/seedance-2.0/text-to-video"   # i2v id derived
+        resolution: "1080p"        # 480p | 720p | 1080p | 4k (seedance-2.0)
+        generate_audio: false      # seedance-2.0 native AV co-generation
+        flf2v_model:  "bytedance/seedance-2.0/image-to-video"  # or wavespeed-ai/wan-flf2v
+        edit_model:   "bytedance/seedance-2.0/video-edit"
+        extend_model: "bytedance/seedance-2.0/video-extend"
+        api_key: ...               # or $WAVESPEED_API_KEY
         poll_interval: 2.0
         timeout: 600
+        # escape hatches: allowed_durations: [5,10] | duration_range: [4,15]
+        # extra_params: {seed: 42, camera_fixed: true, ...}
     """
 
     BASE = "https://api.wavespeed.ai/api/v3"
+    UPLOAD_URL = BASE + "/media/upload/binary"
 
     def __init__(self, name: str = "wavespeed", config: Optional[dict] = None):
         self.name = name
         self.config = config or {}
         self.api_key = self.config.get("api_key") or os.getenv("WAVESPEED_API_KEY")
-        self.model_id = self.config.get("model_id", "bytedance/seedance-v1-pro-t2v-480p")
+        self.model_id = self.config.get("model_id", "bytedance/seedance-2.0/text-to-video")
+        self.resolution = self.config.get("resolution", "1080p")
+        self.generate_audio = bool(self.config.get("generate_audio", False))
+        self.flf2v_model = self.config.get(
+            "flf2v_model", "bytedance/seedance-2.0/image-to-video")
+        self.edit_model = self.config.get(
+            "edit_model", "bytedance/seedance-2.0/video-edit")
+        self.extend_model = self.config.get(
+            "extend_model", "bytedance/seedance-2.0/video-extend")
         self.poll_interval = float(self.config.get("poll_interval", 2.0))
         self.timeout = float(self.config.get("timeout", 600))
+        self._upload_cache: dict = {}
 
     def _headers(self) -> dict:
         if not self.api_key:
@@ -64,18 +119,54 @@ class WaveSpeedClient(BaseVideoGenClient):
         return {"Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"}
 
-    def _snap_duration(self, seconds: float) -> int:
-        """WaveSpeed video models accept only FIXED durations (seedance: 5 or
-        10 s) — anything else is a 400. Snap the requested seconds UP to the
-        nearest allowed value; callers that need a shorter span retime the
-        surplus back off (pipeline.timeline._fit_to_seconds)."""
+    @staticmethod
+    def _is_range_family(model_id: str) -> bool:
+        """seedance-2.0 family takes ANY int duration in 4–15 s; legacy models
+        (seedance v1, wan-flf2v) take a {5, 10} enum."""
+        return "seedance-2.0" in model_id
+
+    @staticmethod
+    def _i2v_variant(model_id: str) -> str:
+        """Derive the i2v id from a t2v id — both naming generations."""
+        return (model_id
+                .replace("-t2v-", "-i2v-")                    # seedance v1 style
+                .replace("/text-to-video", "/image-to-video"))  # 2026 3-segment style
+
+    def _snap_duration(self, seconds: float, model_id: Optional[str] = None) -> int:
+        """WaveSpeed models constrain `duration` (seconds) and 400 on anything
+        else: seedance-2.0 = any int in [4, 15]; legacy = exactly 5 or 10.
+        Snap the requested seconds UP into the valid set; callers that need a
+        shorter span retime the surplus off (pipeline.timeline._fit_to_seconds)."""
+        mid = model_id or self.model_id
+        want = int(seconds) if float(seconds) == int(seconds) else int(seconds) + 1
+        rng = self.config.get("duration_range") or (
+            (4, 15) if self._is_range_family(mid) else None)
+        if rng:
+            lo, hi = int(rng[0]), int(rng[1])
+            return max(lo, min(hi, want))
         allowed = sorted(int(a) for a in self.config.get("allowed_durations",
                                                          (5, 10)))
-        want = int(seconds) if float(seconds) == int(seconds) else int(seconds) + 1
         for a in allowed:
             if want <= a:
                 return a
         return allowed[-1]
+
+    def _upload_media(self, path) -> str:
+        """`upload_media` with a loud key check (BEFORE any file IO / network)
+        and a per-client cache keyed on (path, mtime, size) so a frame or clip
+        reused across repair turns uploads once."""
+        self._headers()                              # loud RuntimeError sans key
+        vp = str(path)
+        if vp.startswith("http://") or vp.startswith("https://"):
+            return vp
+        p = Path(vp)
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(f"media not found: {vp}")
+        st = p.stat()
+        key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+        if key not in self._upload_cache:
+            self._upload_cache[key] = upload_media(self.api_key, p)
+        return self._upload_cache[key]
 
     def generate(
         self,
@@ -87,21 +178,26 @@ class WaveSpeedClient(BaseVideoGenClient):
         reference_images: Optional[list[Path]] = None,
         seed: int = 0,
     ) -> Path:
-        import base64
+        model_id = self.model_id
+        is_i2v = first_frame is not None and (
+            str(first_frame).startswith(("http://", "https://"))
+            or Path(first_frame).exists())
+        if is_i2v:
+            model_id = self._i2v_variant(model_id)
 
         payload: dict = {"prompt": prompt,
-                         "duration": self._snap_duration(duration),
-                         "seed": seed}
-        model_id = self.model_id
-        if first_frame is not None and Path(first_frame).exists():
-            payload["image"] = "data:image/png;base64," + base64.b64encode(
-                Path(first_frame).read_bytes()
-            ).decode()
-            # i2v variant if the configured id is the t2v one
-            model_id = model_id.replace("-t2v-", "-i2v-")
+                         "duration": self._snap_duration(duration, model_id)}
+        if self._is_range_family(model_id):
+            payload["resolution"] = self.resolution
+            payload["generate_audio"] = self.generate_audio
         else:
-            # t2v: mirror UniVA's working payload (image defines the ratio in i2v)
+            payload["seed"] = seed          # legacy schema (UniVA-verified)
+        if is_i2v:
+            payload["image"] = self._upload_media(first_frame)
+        else:
+            # t2v only — in i2v the image defines the ratio
             payload["aspect_ratio"] = self.config.get("aspect_ratio", "16:9")
+        payload.update(self.config.get("extra_params") or {})
 
         return self._run_task(model_id, payload, out_path)
 
@@ -161,20 +257,6 @@ class WaveSpeedClient(BaseVideoGenClient):
         raise TimeoutError(f"WaveSpeed task {task_id} did not finish within "
                            f"{self.timeout}s")
 
-    @staticmethod
-    def _video_data_uri(video_path: Path) -> str:
-        """Local video → data:video/mp4;base64,...; http(s) URL passes through.
-        Matches UniVA's os.path.exists branch in audio_gen / vace_api."""
-        import base64
-
-        vp = str(video_path)
-        if vp.startswith("http://") or vp.startswith("https://"):
-            return vp
-        p = Path(vp)
-        if not p.exists() or not p.is_file():
-            raise FileNotFoundError(f"video not found: {vp}")
-        return "data:video/mp4;base64," + base64.b64encode(p.read_bytes()).decode()
-
     def frame_to_frame(
         self,
         prompt: str,
@@ -184,72 +266,96 @@ class WaveSpeedClient(BaseVideoGenClient):
         duration: float = 5,
         seed: int = 0,
     ) -> Path:
-        """First-last-frame video (wan-flf2v). Ported from UniVA
-        `frame_to_frame_video`: POST {BASE}/wavespeed-ai/wan-flf2v with both
-        endpoint frames base64'd. Capability "flf2v" (optional; see
-        BaseVideoGenClient.capabilities)."""
-        import base64
-
-        first_b64 = base64.b64encode(Path(first_frame).read_bytes()).decode()
-        last_b64 = base64.b64encode(Path(last_frame).read_bytes()).decode()
-        payload = {
-            "duration": self._snap_duration(duration),
-            "enable_safety_checker": True,
-            "first_image": f"data:image/jpeg;base64,{first_b64}",
-            "guidance_scale": 5,
-            "last_image": f"data:image/jpeg;base64,{last_b64}",
-            "negative_prompt": "",
-            "num_inference_steps": 30,
-            "prompt": prompt,
-            "seed": seed,
-            "size": "832*480",
-        }
-        return self._run_task("wavespeed-ai/wan-flf2v", payload, out_path)
+        """First+last-frame video. Capability "flf2v" (optional; see
+        BaseVideoGenClient.capabilities). Two routes by `flf2v_model`:
+          • default `bytedance/seedance-2.0/image-to-video` — the best-quality
+            first+last model on WaveSpeed (i2v with a native `last_image`);
+          • legacy `wavespeed-ai/wan-flf2v` — UniVA's route, old schema.
+        Both frames are uploaded and passed by URL."""
+        model = self.flf2v_model
+        first_url = self._upload_media(first_frame)
+        last_url = self._upload_media(last_frame)
+        if "wan-flf2v" in model:
+            payload = {
+                "duration": self._snap_duration(duration, model),
+                "enable_safety_checker": True,
+                "first_image": first_url,
+                "guidance_scale": 5,
+                "last_image": last_url,
+                "negative_prompt": "",
+                "num_inference_steps": 30,
+                "prompt": prompt,
+                "seed": seed,
+                "size": "832*480",
+            }
+        else:
+            payload = {
+                "prompt": prompt,
+                "image": first_url,
+                "last_image": last_url,
+                "duration": self._snap_duration(duration, model),
+                "resolution": self.resolution,
+                "generate_audio": self.generate_audio,
+            }
+        return self._run_task(model, payload, out_path)
 
     def edit_video(
         self,
         prompt: str,
         video_path: Path,
         out_path: Path,
-        backend: str = "runway",
+        backend: str = "seedance",
         task: str = "depth",
         seed: int = 0,
     ) -> Path:
-        """Edit existing footage. Capability "edit" (optional). Two ported routes:
-          • backend="runway" → POST {BASE}/runwayml/gen4-aleph  (UniVA
-            `runway_video_editing` — free-form prompt edit)
-          • backend="vace"   → POST {BASE}/wavespeed-ai/wan-2.1-14b-vace (UniVA
-            `vace_api` — structure-guided edit; `task` is depth/pose/etc.)
+        """Edit existing footage. Capability "edit" (optional). Three routes —
+        the input video is UPLOADED and passed by URL (gen4-aleph documents
+        URL-only input; base64 data URIs 400):
+          • backend="seedance" → bytedance/seedance-2.0/video-edit (default —
+            best-quality prompt edit on WaveSpeed; ≤15 s inputs)
+          • backend="runway"   → runwayml/gen4-aleph (UniVA's free-form route)
+          • backend="vace"     → wavespeed-ai/wan-2.1-14b-vace (structure-guided;
+            `task` is depth/pose/etc. — no wan-2.2 vace exists on WaveSpeed)
         """
-        video_data_uri = self._video_data_uri(video_path)
+        if backend not in ("seedance", "runway", "vace"):
+            raise ValueError(
+                f"edit_video backend must be 'seedance', 'runway' or 'vace', "
+                f"got '{backend}'")
+        video_url = self._upload_media(video_path)
+        if backend == "seedance":
+            payload = {
+                "prompt": prompt,
+                "video": video_url,
+                "resolution": self.resolution,
+                "generate_audio": False,   # keep the input audio track
+            }
+            return self._run_task(self.edit_model, payload, out_path)
         if backend == "runway":
             payload = {
                 "aspect_ratio": "16:9",
                 "prompt": prompt,
-                "video": video_data_uri,
+                "video": video_url,
             }
             return self._run_task("runwayml/gen4-aleph", payload, out_path)
-        if backend == "vace":
-            payload = {
-                "context_scale": 1,
-                "duration": 5,
-                "flow_shift": 16,
-                "guidance_scale": 5,
-                "images": [],
-                "negative_prompt": "",
-                "num_inference_steps": 40,
-                "prompt": prompt,
-                "seed": seed,
-                "size": "1280*720",
-                "task": task,
-                "video": video_data_uri,
-            }
-            return self._run_task("wavespeed-ai/wan-2.1-14b-vace", payload, out_path)
-        raise ValueError(f"edit_video backend must be 'runway' or 'vace', got '{backend}'")
+        payload = {
+            "context_scale": 1,
+            "duration": 5,
+            "flow_shift": 16,
+            "guidance_scale": 5,
+            "images": [],              # docs: empty array is the default → accepted
+            "negative_prompt": "",
+            "num_inference_steps": 40,
+            "prompt": prompt,
+            "seed": seed,
+            "size": "1280*720",
+            "task": task,
+            "video": video_url,
+        }
+        return self._run_task("wavespeed-ai/wan-2.1-14b-vace", payload, out_path)
 
     # ── widened atom palette (v0.4) — thin REAL maps to edit_video tasks,
     #    ported from UniVA's vace_api / runway_video_editing. Each is loud
-    #    without a key (edit_video → _video_data_uri → _run_task → _headers). ──
+    #    without a key (edit_video → _upload_media → _headers). ──
     def depth_modify(self, prompt: str, video_path: Path, out_path: Path,
                      seed: int = 0) -> Path:
         """Depth-guided foreground/background edit (UniVA `depth_modify`):
@@ -289,59 +395,23 @@ class WaveSpeedClient(BaseVideoGenClient):
         prompt: str,
         video_path: Path,
         out_path: Path,
-        duration: int = 5,
+        duration: float = 5,
         seed: int = 0,
     ) -> Path:
         """Continue an existing clip beyond its last frame. Capability "extend"
-        (optional). This is the `video_extension` capability UniVA exposes and
-        Maestro lacked: there is no dedicated WaveSpeed "extend" endpoint, so we
-        synthesize it honestly the way UniVA's pipeline does for continuation —
-        decode the LAST frame of `video_path` and drive an i2v continuation from
-        it (the same base64-image payload shape `generate` uses for first_frame).
-
-        Honest limitation: this is an i2v re-roll seeded on the final frame, not
-        a latent-space continuation, so motion across the seam is only as smooth
-        as the i2v model makes it; the loud key-check + monotonic Verifier gate
-        still apply. The loud RuntimeError (no key) fires BEFORE any decode/POST.
-        """
-        import base64
-
-        headers = self._headers()  # loud RuntimeError without a key — before any work
-
-        # Lazy import so the mock pipeline never pulls the decode stack.
-        from ..physics.track_extractor_backends import _decode_frames
-
-        frames = _decode_frames(Path(video_path))
-        if frames is None or len(frames) < 1:
-            raise RuntimeError(
-                f"extend() could not decode a last frame from {video_path} "
-                "(not a real/decodable video) — extension needs real pixels."
-            )
-
-        # Save the last frame NEXT TO the output (run-dir artifact, inspectable
-        # — never a system temp file), then i2v-continue from it.
-        last = frames[-1]
-        out_path = Path(out_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        anchor = out_path.parent / f"{out_path.stem}_extend_anchor.png"
-        try:
-            import imageio.v3 as iio  # type: ignore
-
-            iio.imwrite(str(anchor), last)
-        except Exception:
-            import cv2  # type: ignore
-
-            cv2.imwrite(str(anchor), last[..., ::-1])  # RGB → BGR for cv2
-        payload: dict = {
+        (optional). WaveSpeed now hosts DEDICATED video-extend models — default
+        `bytedance/seedance-2.0/video-extend`: the whole input video (uploaded,
+        passed by URL) conditions a true continuation, replacing the old
+        decode-last-frame → i2v hack (better seam continuity: the model sees
+        the motion, not one frame). Loud RuntimeError (no key) fires first."""
+        payload = {
             "prompt": prompt,
-            "duration": self._snap_duration(duration),
-            "seed": seed,
-            "image": "data:image/png;base64,"
-            + base64.b64encode(anchor.read_bytes()).decode(),
+            "video": self._upload_media(video_path),   # loud key check inside
+            "duration": self._snap_duration(duration, self.extend_model),
+            "resolution": self.resolution,
+            "generate_audio": self.generate_audio,
         }
-        # Reuse the i2v model id (same swap generate() does for first_frame).
-        model_id = self.model_id.replace("-t2v-", "-i2v-")
-        return self._run_task(model_id, payload, out_path)
+        return self._run_task(self.extend_model, payload, out_path)
 
     def supported_conditions(self) -> set[str]:
         return {"first_frame"}

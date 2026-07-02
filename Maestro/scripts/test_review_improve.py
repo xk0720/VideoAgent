@@ -74,7 +74,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", default="a glass falls off a table and shatters on the floor")
     ap.add_argument("--model", default="gpt-4o", help="OpenAI 模型（LLM+VLM）")
-    ap.add_argument("--video-model", default="bytedance/seedance-v1-pro-t2v-480p")
+    ap.add_argument("--video-model", default="bytedance/seedance-2.0/text-to-video")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--device", default="cuda", help="CoTracker/GroundingDINO 设备")
     ap.add_argument("--no-physics-measure", action="store_true",

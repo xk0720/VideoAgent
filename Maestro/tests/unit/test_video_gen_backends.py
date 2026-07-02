@@ -124,10 +124,12 @@ def test_wavespeed_depth_modify_routes_to_vace_depth(tmp_path: Path, monkeypatch
         return out
 
     monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media", lambda p: "https://fake.host/in.mp4")
     vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     wave.depth_modify("replace bg", vid, tmp_path / "o.mp4")
     assert "vace" in captured["model_id"]
     assert captured["payload"]["task"] == "depth"
+    assert captured["payload"]["video"] == "https://fake.host/in.mp4"
 
 
 def test_wavespeed_style_transfer_routes_to_runway(tmp_path: Path, monkeypatch):
@@ -143,6 +145,7 @@ def test_wavespeed_style_transfer_routes_to_runway(tmp_path: Path, monkeypatch):
         return out
 
     monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media", lambda p: "https://fake.host/in.mp4")
     vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     wave.style_transfer("van gogh", vid, tmp_path / "o.mp4")
     assert "runway" in captured["model_id"]
@@ -161,24 +164,30 @@ def test_wavespeed_repaint_honest_skeleton_error(tmp_path: Path, monkeypatch):
 
 
 def test_wavespeed_snap_duration_to_allowed_values():
-    """WaveSpeed models accept only fixed durations (seedance: 5 or 10 s) —
-    anything else 400s. Requests snap UP to the nearest allowed value, and a
-    runaway value (e.g. the old frames-as-seconds bug sending 40) clamps to
-    the max instead of reaching the API."""
-    wave = build_video_gen({"name": "wavespeed"})
-    assert wave._snap_duration(0.375) == 5
+    """WaveSpeed models constrain `duration` (seconds) and 400 on anything
+    else. seedance-2.0 (default) = any int in [4, 15]; legacy = {5, 10} enum.
+    Requests snap UP into the valid set, and a runaway value (e.g. the old
+    frames-as-seconds bug sending 40) clamps instead of reaching the API."""
+    wave = build_video_gen({"name": "wavespeed"})   # default = seedance-2.0
+    assert wave._snap_duration(0.375) == 4
     assert wave._snap_duration(5) == 5
-    assert wave._snap_duration(5.0) == 5
-    assert wave._snap_duration(6.2) == 10
-    assert wave._snap_duration(40) == 10
-    custom = build_video_gen({"name": "wavespeed", "allowed_durations": [3, 6]})
+    assert wave._snap_duration(6.2) == 7
+    assert wave._snap_duration(40) == 15
+    legacy = build_video_gen({"name": "wavespeed",
+                              "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
+    assert legacy._snap_duration(0.375) == 5
+    assert legacy._snap_duration(6.2) == 10
+    assert legacy._snap_duration(40) == 10
+    custom = build_video_gen({"name": "wavespeed",
+                              "model_id": "bytedance/seedance-v1-pro-t2v-480p",
+                              "allowed_durations": [3, 6]})
     assert custom._snap_duration(4) == 6
 
 
-def test_wavespeed_t2v_payload_matches_univa_reference(tmp_path: Path, monkeypatch):
-    """t2v payload mirrors UniVA's WORKING reference: aspect_ratio present,
-    duration snapped to an allowed value. i2v (first_frame) payload carries the
-    image instead and NO aspect_ratio (the image defines it)."""
+def test_wavespeed_seedance2_payloads_match_official_docs(tmp_path: Path, monkeypatch):
+    """Default family = seedance-2.0 (docs-verified 2026-07): t2v carries
+    aspect_ratio + resolution + generate_audio (no legacy seed); i2v swaps the
+    3-segment id to /image-to-video and passes the frame by UPLOADED URL."""
     monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
     wave = build_video_gen({"name": "wavespeed"})
     calls = []
@@ -189,15 +198,110 @@ def test_wavespeed_t2v_payload_matches_univa_reference(tmp_path: Path, monkeypat
         return out
 
     monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media", lambda p: "https://fake.host/f.png")
+
     wave.generate("a ball falls", 5.0, tmp_path / "t2v.mp4")
+    assert calls[0]["model_id"] == "bytedance/seedance-2.0/text-to-video"
     assert calls[0]["payload"]["aspect_ratio"] == "16:9"
     assert calls[0]["payload"]["duration"] == 5
+    assert calls[0]["payload"]["resolution"] == "1080p"
+    assert calls[0]["payload"]["generate_audio"] is False
+    assert "seed" not in calls[0]["payload"]
 
     frame = tmp_path / "f.png"; frame.write_bytes(b"\x89PNG\r\n")
     wave.generate("continue", 1.7, tmp_path / "i2v.mp4", first_frame=frame)
+    assert calls[1]["model_id"] == "bytedance/seedance-2.0/image-to-video"
     assert "aspect_ratio" not in calls[1]["payload"]
-    assert calls[1]["payload"]["duration"] == 5          # snapped up from 1.7
-    assert calls[1]["payload"]["image"].startswith("data:image/png;base64,")
+    assert calls[1]["payload"]["duration"] == 4          # snapped up into [4, 15]
+    assert calls[1]["payload"]["image"] == "https://fake.host/f.png"
+
+
+def test_wavespeed_legacy_seedance_v1_payload_matches_univa_reference(
+        tmp_path: Path, monkeypatch):
+    """A legacy v1 model id keeps UniVA's WORKING schema: seed present,
+    duration snapped to {5,10}, -t2v- → -i2v- id swap."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed",
+                            "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
+    calls = []
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls.append({"model_id": model_id, "payload": payload})
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media", lambda p: "https://fake.host/f.png")
+
+    wave.generate("a ball falls", 5.0, tmp_path / "t2v.mp4", seed=7)
+    assert calls[0]["payload"]["seed"] == 7
+    assert calls[0]["payload"]["aspect_ratio"] == "16:9"
+    assert calls[0]["payload"]["duration"] == 5
+    assert "resolution" not in calls[0]["payload"]
+
+    frame = tmp_path / "f.png"; frame.write_bytes(b"\x89PNG\r\n")
+    wave.generate("continue", 1.7, tmp_path / "i2v.mp4", first_frame=frame)
+    assert calls[1]["model_id"] == "bytedance/seedance-v1-pro-i2v-480p"
+    assert calls[1]["payload"]["duration"] == 5          # {5,10} enum
+    assert calls[1]["payload"]["image"] == "https://fake.host/f.png"
+
+
+def test_wavespeed_flf2v_routes(tmp_path: Path, monkeypatch):
+    """frame_to_frame default = seedance-2.0 i2v with image+last_image (the
+    best first+last model); flf2v_model=wan-flf2v keeps the legacy schema."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    first = tmp_path / "a.png"; first.write_bytes(b"\x89PNG")
+    last = tmp_path / "b.png"; last.write_bytes(b"\x89PNG")
+
+    def _mk(client, calls):
+        def _fake_run_task(model_id, payload, out_path):
+            calls.append({"model_id": model_id, "payload": payload})
+            out = Path(out_path); out.write_bytes(b"OUT")
+            return out
+        return _fake_run_task
+
+    wave = build_video_gen({"name": "wavespeed"})
+    calls = []
+    monkeypatch.setattr(wave, "_run_task", _mk(wave, calls))
+    monkeypatch.setattr(wave, "_upload_media", lambda p: f"https://fake.host/{Path(p).name}")
+    wave.frame_to_frame("morph", first, last, tmp_path / "o.mp4", duration=2)
+    assert calls[0]["model_id"] == "bytedance/seedance-2.0/image-to-video"
+    assert calls[0]["payload"]["image"].endswith("a.png")
+    assert calls[0]["payload"]["last_image"].endswith("b.png")
+    assert calls[0]["payload"]["duration"] == 4          # snapped into [4, 15]
+
+    legacy = build_video_gen({"name": "wavespeed",
+                              "flf2v_model": "wavespeed-ai/wan-flf2v"})
+    calls2 = []
+    monkeypatch.setattr(legacy, "_run_task", _mk(legacy, calls2))
+    monkeypatch.setattr(legacy, "_upload_media", lambda p: f"https://fake.host/{Path(p).name}")
+    legacy.frame_to_frame("morph", first, last, tmp_path / "o2.mp4", duration=2)
+    assert calls2[0]["model_id"] == "wavespeed-ai/wan-flf2v"
+    assert calls2[0]["payload"]["first_image"].endswith("a.png")
+    assert calls2[0]["payload"]["last_image"].endswith("b.png")
+    assert calls2[0]["payload"]["size"] == "832*480"
+    assert calls2[0]["payload"]["duration"] == 5         # {5,10} enum
+
+
+def test_wavespeed_edit_video_seedance_default_route(tmp_path: Path, monkeypatch):
+    """edit_video default backend = seedance-2.0/video-edit; the input video is
+    passed by UPLOADED URL (gen4-aleph 400s on base64 — the URL rule is global)."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    calls = []
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls.append({"model_id": model_id, "payload": payload})
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media", lambda p: "https://fake.host/in.mp4")
+    vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    wave.edit_video("make it rain", vid, tmp_path / "o.mp4")
+    assert calls[0]["model_id"] == "bytedance/seedance-2.0/video-edit"
+    assert calls[0]["payload"]["video"] == "https://fake.host/in.mp4"
+    assert calls[0]["payload"]["generate_audio"] is False
 
 
 def test_wavespeed_400_error_surfaces_response_body(tmp_path: Path, monkeypatch):
@@ -228,42 +332,22 @@ def test_wavespeed_400_error_surfaces_response_body(tmp_path: Path, monkeypatch)
         assert "<5000 chars>" in str(e)
 
 
-# ── video EXTEND (the capability UniVA has as video_extension; we add it) ──
+# ── video EXTEND (dedicated seedance-2.0/video-extend endpoint) ──
 def test_wavespeed_extend_loud_without_api_key(tmp_path: Path, monkeypatch):
-    """extend() must fail LOUDLY (no key) BEFORE any decode or network POST.
-    We fake the decoder so a missing real video can't mask the key check."""
-    pytest.importorskip("numpy")
-    import numpy as np
-
-    import maestro.physics.track_extractor_backends as be
-
+    """extend() must fail LOUDLY (no key) BEFORE any upload or network POST."""
     monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
-    # If the key check were skipped, this fake would let extend proceed — so a
-    # RuntimeError here proves the loud guard fires first (no network either).
-    monkeypatch.setattr(be, "_decode_frames",
-                        lambda p: np.zeros((3, 8, 8, 3), dtype="uint8"))
     wave = build_video_gen({"name": "wavespeed"})
     vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     with pytest.raises(RuntimeError, match="API key"):
         wave.extend("continue the shot", vid, tmp_path / "o.mp4")
 
 
-def test_wavespeed_extend_drives_i2v_on_last_frame(tmp_path: Path, monkeypatch):
-    """With a key + a fake decoder, extend() saves the LAST frame and drives an
-    i2v continuation via _run_task — recorded by a stub, NO network."""
-    pytest.importorskip("numpy")
-    import numpy as np
-
-    import maestro.physics.track_extractor_backends as be
-
+def test_wavespeed_extend_posts_dedicated_endpoint(tmp_path: Path, monkeypatch):
+    """extend() posts the WHOLE input video (uploaded, by URL) to the dedicated
+    video-extend model — no more decode-last-frame → i2v hack. Stubbed, NO
+    network."""
     monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
-    frames = np.zeros((3, 8, 8, 3), dtype="uint8")
-    frames[-1, 0, 0, 0] = 200  # mark the last frame
-    monkeypatch.setattr(be, "_decode_frames", lambda p: frames)
-
-    wave = build_video_gen(
-        {"name": "wavespeed", "model_id": "bytedance/seedance-v1-pro-t2v-480p"}
-    )
+    wave = build_video_gen({"name": "wavespeed"})
     calls = {}
 
     def _fake_run_task(model_id, payload, out_path):
@@ -273,10 +357,12 @@ def test_wavespeed_extend_drives_i2v_on_last_frame(tmp_path: Path, monkeypatch):
         return out
 
     monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media", lambda p: "https://fake.host/in.mp4")
     vid = tmp_path / "in.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
     out = wave.extend("continue the shot", vid, tmp_path / "o.mp4", duration=5)
 
     assert out.exists()
-    assert "-i2v-" in calls["model_id"]                 # swapped to the i2v id
-    assert calls["payload"]["image"].startswith("data:image/png;base64,")
+    assert calls["model_id"] == "bytedance/seedance-2.0/video-extend"
+    assert calls["payload"]["video"] == "https://fake.host/in.mp4"
     assert calls["payload"]["prompt"] == "continue the shot"
+    assert calls["payload"]["duration"] == 5

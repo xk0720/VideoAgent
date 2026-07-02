@@ -24,9 +24,16 @@ models:
     n_frames: 4            # 每个 clip 抽几帧给评审看
 
   # 视频生成——只调 WaveSpeed API（真像素，无本地 GPU）。
+  # 默认 = 当前效果最强的 seedance-2.0 全家桶（时长 4-15 秒任意整数，最高 4k；
+  # i2v 原生支持首帧+尾帧）。旧模型（seedance-v1 / wan-flf2v）仍兼容：换 model_id 即可。
   video_gen:
     name: "wavespeed"
-    model_id: "bytedance/seedance-v1-pro-t2v-480p"
+    model_id: "bytedance/seedance-2.0/text-to-video"   # i2v id 自动推导
+    resolution: "1080p"       # 480p | 720p | 1080p | 4k
+    generate_audio: false     # seedance-2.0 可原生出声；评审链路默认关
+    # flf2v_model:  "bytedance/seedance-2.0/image-to-video"  # 首尾帧路由（默认）
+    # edit_model:   "bytedance/seedance-2.0/video-edit"
+    # extend_model: "bytedance/seedance-2.0/video-extend"
     poll_interval: 2.0
     timeout: 600
 
