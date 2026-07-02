@@ -332,11 +332,16 @@ class OrchestratorAgent:
             }
         return None
 
-    def decide(self, clip, spec, menu, history, defect_report=None) -> dict:
+    def decide(self, clip, spec, menu, history, defect_report=None,
+               review_brief=None) -> dict:
         """Decide ONE tool call. RETRIEVE-FIRST: if a learned repair workflow
         matches this defect, replay its next untried step (via="skill") instead
         of re-reasoning. Only when no skill matches OR its steps are exhausted do
         we call the LLM for fresh full-palette reasoning (via="llm").
+
+        `review_brief` is the ReviewSummarizerAgent's consolidated dict (ranked
+        issues + provenance + progress + do_not_repeat) — placed first in the
+        prompt per the skill file's "read this first".
 
         Returns the validated decision dict {tool, args, reason, via, ...}, or the
         INVALID sentinel (unparseable reply / tool not in the menu) so the caller
@@ -352,7 +357,8 @@ class OrchestratorAgent:
                        "tool": skill_decision["tool"]})
             return skill_decision
 
-        prompt = self._build_prompt(clip, spec, menu, history, defect_report)
+        prompt = self._build_prompt(clip, spec, menu, history, defect_report,
+                                    review_brief=review_brief)
         reply = self.llm.complete(prompt)
         data = _extract_json(reply)
 

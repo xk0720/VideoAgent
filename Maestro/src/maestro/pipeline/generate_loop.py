@@ -737,12 +737,17 @@ def generate_shot_orchestrated(
     fps: int = 8,
     n_candidates: int = 2,
     max_turns: int = 4,
+    summarizer=None,
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
     Initial best-of-N + tournament (reused), then per turn:
       1. converged? stop.
-      2. brain reads the structured review → decides ONE tool call (decide).
+      2. the ReviewSummarizerAgent consolidates ALL critiques (measured
+         physics + MLLM opinion + metrics) into ONE prioritized review_brief
+         (ranked issues, provenance, progress vs last turn, do_not_repeat);
+         the brain reads the brief + the structured review → decides ONE tool
+         call (decide).
       3. invalid/garbage → deterministic RepairRouter fallback (one action);
          "accept" → stop.
       4. execute the tool → fresh reviewed candidate.
@@ -754,10 +759,18 @@ def generate_shot_orchestrated(
     trace). Verification bar NEVER moves — the monotonic contract is identical to
     generate_shot.
     """
+    from ..agents.review_summarizer import ReviewSummarizerAgent
+
     image_edit = image_edit or MockImageEditClient()
     cache_dir = Path(cache_dir)
     gen_calls = 0
     ref_images = retrieval.retrieve_identity_refs(spec.identity_refs) if retrieval else None
+    # The review 整理员: consolidates heterogeneous critiques into the brain's
+    # review_brief. Shares the brain's LLM for the prose polish (a Mock LLM is
+    # ignored inside — the structured brief itself is always deterministic).
+    summarizer = summarizer or ReviewSummarizerAgent(
+        llm=getattr(orchestrator, "llm", None))
+    prev_issues: Optional[list] = None
 
     # 1. Initial candidates → bidirectional tournament (reused selection).
     candidates = []
@@ -806,11 +819,22 @@ def generate_shot_orchestrated(
         # Re-localize EVERY turn from the freshly-reviewed best: which entity,
         # which frames, severity — the brain reads this guide, not a flat blob.
         defect_report = build_defect_report(best, spec, fps)
+        # Consolidate ALL critiques into the prioritized review_brief (ranked
+        # issues + provenance + progress vs last turn + do_not_repeat ledger).
+        review_brief = summarizer.summarize(
+            best, spec, defect_report, history=brain_history,
+            prev_issues=prev_issues,
+        )
+        prev_issues = review_brief.get("issues", [])
+        if review_brief.get("headline"):
+            log.info("shot %d turn%d review-brief: %s",
+                     spec.shot_idx, turn, review_brief["headline"])
         menu = orchestrator.available_actions(
             video_gen=generator.video_gen, asset_memory=asset_memory
         )
         decision = orchestrator.decide(
-            best, spec, menu, brain_history, defect_report=defect_report
+            best, spec, menu, brain_history, defect_report=defect_report,
+            review_brief=review_brief,
         )
 
         invalid = decision.get("tool") in ("__invalid__",)
@@ -845,11 +869,13 @@ def generate_shot_orchestrated(
                     "via": "repair_router_fallback", "outcome": outcome,
                     "new_total": round(new_total, 4),
                     "defects": defect_report.to_brain_json(),
+            "brief_headline": review_brief.get("headline", ""),
                 })
                 continue
             actions.append({"tool": "accept", "args": {}, "outcome": "stop",
                             "reason": decision.get("reason", ""),
-                            "defects": defect_report.to_brain_json()})
+                            "defects": defect_report.to_brain_json(),
+                            "brief_headline": review_brief.get("headline", "")})
             log.info("shot %d turn%d brain chose ACCEPT → stop", spec.shot_idx, turn)
             break
 
@@ -901,6 +927,7 @@ def generate_shot_orchestrated(
             "reason": decision.get("reason", ""), "via": via,
             "outcome": outcome, "new_total": round(new_total, 4),
             "defects": defect_report.to_brain_json(),
+            "brief_headline": review_brief.get("headline", ""),
         })
         log.info("shot %d turn%d via=%s tool=%s → %s (total=%.4f)",
                  spec.shot_idx, turn, via, decision.get("tool"), outcome, new_total)

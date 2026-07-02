@@ -144,6 +144,8 @@ def main() -> int:
                else "LLM（在完整原子工具盘上重新推理）" if via == "llm"
                else via)
         print(f"\n  ── 回合 {turn} ──  via={tag}")
+        if a.get("brief_headline"):
+            print(f"    【review 整理员简报】{a['brief_headline']}")
         defects = a.get("defects", [])
         print(f"    本回合定位缺陷（DefectReport，{len(defects)} 个）:")
         for d in defects:
