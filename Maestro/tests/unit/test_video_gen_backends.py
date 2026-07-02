@@ -160,6 +160,74 @@ def test_wavespeed_repaint_honest_skeleton_error(tmp_path: Path, monkeypatch):
         wave.repaint("a red car", vid, "car", tmp_path / "o.mp4")
 
 
+def test_wavespeed_snap_duration_to_allowed_values():
+    """WaveSpeed models accept only fixed durations (seedance: 5 or 10 s) —
+    anything else 400s. Requests snap UP to the nearest allowed value, and a
+    runaway value (e.g. the old frames-as-seconds bug sending 40) clamps to
+    the max instead of reaching the API."""
+    wave = build_video_gen({"name": "wavespeed"})
+    assert wave._snap_duration(0.375) == 5
+    assert wave._snap_duration(5) == 5
+    assert wave._snap_duration(5.0) == 5
+    assert wave._snap_duration(6.2) == 10
+    assert wave._snap_duration(40) == 10
+    custom = build_video_gen({"name": "wavespeed", "allowed_durations": [3, 6]})
+    assert custom._snap_duration(4) == 6
+
+
+def test_wavespeed_t2v_payload_matches_univa_reference(tmp_path: Path, monkeypatch):
+    """t2v payload mirrors UniVA's WORKING reference: aspect_ratio present,
+    duration snapped to an allowed value. i2v (first_frame) payload carries the
+    image instead and NO aspect_ratio (the image defines it)."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    calls = []
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls.append({"model_id": model_id, "payload": payload})
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    wave.generate("a ball falls", 5.0, tmp_path / "t2v.mp4")
+    assert calls[0]["payload"]["aspect_ratio"] == "16:9"
+    assert calls[0]["payload"]["duration"] == 5
+
+    frame = tmp_path / "f.png"; frame.write_bytes(b"\x89PNG\r\n")
+    wave.generate("continue", 1.7, tmp_path / "i2v.mp4", first_frame=frame)
+    assert "aspect_ratio" not in calls[1]["payload"]
+    assert calls[1]["payload"]["duration"] == 5          # snapped up from 1.7
+    assert calls[1]["payload"]["image"].startswith("data:image/png;base64,")
+
+
+def test_wavespeed_400_error_surfaces_response_body(tmp_path: Path, monkeypatch):
+    """REGRESSION: raise_for_status() drops the response body — the part where
+    WaveSpeed explains WHICH field is wrong. The error must carry it, plus a
+    payload summary with base64 blobs shortened."""
+    import sys
+    import types
+
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+
+    class FakeResp:
+        status_code = 400
+        text = '{"code":400,"message":"duration must be one of [5, 10]"}'
+
+    fake_requests = types.SimpleNamespace(post=lambda *a, **k: FakeResp())
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+    with pytest.raises(RuntimeError, match=r"duration must be one of"):
+        wave._run_task("bytedance/seedance-v1-pro-t2v-480p",
+                       {"prompt": "x", "duration": 40, "image": "A" * 5000},
+                       tmp_path / "o.mp4")
+    # and the payload summary never embeds the full base64 blob
+    try:
+        wave._run_task("m/x", {"image": "A" * 5000}, tmp_path / "o.mp4")
+    except RuntimeError as e:
+        assert "A" * 300 not in str(e)
+        assert "<5000 chars>" in str(e)
+
+
 # ── video EXTEND (the capability UniVA has as video_extension; we add it) ──
 def test_wavespeed_extend_loud_without_api_key(tmp_path: Path, monkeypatch):
     """extend() must fail LOUDLY (no key) BEFORE any decode or network POST.

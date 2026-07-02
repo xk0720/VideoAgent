@@ -29,7 +29,8 @@ class StubVideoGen:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("seg", encoding="utf-8")
         self.generate_calls.append({"out": str(out_path),
-                                    "first_frame": str(first_frame)})
+                                    "first_frame": str(first_frame),
+                                    "duration": duration})
         return out_path
 
     def frame_to_frame(self, prompt, first_frame, last_frame, out_path,
@@ -37,7 +38,8 @@ class StubVideoGen:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("flf", encoding="utf-8")
-        self.flf_calls.append({"first": str(first_frame), "last": str(last_frame)})
+        self.flf_calls.append({"first": str(first_frame), "last": str(last_frame),
+                               "duration": duration})
         return out_path
 
 
@@ -141,6 +143,36 @@ def test_flf2v_double_anchor_used_for_motion_when_available(tmp_path, monkeypatc
     assert len(vg.flf_calls) == 1
     assert "seg0_last" in vg.flf_calls[0]["first"]
     assert "seg2_first" in vg.flf_calls[0]["last"]
+
+
+def test_repair_durations_are_seconds_not_frames(tmp_path, monkeypatch):
+    """REGRESSION (the 400 bug): segment spans are FRAMES; the generation APIs
+    take SECONDS. A 12-frame clip declared 1.5 s long (fps=8, via duration_s)
+    split into 4 segments of 3 frames each must request 0.375 s per segment —
+    never `3` (frames-as-seconds), which real APIs reject with 400."""
+    monkeypatch.setattr(tl, "frame_similarity", lambda a, b: 0.0)
+    _stub_splice(monkeypatch)
+    _patch_decode_and_write(monkeypatch, _fake_frames(T=12))
+
+    def fake_extract(video_path, idx, out_path):
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("newlast", encoding="utf-8")
+        return out_path
+    monkeypatch.setattr(tl, "extract_frame", fake_extract)
+
+    clip = CandidateClip(shot_idx=0, video_path=tmp_path / "clip.mp4")
+    # container fps unknowable (text stub) → fps falls back to 12 / 1.5 = 8
+    t = tl.ClipTimeline.from_clip(clip, tmp_path / "tl", n_segments=4,
+                                  duration_s=1.5)
+    assert abs(t.fps - 8.0) < 1e-9
+
+    vg = StubVideoGen(caps={"t2v", "i2v", "flf2v"})
+    d = Defect("physics", "ball", (3, 5), 0.8, "motion")   # seg 1 (frames 3-6)
+    tl.propagate_repair(t, d, video_gen=vg, hint="fix",
+                        cache_dir=tmp_path / "p", max_cascade=4)
+    for call in vg.flf_calls + vg.generate_calls:
+        assert abs(call["duration"] - 0.375) < 1e-9, call
 
 
 def test_no_ffmpeg_splice_returns_none(tmp_path, monkeypatch):

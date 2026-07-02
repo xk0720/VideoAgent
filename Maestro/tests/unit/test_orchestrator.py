@@ -542,7 +542,8 @@ def test_execute_regenerate_segment_routes_to_propagate_repair(tmp_path, monkeyp
         return out
 
     monkeypatch.setattr(tl.ClipTimeline, "from_clip", classmethod(
-        lambda cls, clip, cache_dir, n_segments=3: fake_from_clip(clip, cache_dir)))
+        lambda cls, clip, cache_dir, n_segments=3, duration_s=None:
+            fake_from_clip(clip, cache_dir)))
     monkeypatch.setattr(tl, "propagate_repair", fake_propagate)
 
     gen = GeneratorAgent(video_gen=MockVideoGenClient())

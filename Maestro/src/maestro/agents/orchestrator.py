@@ -430,7 +430,10 @@ class OrchestratorAgent:
                             severity=0.5, fix_modality=modality, note=tool)
 
         prop_dir = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_{tool}"
-        timeline = ClipTimeline.from_clip(best, prop_dir, n_segments=3)
+        timeline = ClipTimeline.from_clip(
+            best, prop_dir, n_segments=3,
+            duration_s=float(getattr(spec, "duration", 0.0) or 0.0),
+        )
         spliced = propagate_repair(
             timeline, defect, video_gen=vg, image_edit=image_edit,
             hint=hint, cache_dir=prop_dir,

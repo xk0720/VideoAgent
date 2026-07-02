@@ -58,6 +58,73 @@ def _write_frame(frame, out_path: Path) -> Optional[Path]:
         return None
 
 
+def _probe_fps(path: Path) -> float:
+    """Container-reported fps of a video, or 0.0 if unknowable (mock clip /
+    no decoder). Needed to convert segment FRAME spans into SECONDS for the
+    generation APIs — WaveSpeed's `duration` is seconds, and its models output
+    their own fps (seedance: 24), not whatever fps we requested."""
+    p = Path(path)
+    try:
+        import decord  # type: ignore
+
+        fps = float(decord.VideoReader(str(p)).get_avg_fps())
+        if fps > 0:
+            return fps
+    except Exception:
+        pass
+    try:
+        import cv2  # type: ignore
+
+        cap = cv2.VideoCapture(str(p))
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        cap.release()
+        return fps if fps > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _fit_to_seconds(video_path: Path, target_s: float, out_path: Path) -> Path:
+    """Retime a generated segment to `target_s` seconds.
+
+    Fixed-duration APIs (seedance: 5 or 10 s) return MORE video than a short
+    segment span needs. Compress the WHOLE returned motion into the span
+    (setpts) instead of cutting it off mid-arc, so the spliced timeline keeps
+    its original length and pacing. Already-matching lengths pass through.
+    Any failure (no ffmpeg/ffprobe, undecodable input) returns the ORIGINAL
+    path — a too-long segment still splices, it is just long."""
+    import shutil
+    import subprocess
+
+    if target_s <= 0 or not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return Path(video_path)
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        actual = float(probe.stdout.strip())
+    except Exception:
+        return Path(video_path)
+    if actual <= 0 or abs(actual - target_s) / target_s < 0.1:
+        return Path(video_path)
+    factor = target_s / actual
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(video_path),
+             "-vf", f"setpts={factor:.6f}*PTS", "-an",
+             "-t", f"{target_s:.3f}", str(out_path)],
+            capture_output=True, timeout=600,
+        )
+    except Exception:
+        return Path(video_path)
+    if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        return Path(video_path)
+    return out_path
+
+
 def extract_frame(video_path: Path, idx: int, out_path: Path) -> Optional[Path]:
     """Decode `video_path` and write frame `idx` (clamped) to `out_path` as PNG.
 
@@ -120,13 +187,20 @@ class ClipTimeline:
     segments: list[Segment] = field(default_factory=list)
     degraded: bool = False               # no real frames / no image writer
     cache_dir: Optional[Path] = None
+    fps: float = 0.0                     # real container fps; 0.0 = unknown
 
     @classmethod
     def from_clip(
-        cls, clip, cache_dir, n_segments: int = 3
+        cls, clip, cache_dir, n_segments: int = 3,
+        duration_s: Optional[float] = None,
     ) -> "ClipTimeline":
         """Split a clip into `n_segments` equal time spans, writing each
         segment's first/last boundary frame to `cache_dir` as PNG.
+
+        `duration_s` (the shot's known length in seconds, e.g. spec.duration)
+        is the fps fallback when the container does not report one: fps =
+        n_frames / duration_s. Frame spans MUST convert to seconds before any
+        generation call — the APIs take seconds, not frames.
 
         Non-decodable (mock) clip → a single degenerate segment with no boundary
         images and `degraded=True`, so callers no-op gracefully."""
@@ -141,6 +215,9 @@ class ClipTimeline:
             seg = Segment(idx=0, start_frame=0, end_frame=0, video_path=clip_path)
             return cls(clip_path=clip_path, n_frames=0, segments=[seg],
                        degraded=True, cache_dir=cache_dir)
+        fps = _probe_fps(clip_path)
+        if fps <= 0 and duration_s and float(duration_s) > 0:
+            fps = len(frames) / float(duration_s)
 
         n = len(frames)
         n_segments = max(1, min(int(n_segments), n))
@@ -165,7 +242,7 @@ class ClipTimeline:
                 first_frame_path=first, last_frame_path=last,
             ))
         return cls(clip_path=clip_path, n_frames=n, segments=segments,
-                   degraded=degraded, cache_dir=cache_dir)
+                   degraded=degraded, cache_dir=cache_dir, fps=fps)
 
     def segment_for_frame_range(self, frame_range) -> Optional[Segment]:
         """The segment whose span overlaps `frame_range` the most."""
@@ -247,7 +324,11 @@ def propagate_repair(
     new_paths: list[Path] = [s.video_path for s in segs]
     new_last: list[Optional[Path]] = [s.last_frame_path for s in segs]
 
-    dur = max(1, seg.end_frame - seg.start_frame)
+    # Segment spans are FRAMES; the generation APIs take SECONDS. Convert with
+    # the real container fps (24.0 = the common API output rate, used only when
+    # the container reports nothing and the caller gave no duration_s).
+    fps = timeline.fps if timeline.fps > 0 else 24.0
+    dur = max(1e-3, (seg.end_frame - seg.start_frame) / fps)
 
     # ── 2. repair S_i ────────────────────────────────────────────────────────
     repaired: Optional[Path] = None
@@ -279,6 +360,10 @@ def propagate_repair(
         )
     if repaired is None:
         return None
+    # Fixed-duration APIs return ≥ the span (seedance min 5 s) — retime the
+    # result back to the span length so the spliced timeline keeps its length.
+    repaired = _fit_to_seconds(Path(repaired), dur,
+                               cache_dir / f"seg{i}_repaired_fit.mp4")
     new_paths[i] = Path(repaired)
     # New last frame of the repaired segment (drives the cascade anchor).
     nl = extract_frame(repaired, 10**9, cache_dir / f"seg{i}_new_last.png")
@@ -292,13 +377,15 @@ def propagate_repair(
         if anchor is None:                   # lost the anchor → cannot continue
             break
         out_j = cache_dir / f"seg{j}_cascade.mp4"
-        dur_j = max(1, segs[j].end_frame - segs[j].start_frame)
+        dur_j = max(1e-3, (segs[j].end_frame - segs[j].start_frame) / fps)
         regen = video_gen.generate(
             prompt=hint or "continue the shot; keep one continuous trajectory",
             duration=dur_j, out_path=out_j, first_frame=anchor,
         )
         if regen is None:
             break
+        regen = _fit_to_seconds(Path(regen), dur_j,
+                                cache_dir / f"seg{j}_cascade_fit.mp4")
         new_paths[j] = Path(regen)
         cascade_depth += 1
         new_j_last = extract_frame(

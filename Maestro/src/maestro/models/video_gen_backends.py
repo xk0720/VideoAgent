@@ -64,6 +64,19 @@ class WaveSpeedClient(BaseVideoGenClient):
         return {"Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"}
 
+    def _snap_duration(self, seconds: float) -> int:
+        """WaveSpeed video models accept only FIXED durations (seedance: 5 or
+        10 s) — anything else is a 400. Snap the requested seconds UP to the
+        nearest allowed value; callers that need a shorter span retime the
+        surplus back off (pipeline.timeline._fit_to_seconds)."""
+        allowed = sorted(int(a) for a in self.config.get("allowed_durations",
+                                                         (5, 10)))
+        want = int(seconds) if float(seconds) == int(seconds) else int(seconds) + 1
+        for a in allowed:
+            if want <= a:
+                return a
+        return allowed[-1]
+
     def generate(
         self,
         prompt: str,
@@ -76,9 +89,8 @@ class WaveSpeedClient(BaseVideoGenClient):
     ) -> Path:
         import base64
 
-        import requests  # std in our [all] extras; loud ImportError otherwise
-
-        payload: dict = {"prompt": prompt, "duration": max(1, int(round(duration))),
+        payload: dict = {"prompt": prompt,
+                         "duration": self._snap_duration(duration),
                          "seed": seed}
         model_id = self.model_id
         if first_frame is not None and Path(first_frame).exists():
@@ -87,8 +99,18 @@ class WaveSpeedClient(BaseVideoGenClient):
             ).decode()
             # i2v variant if the configured id is the t2v one
             model_id = model_id.replace("-t2v-", "-i2v-")
+        else:
+            # t2v: mirror UniVA's working payload (image defines the ratio in i2v)
+            payload["aspect_ratio"] = self.config.get("aspect_ratio", "16:9")
 
         return self._run_task(model_id, payload, out_path)
+
+    @staticmethod
+    def _summarize_payload(payload: dict) -> dict:
+        """Payload with base64 blobs shortened — safe to put in an error message."""
+        return {k: (f"<{len(v)} chars>" if isinstance(v, str) and len(v) > 200
+                    else v)
+                for k, v in payload.items()}
 
     # ── shared submit → poll predictions/{id}/result → download (UniVA protocol) ──
     def _run_task(self, model_id: str, payload: dict, out_path: Path) -> Path:
@@ -98,7 +120,14 @@ class WaveSpeedClient(BaseVideoGenClient):
             f"{self.BASE}/{model_id}", json=payload, headers=self._headers(),
             timeout=60,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Surface the API's own explanation — raise_for_status() drops the
+            # response body, which is where WaveSpeed says WHICH field is wrong.
+            raise RuntimeError(
+                f"WaveSpeed submit to '{model_id}' failed: HTTP "
+                f"{resp.status_code} — {resp.text[:2000]}\n"
+                f"payload: {self._summarize_payload(payload)}"
+            )
         task_id = resp.json()["data"]["id"]
 
         deadline = time.time() + self.timeout
@@ -107,7 +136,14 @@ class WaveSpeedClient(BaseVideoGenClient):
                 f"{self.BASE}/predictions/{task_id}/result",
                 headers=self._headers(), timeout=30,
             )
-            r.raise_for_status()
+            if r.status_code >= 500:          # transient server hiccup → re-poll
+                time.sleep(self.poll_interval)
+                continue
+            if r.status_code >= 400:
+                raise RuntimeError(
+                    f"WaveSpeed poll for task {task_id} ('{model_id}') failed: "
+                    f"HTTP {r.status_code} — {r.text[:2000]}"
+                )
             data = r.json()["data"]
             status = data.get("status")
             if status == "completed":
@@ -145,7 +181,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         first_frame: Path,
         last_frame: Path,
         out_path: Path,
-        duration: int = 5,
+        duration: float = 5,
         seed: int = 0,
     ) -> Path:
         """First-last-frame video (wan-flf2v). Ported from UniVA
@@ -157,7 +193,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         first_b64 = base64.b64encode(Path(first_frame).read_bytes()).decode()
         last_b64 = base64.b64encode(Path(last_frame).read_bytes()).decode()
         payload = {
-            "duration": max(1, int(round(duration))),
+            "duration": self._snap_duration(duration),
             "enable_safety_checker": True,
             "first_image": f"data:image/jpeg;base64,{first_b64}",
             "guidance_scale": 5,
@@ -269,7 +305,6 @@ class WaveSpeedClient(BaseVideoGenClient):
         still apply. The loud RuntimeError (no key) fires BEFORE any decode/POST.
         """
         import base64
-        import tempfile
 
         headers = self._headers()  # loud RuntimeError without a key — before any work
 
@@ -283,33 +318,30 @@ class WaveSpeedClient(BaseVideoGenClient):
                 "(not a real/decodable video) — extension needs real pixels."
             )
 
-        # Save the last frame as a temp image, then i2v-continue from it.
+        # Save the last frame NEXT TO the output (run-dir artifact, inspectable
+        # — never a system temp file), then i2v-continue from it.
         last = frames[-1]
-        tmp = Path(tempfile.mkstemp(suffix=".png")[1])
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        anchor = out_path.parent / f"{out_path.stem}_extend_anchor.png"
         try:
-            try:
-                import imageio.v3 as iio  # type: ignore
+            import imageio.v3 as iio  # type: ignore
 
-                iio.imwrite(str(tmp), last)
-            except Exception:
-                import cv2  # type: ignore
+            iio.imwrite(str(anchor), last)
+        except Exception:
+            import cv2  # type: ignore
 
-                cv2.imwrite(str(tmp), last[..., ::-1])  # RGB → BGR for cv2
-            payload: dict = {
-                "prompt": prompt,
-                "duration": max(1, int(round(duration))),
-                "seed": seed,
-                "image": "data:image/png;base64,"
-                + base64.b64encode(tmp.read_bytes()).decode(),
-            }
-            # Reuse the i2v model id (same swap generate() does for first_frame).
-            model_id = self.model_id.replace("-t2v-", "-i2v-")
-            return self._run_task(model_id, payload, out_path)
-        finally:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+            cv2.imwrite(str(anchor), last[..., ::-1])  # RGB → BGR for cv2
+        payload: dict = {
+            "prompt": prompt,
+            "duration": self._snap_duration(duration),
+            "seed": seed,
+            "image": "data:image/png;base64,"
+            + base64.b64encode(anchor.read_bytes()).decode(),
+        }
+        # Reuse the i2v model id (same swap generate() does for first_frame).
+        model_id = self.model_id.replace("-t2v-", "-i2v-")
+        return self._run_task(model_id, payload, out_path)
 
     def supported_conditions(self) -> set[str]:
         return {"first_frame"}
