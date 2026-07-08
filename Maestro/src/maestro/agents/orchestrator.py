@@ -88,9 +88,9 @@ class OrchestratorAgent:
         self.retrieval = retrieval
         self.max_turns = int(max_turns)
         self.logger = logger
-        # The brain's instructions live in an editable skill file (prompts/
-        # orchestrator.txt) — like UniVA's plan.txt but for repair: role, how to
-        # read the review, tool-by-modality logic, output format + examples.
+        # The brain's instructions live in its predefined skill file
+        # (skills/brain_skills/orchestrator.md) — like UniVA's plan.txt but for
+        # repair: role, review reading, tool-by-modality logic, output format.
         # Falls back to a terse inline default if the file is missing.
         self._skill_prompt = self._load_skill_prompt()
 
@@ -284,6 +284,12 @@ class OrchestratorAgent:
 
     def _load_skill_prompt(self) -> str:
         from .base import load_prompt
+        from ..skills.loader import load_skill
+
+        skill = load_skill("orchestrator")
+        if skill and skill["body"].strip():
+            return skill["body"]
+        # legacy location, then the terse inline fallback
         path = Path(__file__).resolve().parent.parent / "prompts" / "orchestrator.txt"
         return load_prompt(path) or self._INLINE_SKILL
 

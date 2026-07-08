@@ -236,6 +236,26 @@ class ReviewSummarizerAgent:
                          f"({worst['why']}).")
         return " ".join(lines)
 
+    _POLISH_FALLBACK = (
+        "Rewrite this review brief as 2-4 clear sentences for a repair "
+        "planner. Use ONLY the facts given — no new issues, numbers or "
+        "guesses. Keep entity names and frame ranges verbatim."
+    )
+
+    def _polish_instruction(self) -> str:
+        """The LLM polish instruction comes from the agent's predefined skill
+        file (skills/summarizer_skills/review_summarizer.md); terse inline
+        fallback when it is missing."""
+        try:
+            from ..skills.loader import load_skill
+
+            skill = load_skill("review_summarizer")
+            if skill and skill["body"].strip():
+                return skill["body"]
+        except Exception:
+            pass
+        return self._POLISH_FALLBACK
+
     def _polish(self, brief: dict) -> None:
         """Ask a REAL LLM to rephrase brief_nl for clarity — facts fixed, no new
         claims. Any failure keeps the deterministic template (never blocks)."""
@@ -244,9 +264,7 @@ class ReviewSummarizerAgent:
         import json
         try:
             reply = self.llm.complete(
-                "Rewrite this review brief as 2-4 clear sentences for a repair "
-                "planner. Use ONLY the facts given — no new issues, numbers or "
-                "guesses. Keep entity names and frame ranges verbatim.\n"
+                self._polish_instruction() + "\n\nTHE BRIEF (facts):\n"
                 + json.dumps({"issues": brief["issues"][:3],
                               "progress": brief["progress"],
                               "do_not_repeat": brief["do_not_repeat"]},

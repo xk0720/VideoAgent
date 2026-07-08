@@ -1,3 +1,9 @@
+---
+name: orchestrator
+agent: OrchestratorAgent (the brain / planner)
+description: How to read the consolidated review and pick EXACTLY ONE repair tool call per turn — full tool catalog, decision rules, strict JSON output.
+---
+
 # Video-Repair Orchestrator — Brain Agent Skill
 
 ## Role

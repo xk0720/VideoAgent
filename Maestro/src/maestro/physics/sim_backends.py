@@ -21,7 +21,7 @@ needing them degrades honestly (ValueError), never a fake sim.
 Training-free; Genesis is a heavy GPU dependency, so everything degrades
 LOUDLY without it (same policy as CoTracker/GroundingDINO).
 
-scene_spec (the brain writes this; documented in prompts/orchestrator.txt):
+scene_spec (the brain writes this; documented in skills/brain_skills/orchestrator.md):
     {
       "objects": [
         {"id": "ball", "type": "sphere", "pos": [0,0,1.0], "radius": 0.1,
