@@ -233,7 +233,7 @@ def _tier0_local_edit(
         )
         gen_calls += 1
         board.review(cand, spec, asset_memory, fps)
-        if verifier.is_better(cand, best):
+        if verifier.is_better(cand, best, spec=spec):
             return cand, gen_calls
     return None, gen_calls
 
@@ -288,7 +288,7 @@ def _tier1_replan_physics(
         cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
         gen_calls += 1
         board.review(cand, spec, asset_memory, fps)
-        if verifier.is_better(cand, best):
+        if verifier.is_better(cand, best, spec=spec):
             return cand, gen_calls
         return None, gen_calls
 
@@ -304,7 +304,7 @@ def _tier1_replan_physics(
             cand = CandidateClip(shot_idx=spec.shot_idx, video_path=src, revision=r)
             gen_calls += 1
             board.review(cand, spec, asset_memory, fps)
-            if verifier.is_better(cand, best):
+            if verifier.is_better(cand, best, spec=spec):
                 return cand, gen_calls
         return None, gen_calls
 
@@ -317,7 +317,7 @@ def _tier1_replan_physics(
         cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
         gen_calls += 1
         board.review(cand, spec, asset_memory, fps)
-        if verifier.is_better(cand, best):
+        if verifier.is_better(cand, best, spec=spec):
             return cand, gen_calls
         return None, gen_calls
 
@@ -334,7 +334,7 @@ def _tier1_replan_physics(
         )
         gen_calls += 1
         board.review(cand, spec, asset_memory, fps)
-        if verifier.is_better(cand, best):
+        if verifier.is_better(cand, best, spec=spec):
             return cand, gen_calls
     return None, gen_calls
 
@@ -364,7 +364,7 @@ def _tier2_replan_spec(
         )
         gen_calls += 1
         board.review(cand, spec, asset_memory, fps)
-        if verifier.is_better(cand, best):
+        if verifier.is_better(cand, best, spec=spec):
             return cand, gen_calls
     return None, gen_calls
 
@@ -853,7 +853,7 @@ def generate_shot_orchestrated(
                     fps=fps, retrieval=retrieval,
                 )
                 gen_calls += 1
-                if cand is not None and verifier.is_better(cand, best):
+                if cand is not None and verifier.is_better(cand, best, spec=spec):
                     best = cand
                     new_total = best.metric_scores.get("weighted_total", 0.0)
                     outcome = "accepted"
@@ -902,7 +902,7 @@ def generate_shot_orchestrated(
             )
             gen_calls += 1
 
-        if cand is not None and verifier.is_better(cand, best):
+        if cand is not None and verifier.is_better(cand, best, spec=spec):
             best = cand
             new_total = best.metric_scores.get("weighted_total", 0.0)
             outcome = "accepted"

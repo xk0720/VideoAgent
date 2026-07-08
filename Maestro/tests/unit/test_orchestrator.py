@@ -598,3 +598,103 @@ def test_loop_does_not_accept_while_defects_remain(tmp_path):
     assert all(h[i] <= h[i + 1] + 1e-9 for i in range(len(h) - 1)), h
     # Every recorded turn carries its localized defect snapshot.
     assert all("defects" in a for a in res.actions)
+
+
+# ── simulate_reference (NEWTON borrow: sim as repair conditioning) ──────────
+class _RefVideoGen(MockVideoGenClient):
+    """Mock backend WITH the ref_video channel — records reference_video."""
+
+    def __init__(self):
+        super().__init__(name="mock-refvid-gen")
+        self.gen_calls: list[dict] = []
+
+    def capabilities(self):
+        return {"t2v", "i2v", "ref_video"}
+
+    def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
+                 reference_images=None, seed=0, reference_video=None):
+        self.gen_calls.append({"prompt": prompt,
+                               "reference_video": str(reference_video)})
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(f"MOCK VIDEO\nprompt={prompt}\n", encoding="utf-8")
+        return out
+
+
+class _StubSimClient:
+    """Validates the spec like the real client, then returns a stub sim clip."""
+
+    def __init__(self, tmp):
+        self.calls: list[dict] = []
+        self.tmp = Path(tmp)
+
+    def capabilities(self):
+        return {"sim"}
+
+    def run(self, spec):
+        from maestro.physics.sim_backends import (
+            describe_scene_spec,
+            validate_scene_spec,
+        )
+        validate_scene_spec(spec)
+        self.calls.append(spec)
+        vid = self.tmp / "sim_ref.mp4"
+        vid.write_text("SIM", encoding="utf-8")
+        return {"video_path": vid,
+                "trajectory": {"ball": [[0, 0, 1.0], [0, 0, 0.5]]},
+                "summary": "ball: moved 0.5 m",
+                "scene_desc": describe_scene_spec(spec)}
+
+
+def test_menu_simulate_reference_gated_on_sim_client_and_ref_video(tmp_path):
+    # ref_video cap but NO sim client -> absent
+    gen = GeneratorAgent(video_gen=_RefVideoGen())
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
+    assert "simulate_reference" not in {m["name"] for m in orch.available_actions()}
+    # sim client but backend LACKS the ref_video channel -> absent
+    orch2 = OrchestratorAgent(
+        llm=StubBrainLLM("{}"),
+        generator=GeneratorAgent(video_gen=MockVideoGenClient()),
+        sim_client=_StubSimClient(tmp_path))
+    assert "simulate_reference" not in {m["name"] for m in orch2.available_actions()}
+    # both -> offered
+    orch3 = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen,
+                              sim_client=_StubSimClient(tmp_path))
+    assert "simulate_reference" in {m["name"] for m in orch3.available_actions()}
+
+
+def test_execute_simulate_reference_runs_sim_then_conditions_regen(tmp_path):
+    gen = GeneratorAgent(video_gen=_RefVideoGen())
+    sim = _StubSimClient(tmp_path)
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen, sim_client=sim)
+    best = gen.run(_spec(), tmp_path, revision=0, seed=0)
+    decision = {
+        "tool": "simulate_reference",
+        "args": {"scene_spec": {"objects": [
+                    {"id": "ball", "type": "sphere", "pos": [0, 0, 1.2],
+                     "radius": 0.1, "init_velocity": [0.4, 0, 0]}]},
+                 "hint": "one continuous fall"},
+        "reason": "measured gravity violation survived edit",
+    }
+    cand = orch.execute(decision, best, _spec(), tmp_path, r=2, board=_board())
+    assert cand is not None
+    assert sim.calls, "the sim must actually run"
+    call = gen.video_gen.gen_calls[-1]
+    assert call["reference_video"].endswith("sim_ref.mp4")
+    # ground truth from the SPEC rides the prompt (NEWTON ref_video_desc)
+    assert "exactly 1 sphere" in call["prompt"]
+    assert cand.metric_scores  # board.review ran
+
+
+def test_execute_simulate_reference_invalid_spec_noops(tmp_path):
+    gen = GeneratorAgent(video_gen=_RefVideoGen())
+    orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen,
+                             sim_client=_StubSimClient(tmp_path))
+    best = gen.run(_spec(), tmp_path, revision=0, seed=0)
+    decision = {"tool": "simulate_reference",
+                "args": {"scene_spec": {"objects": [
+                    {"type": "sphere", "material": "liquid"}]}, "hint": "x"},
+                "reason": "r"}
+    # liquid = not rigid -> ValueError inside -> honest no-op, never a crash
+    assert orch.execute(decision, best, _spec(), tmp_path, r=2,
+                        board=_board()) is None

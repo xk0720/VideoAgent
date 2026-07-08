@@ -56,9 +56,14 @@ def test_capabilities_per_client():
     assert build_video_gen({"name": "omniweaving"}).capabilities() == {"t2v", "i2v"}
     # WaveSpeed declares the extras backed by optional methods, plus the v0.4
     # widened atom palette (depth_modify → vace/depth, style_transfer → runway).
+    # "ref_video" (reference_videos motion conditioning) exists ONLY on the
+    # seedance-2.0 family — legacy v1 ids have no such channel.
     wave = build_video_gen({"name": "wavespeed"})
     assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit", "extend",
-                                   "depth", "style"}
+                                   "depth", "style", "ref_video"}
+    legacy = build_video_gen({"name": "wavespeed",
+                              "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
+    assert "ref_video" not in legacy.capabilities()
     # Extra capabilities are optional methods, NOT abstractmethods.
     assert hasattr(wave, "frame_to_frame") and hasattr(wave, "edit_video")
     assert hasattr(wave, "extend")
@@ -366,3 +371,27 @@ def test_wavespeed_extend_posts_dedicated_endpoint(tmp_path: Path, monkeypatch):
     assert calls["payload"]["video"] == "https://fake.host/in.mp4"
     assert calls["payload"]["prompt"] == "continue the shot"
     assert calls["payload"]["duration"] == 5
+
+def test_wavespeed_reference_video_channel(tmp_path: Path, monkeypatch):
+    """generate(reference_video=...) rides seedance-2.0 reference_videos (by
+    uploaded URL); a legacy model id raises honestly (no such channel)."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    calls = []
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls.append({"model_id": model_id, "payload": payload})
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media",
+                        lambda p: f"https://fake.host/{Path(p).name}")
+    ref = tmp_path / "sim.mp4"; ref.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    wave.generate("a ball falls", 5.0, tmp_path / "o.mp4", reference_video=ref)
+    assert calls[0]["payload"]["reference_videos"] == ["https://fake.host/sim.mp4"]
+
+    legacy = build_video_gen({"name": "wavespeed",
+                              "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
+    with pytest.raises(RuntimeError, match="reference_videos"):
+        legacy.generate("x", 5.0, tmp_path / "o2.mp4", reference_video=ref)

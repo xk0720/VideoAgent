@@ -65,11 +65,17 @@ class OrchestratorAgent:
         image_edit: Optional[BaseImageEditClient] = None,
         retrieval=None,
         skill_library=None,
+        sim_client=None,
         max_turns: int = 4,
         logger=None,
     ):
         self.llm = llm or MockLLMClient()
         self.generator = generator
+        # Optional physics-sim backend (GenesisSimClient, NEWTON-style): when
+        # wired AND the video backend has the "ref_video" channel, the brain
+        # gains `simulate_reference` — simulate a physics-correct reference
+        # clip and regenerate conditioned on it.
+        self.sim_client = sim_client
         # Optional SkillLibrary: when set, decide() RETRIEVES a learned repair
         # workflow (retrieve_repair) and replays it BEFORE re-reasoning with the
         # LLM — UniVA's repair workflows are hand-coded; ours are learned skills.
@@ -207,6 +213,25 @@ class OrchestratorAgent:
                 "description": "Continue the clip past its last frame. Best for an "
                 "incomplete / too-short clip or an object_permanence defect.",
                 "args": {"prompt": "str — what should happen in the continuation"},
+            })
+        if self.sim_client is not None and "ref_video" in caps:
+            menu.append({
+                "name": "simulate_reference",
+                "description": "Run a RIGID-BODY physics simulation of the "
+                "scene (you write the scene_spec), producing a physics-CORRECT "
+                "reference video; the whole shot is then re-generated "
+                "conditioned on that reference motion. Strongest fix for a "
+                "MEASURED physics violation (gravity_inertia / collision / "
+                "conservation) that survived other repairs — the generator is "
+                "SHOWN the correct motion instead of being told about it.",
+                "args": {
+                    "scene_spec": "dict — {objects: [{id, type: sphere|box|"
+                                  "cylinder, pos [x,y,z] m, radius|size, "
+                                  "init_velocity [vx,vy,vz] m/s, fixed: bool}],"
+                                  " gravity: [0,0,-9.81]}; floor at z=0 is "
+                                  "implicit; SI units; RIGID bodies only",
+                    "hint": "str — anti-defect instruction for the regeneration",
+                },
             })
         if has_shots and self.retrieval is not None:
             menu.append({
@@ -548,6 +573,39 @@ class OrchestratorAgent:
             )
             if cand is None:
                 return None
+
+        elif tool == "simulate_reference":
+            # NEWTON-style (arXiv:2605.18396): simulate the physics → a
+            # physics-correct reference clip → regenerate conditioned on it
+            # (seedance-2.0 reference_videos channel). Guarded like every
+            # other tool: missing sim client / channel / bad spec → no-op.
+            if (self.sim_client is None or self.video_gen is None
+                    or "ref_video" not in self.video_gen.capabilities()):
+                return None
+            scene_spec = args.get("scene_spec")
+            hint = str(args.get("hint", "")) or "follow the reference video's motion exactly"
+            try:
+                sim = self.sim_client.run(scene_spec)
+            except (ValueError, TypeError) as exc:
+                # invalid brain-written spec — log + no-op (the rejection lands
+                # in history, so the brain can rewrite the spec next turn)
+                log.info("simulate_reference: invalid scene_spec — %s", exc)
+                self._log("execute",
+                          {"shot_idx": spec.shot_idx, "tool": tool},
+                          {"error": f"invalid scene_spec: {exc}"})
+                return None
+            out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_brain_simref.mp4"
+            prompt = spec.prompt + ". " + hint
+            if sim.get("scene_desc"):
+                # ground truth from the SPEC (NEWTON's ref_video_desc): the
+                # generator is told the true object count of the reference.
+                prompt += f" (reference video: {sim['scene_desc']})"
+            video_path = self.video_gen.generate(
+                prompt=prompt, duration=spec.duration, out_path=out,
+                fps=fps, seed=500 + r, reference_video=sim["video_path"],
+            )
+            cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path,
+                                 revision=r)
 
         elif tool == "retrieve_replace":
             if self.retrieval is None:

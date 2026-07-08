@@ -22,7 +22,7 @@ CoTracker+GroundingDINO（需 GPU）。无 GPU 时加 --no-physics-measure，会
 物理测量 critic（绝不改用 mock）。所有产物落到带时间戳的目录。
 
 用法：
-    export OPENAI_API_KEY=...  WAVESPEED_API_KEY=...
+    export OPENAI_API_KEY=...  QWEN_API_KEY=...  WAVESPEED_API_KEY=...
     python scripts/test_review_improve.py --prompt "a glass falls off a table and shatters"
     # 无 GPU：再加 --no-physics-measure
 """
@@ -73,7 +73,9 @@ def _show_review(tag: str, clip) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", default="a glass falls off a table and shatters on the floor")
-    ap.add_argument("--model", default="gpt-4o", help="OpenAI 模型（LLM+VLM）")
+    ap.add_argument("--model", default="gpt-4o", help="纯语言 LLM（OpenAI）")
+    ap.add_argument("--vlm-model", default="qwen-vl-max",
+                    help="评审 VLM（Qwen 系列，DashScope compatible-mode）")
     ap.add_argument("--video-model", default="bytedance/seedance-2.0/text-to-video")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--device", default="cuda", help="CoTracker/GroundingDINO 设备")
@@ -81,7 +83,8 @@ def main() -> int:
                     help="省略参考自由物理测量 critic（无 GPU 时用；不会改用 mock）")
     args = ap.parse_args()
 
-    missing = [k for k in ("OPENAI_API_KEY", "WAVESPEED_API_KEY") if not os.getenv(k)]
+    missing = [k for k in ("OPENAI_API_KEY", "QWEN_API_KEY", "WAVESPEED_API_KEY")
+               if not os.getenv(k)]
     if missing:
         print(f"❌ 缺少环境变量: {', '.join(missing)}")
         return 2
@@ -93,7 +96,7 @@ def main() -> int:
     print(f"输出目录: {run_dir.resolve()}")
 
     # —— 组装组件（全部真实后端，无 mock）——
-    mllm = build_mllm({"name": "openai", "model": args.model})
+    mllm = build_mllm({"name": "qwen-vl", "model": args.vlm_model})
     video_gen = build_video_gen({"name": "wavespeed", "model_id": args.video_model})
     critics = [
         SemanticCritic(mllm=mllm),     # m1 语义：OpenAI VLM assess_semantic（真）

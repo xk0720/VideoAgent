@@ -13,13 +13,14 @@
 
 全部真实后端，无 mock：
     · brain      OpenAI LLM（build_llm openai）—— 通过 llm.complete + JSON 说话
-    · 评审 VLM   OpenAI VLM（SemanticCritic + PhysicsCritic，build_mllm openai）
+    · 评审 VLM   Qwen-VL（SemanticCritic + PhysicsCritic，build_mllm qwen-vl，
+                 DashScope compatible-mode，$QWEN_API_KEY）
     · 生成/编辑  WaveSpeed（build_video_gen wavespeed，含 edit/extend 能力）
     · 物理测量   真实 CoTracker + GroundingDINO（需 GPU）；--no-physics-measure
                  时【省略】这个 critic（绝不改用 mock）
 
 用法：
-    export OPENAI_API_KEY=...  WAVESPEED_API_KEY=...
+    export OPENAI_API_KEY=...  QWEN_API_KEY=...  WAVESPEED_API_KEY=...
     python scripts/test_orchestrator.py --prompt "a glass falls off a table and shatters"
     # 无 GPU：再加 --no-physics-measure
 """
@@ -65,7 +66,9 @@ _LOCALIZED_TOOLS = {"regenerate_segment", "keyframe_edit_propagate", "frame_to_f
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", default="a glass falls off a table and shatters on the floor")
-    ap.add_argument("--model", default="gpt-4o", help="OpenAI 模型（brain LLM + 评审 VLM）")
+    ap.add_argument("--model", default="gpt-4o", help="brain 纯语言 LLM（OpenAI）")
+    ap.add_argument("--vlm-model", default="qwen-vl-max",
+                    help="评审 VLM（Qwen 系列，DashScope compatible-mode）")
     ap.add_argument("--video-model", default="bytedance/seedance-2.0/text-to-video")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--device", default="cuda", help="CoTracker/GroundingDINO 设备")
@@ -73,9 +76,12 @@ def main() -> int:
     ap.add_argument("--n-candidates", type=int, default=2, help="初评 best-of-N 池")
     ap.add_argument("--no-physics-measure", action="store_true",
                     help="省略参考自由物理测量 critic（无 GPU 时用；不会改用 mock）")
+    ap.add_argument("--with-sim", action="store_true",
+                    help="启用 simulate_reference 工具（需 genesis-world + GPU）")
     args = ap.parse_args()
 
-    missing = [k for k in ("OPENAI_API_KEY", "WAVESPEED_API_KEY") if not os.getenv(k)]
+    missing = [k for k in ("OPENAI_API_KEY", "QWEN_API_KEY", "WAVESPEED_API_KEY")
+               if not os.getenv(k)]
     if missing:
         print(f"❌ 缺少环境变量: {', '.join(missing)}")
         return 2
@@ -88,7 +94,7 @@ def main() -> int:
 
     # —— 组装组件（全部真实后端，无 mock）——
     llm = build_llm({"name": "openai", "model": args.model})        # brain
-    mllm = build_mllm({"name": "openai", "model": args.model})      # 评审 VLM
+    mllm = build_mllm({"name": "qwen-vl", "model": args.vlm_model})  # 评审 VLM（Qwen）
     video_gen = build_video_gen({"name": "wavespeed", "model_id": args.video_model})
     image_edit = build_image_edit(None)  # 真实 keyframe 编辑后端可在此替换
     critics = [SemanticCritic(mllm=mllm), PhysicsCritic(mllm=mllm)]
@@ -106,13 +112,23 @@ def main() -> int:
     board = ReviewBoard(critics=critics, metric_tool=MetricTool())
     generator = GeneratorAgent(video_gen=video_gen)
     refiner = RefinerAgent()
-    verifier = VerifierAgent()
+    # 盲测边际确认（借鉴 NEWTON）：指标赢得很勉强（噪声区）时，再用 VLM 双向
+    # 对比真像素确认——评委只能否决勉强的胜利，永远救不了指标输的候选。
+    verifier = VerifierAgent(judge=mllm)
+    # 可选物理仿真（借鉴 NEWTON）：--with-sim 时 brain 多一个 simulate_reference
+    # 工具——测量出的物理违规可以用"仿真出正确运动→参考视频条件重生成"来修。
+    sim_client = None
+    if args.with_sim:
+        from maestro.physics.sim_backends import GenesisSimClient
+        sim_client = GenesisSimClient(config={"output_dir": str(run_dir / "sim")})
+        print("  物理仿真: GenesisSimClient（需 genesis-world + GPU；缺包会大声报错）")
     # RETRIEVE-FIRST repair skills (the headline): a learned, verified repair
     # workflow is replayed (via=skill) before the LLM re-reasons (via=llm).
     skill_library = SkillLibrary(run_dir / "skills.jsonl")
     orchestrator = OrchestratorAgent(
         llm=llm, generator=generator, refiner=refiner, image_edit=image_edit,
-        skill_library=skill_library, max_turns=args.max_turns,
+        skill_library=skill_library, sim_client=sim_client,
+        max_turns=args.max_turns,
     )
 
     tournament = Tournament(judge=mllm)

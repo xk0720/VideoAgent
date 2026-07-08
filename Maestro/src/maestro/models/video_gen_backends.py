@@ -177,7 +177,12 @@ class WaveSpeedClient(BaseVideoGenClient):
         first_frame: Optional[Path] = None,
         reference_images: Optional[list[Path]] = None,
         seed: int = 0,
+        reference_video: Optional[Path] = None,
     ) -> Path:
+        """`reference_video` (seedance-2.0 only) rides the `reference_videos`
+        channel — an independent MOTION condition (e.g. a physics-sim reference
+        clip, NEWTON-style) that combines with the text prompt. Only offered to
+        callers via the "ref_video" capability; a legacy model id raises."""
         model_id = self.model_id
         is_i2v = first_frame is not None and (
             str(first_frame).startswith(("http://", "https://"))
@@ -197,6 +202,12 @@ class WaveSpeedClient(BaseVideoGenClient):
         else:
             # t2v only — in i2v the image defines the ratio
             payload["aspect_ratio"] = self.config.get("aspect_ratio", "16:9")
+        if reference_video is not None:
+            if not self._is_range_family(model_id):
+                raise RuntimeError(
+                    f"model '{model_id}' has no reference_videos channel — "
+                    "reference-video conditioning needs the seedance-2.0 family")
+            payload["reference_videos"] = [self._upload_media(reference_video)]
         payload.update(self.config.get("extra_params") or {})
 
         return self._run_task(model_id, payload, out_path)
@@ -422,7 +433,13 @@ class WaveSpeedClient(BaseVideoGenClient):
         # v0.4 widened atom palette: "depth" (depth_modify → vace/depth) and
         # "style" (style_transfer → runway) are real edit_video routes exposed as
         # brain actions; both sit under the same edit-capable backend.
-        return {"t2v", "i2v", "flf2v", "edit", "extend", "depth", "style"}
+        caps = {"t2v", "i2v", "flf2v", "edit", "extend", "depth", "style"}
+        # "ref_video": generate(reference_video=...) — the seedance-2.0
+        # reference_videos channel (motion conditioning, e.g. a physics-sim
+        # reference clip). Legacy v1 model ids have no such channel.
+        if self._is_range_family(self.model_id):
+            caps.add("ref_video")
+        return caps
 
 
 # ─────────────────────────────────────────────────────────────

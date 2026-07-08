@@ -58,6 +58,35 @@ def _write_frame(frame, out_path: Path) -> Optional[Path]:
         return None
 
 
+def _same_shot(img_a_path, img_b_path, threshold: float = 27.0) -> bool:
+    """Pre-generation condition check for flf2v double-anchoring: are the two
+    anchor frames plausibly the SAME shot?
+
+    FLF2V models respond to overly-dissimilar start/end frames by inserting a
+    LENS SWITCH (a cut) instead of blending — documented in Kling's start/end
+    docs — which would ruin a repair segment. Before spending a generation we
+    gate on the only battle-tested "content changed" threshold in the field:
+    PySceneDetect's ContentDetector — mean per-pixel |ΔHSV| > 27 (0-255 scale)
+    = a shot cut. (NEWTON, arXiv:2605.18396, applies the same philosophy:
+    judge the CONDITIONING before paying for a generation.)
+
+    Unknown (missing libs / unreadable stub images, e.g. mock mode) → True:
+    the check only exists to catch a REAL, measurable scene jump; when it
+    cannot measure, flf2v keeps its normal priority."""
+    try:
+        import numpy as np
+        from PIL import Image  # type: ignore
+
+        a = Image.open(str(img_a_path)).convert("HSV")
+        b = Image.open(str(img_b_path)).convert("HSV")
+        if a.size != b.size:
+            b = b.resize(a.size)
+        da = np.abs(np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64))
+        return float(da.mean()) <= float(threshold)
+    except Exception:
+        return True
+
+
 def _probe_fps(path: Path) -> float:
     """Container-reported fps of a video, or 0.0 if unknowable (mock clip /
     no decoder). Needed to convert segment FRAME spans into SECONDS for the
@@ -333,13 +362,20 @@ def propagate_repair(
     # ── 2. repair S_i ────────────────────────────────────────────────────────
     repaired: Optional[Path] = None
     out_i = cache_dir / f"seg{i}_repaired.mp4"
-    if (modality == "motion" and "flf2v" in caps
-            and seg.first_frame_path and seg.last_frame_path
-            and hasattr(video_gen, "frame_to_frame")):
+    use_flf = (modality == "motion" and "flf2v" in caps
+               and seg.first_frame_path and seg.last_frame_path
+               and hasattr(video_gen, "frame_to_frame"))
+    if use_flf:
         first_anchor = (segs[i - 1].last_frame_path if i > 0
                         and segs[i - 1].last_frame_path else seg.first_frame_path)
         last_anchor = (segs[i + 1].first_frame_path if i + 1 < len(segs)
                        and segs[i + 1].first_frame_path else seg.last_frame_path)
+        # Pre-generation condition gate (NEWTON-style): if the two anchors are
+        # not plausibly the same shot, flf2v would insert a CUT instead of
+        # blending (documented failure) — fall back to the i2v repair path.
+        if not _same_shot(first_anchor, last_anchor):
+            use_flf = False
+    if use_flf:
         repaired = video_gen.frame_to_frame(
             prompt=hint or "one continuous passive trajectory",
             first_frame=first_anchor, last_frame=last_anchor,

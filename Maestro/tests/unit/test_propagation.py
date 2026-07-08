@@ -184,3 +184,19 @@ def test_no_ffmpeg_splice_returns_none(tmp_path, monkeypatch):
     d = Defect("physics", "ball", (0, 2), 0.8, "motion")
     assert tl.propagate_repair(t, d, video_gen=vg, hint="x",
                                cache_dir=tmp_path / "p") is None
+
+
+def test_flf2v_falls_back_to_i2v_when_anchors_not_same_shot(tmp_path, monkeypatch):
+    """NEWTON-style pre-generation condition gate: anchors that fail the
+    PySceneDetect same-shot check (HSV mean diff > 27) would make an flf2v
+    model insert a CUT — the repair falls back to the i2v path instead."""
+    monkeypatch.setattr(tl, "frame_similarity", lambda a, b: 0.99)
+    monkeypatch.setattr(tl, "_same_shot", lambda a, b, threshold=27.0: False)
+    _stub_splice(monkeypatch)
+    t = _build_timeline(tmp_path, monkeypatch, n_segments=4)
+    vg = StubVideoGen(caps={"t2v", "i2v", "flf2v"})
+    d = Defect("physics", "ball", (3, 5), 0.8, "motion")
+    tl.propagate_repair(t, d, video_gen=vg, hint="fix",
+                        cache_dir=tmp_path / "p", max_cascade=4)
+    assert not vg.flf_calls               # gate blocked the double-anchor route
+    assert vg.generate_calls              # i2v repair ran instead

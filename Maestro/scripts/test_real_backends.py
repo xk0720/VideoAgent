@@ -81,7 +81,7 @@ def stage_vlm(model: str, video_path: Path, shot_desc: str) -> None:
     本脚本包一层 _chat，把发给模型的 prompt 和模型的【原始回复】都打印出来，
     方便你核对逻辑，然后再展示解析后的结构化结果。"""
     _section("③ VLM (OpenAI) — 视觉评审生成的视频")
-    vlm = build_mllm({"name": "openai", "model": model})
+    vlm = build_mllm({"name": "qwen-vl", "model": model})
     print(f"  backend = {type(vlm).__name__}  model = {model}  n_frames = {vlm.n_frames}")
 
     # —— 包一层 _chat：打印发出去的 prompt + 模型原始回复 ——

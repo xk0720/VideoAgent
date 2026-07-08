@@ -107,6 +107,25 @@ LENGTHEN:
       (something that should still be present at the end is gone).
     · args: {"prompt": "what should happen in the continuation"}
 
+SIMULATE THE PHYSICS (only when a sim backend + the ref_video channel exist):
+- `simulate_reference`
+    · YOU write a rigid-body scene_spec; a physics engine simulates it into a
+      physics-CORRECT reference clip (abstract look, correct MOTION); the whole
+      shot is re-generated conditioned on that reference motion. The generator
+      is SHOWN the correct physics instead of being told about it.
+    · Use for: a MEASURED physics violation (source law_verifier: gravity_
+      inertia / collision / conservation) that survived a localized repair or
+      edit — the strongest physics fix available.
+    · scene_spec rules: objects are RIGID only (type sphere|box|cylinder),
+      SI units (meters, m/s), pos is the object CENTER, a floor plane at z=0
+      is implicit (never add one), `fixed: true` pins tables/ramps, gravity
+      defaults to [0,0,-9.81]. Model ONLY the entities whose motion is broken.
+    · args: {"scene_spec": {"objects": [{"id": "ball", "type": "sphere",
+      "pos": [0,0,1.2], "radius": 0.1, "init_velocity": [0.4,0,0]},
+      {"id": "table", "type": "box", "pos": [0,0,0.4],
+      "size": [1.2,0.8,0.05], "fixed": true}]},
+      "hint": "the ball falls in one continuous arc and bounces once"}
+
 GROUND IN REAL FOOTAGE:
 - `retrieve_replace` (only when uploaded source shots exist)
     · Replaces the clip with a matching REAL source shot retrieved from the
@@ -126,7 +145,9 @@ STOP:
    REGRESSED issues outrank everything). Trust `measured` evidence over
    `opinion`; treat `fix_classes` as hints and `do_not_repeat` as law.
 2. Match the tool to the defect's `fix_modality`:
-   motion/physics → edit_clip or regenerate_segment / frame_to_frame ·
+   motion/physics → edit_clip or regenerate_segment / frame_to_frame
+   (a MEASURED violation that already survived one such repair →
+   simulate_reference when offered) ·
    content → keyframe_edit / keyframe_edit_propagate ·
    background/foreground → depth_edit · style → style_edit ·
    presence/incomplete → extend_clip · missing-real-element → retrieve_replace ·
