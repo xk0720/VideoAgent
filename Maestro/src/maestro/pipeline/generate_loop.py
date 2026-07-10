@@ -738,6 +738,7 @@ def generate_shot_orchestrated(
     n_candidates: int = 2,
     max_turns: int = 4,
     summarizer=None,
+    initial_candidates: Optional[list[CandidateClip]] = None,
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
@@ -773,13 +774,23 @@ def generate_shot_orchestrated(
     prev_issues: Optional[list] = None
 
     # 1. Initial candidates → bidirectional tournament (reused selection).
-    candidates = []
-    for s in range(n_candidates):
-        c = generator.run(spec, cache_dir, revision=0, seed=s,
-                          reference_images=ref_images, fps=fps)
-        gen_calls += 1
-        board.review(c, spec, asset_memory, fps)
-        candidates.append(c)
+    #    `initial_candidates` (窗口式生成的接口,默认 None = 行为不变):
+    #    调用方(pipeline/window_loop.py)已经按窗口条件策略(上镜尾帧 i2v /
+    #    flf2v 桥接 / 尾段参考视频)生成好了首批候选 —— 这里不再重掷,只补评审
+    #    (缺 metric 的才评,已评的不重复花钱),然后照常进锦标赛 + 修复循环。
+    if initial_candidates:
+        candidates = list(initial_candidates)
+        for c in candidates:
+            if not c.metric_scores:
+                board.review(c, spec, asset_memory, fps)
+    else:
+        candidates = []
+        for s in range(n_candidates):
+            c = generator.run(spec, cache_dir, revision=0, seed=s,
+                              reference_images=ref_images, fps=fps)
+            gen_calls += 1
+            board.review(c, spec, asset_memory, fps)
+            candidates.append(c)
     best = tournament.select(candidates, spec) if tournament else _tournament_select(candidates)
 
     initial_modes: set[PhysFailureMode] = {v.mode for v in best.physics_verdicts}

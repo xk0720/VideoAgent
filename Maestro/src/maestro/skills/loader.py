@@ -50,7 +50,10 @@ def load_skill_catalog(root: Optional[Path] = None) -> dict[str, dict]:
     for md in sorted(root.rglob("*.md")):
         if md.name == "README.md":
             continue
-        fm, body = parse_frontmatter(md.read_text(encoding="utf-8"))
+        text = md.read_text(encoding="utf-8")
+        if not text.strip():
+            continue    # empty placeholder (a skill being drafted) — not a skill yet
+        fm, body = parse_frontmatter(text)
         name = fm.get("name") or md.stem
         catalog[name] = {
             "description": fm.get("description", ""),

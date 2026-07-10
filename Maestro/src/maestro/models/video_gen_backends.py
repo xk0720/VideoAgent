@@ -268,6 +268,29 @@ class WaveSpeedClient(BaseVideoGenClient):
         raise TimeoutError(f"WaveSpeed task {task_id} did not finish within "
                            f"{self.timeout}s")
 
+    def text_to_image(
+        self,
+        prompt: str,
+        out_path: Path,
+        seed: int = 0,
+    ) -> Path:
+        """Text → ONE still image (capability "t2i"). Used by the window loop's
+        keyframe stage (skills/brain_skills/window_generation.md): a shot's
+        keyframe can be t2i-generated from its description. Route ported from
+        UniVA `text_to_image_generate` (flux-kontext-pro), schema live-verified
+        by UniVA's own runs; model id configurable via config `t2i_model`."""
+        model = self.config.get(
+            "t2i_model", "wavespeed-ai/flux-kontext-pro/text-to-image")
+        payload = {
+            "prompt": prompt,
+            "num_images": 1,
+            "aspect_ratio": self.config.get("aspect_ratio", "16:9"),
+            "guidance_scale": 3.5,
+            "safety_tolerance": "5",
+            "seed": seed,
+        }
+        return self._run_task(model, payload, out_path)
+
     def frame_to_frame(
         self,
         prompt: str,
@@ -433,7 +456,8 @@ class WaveSpeedClient(BaseVideoGenClient):
         # v0.4 widened atom palette: "depth" (depth_modify → vace/depth) and
         # "style" (style_transfer → runway) are real edit_video routes exposed as
         # brain actions; both sit under the same edit-capable backend.
-        caps = {"t2v", "i2v", "flf2v", "edit", "extend", "depth", "style"}
+        caps = {"t2v", "i2v", "flf2v", "edit", "extend", "depth", "style",
+                "t2i"}   # t2i: text_to_image (keyframe stage of the window loop)
         # "ref_video": generate(reference_video=...) — the seedance-2.0
         # reference_videos channel (motion conditioning, e.g. a physics-sim
         # reference clip). Legacy v1 model ids have no such channel.

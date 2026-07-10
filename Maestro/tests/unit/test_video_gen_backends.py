@@ -60,7 +60,7 @@ def test_capabilities_per_client():
     # seedance-2.0 family — legacy v1 ids have no such channel.
     wave = build_video_gen({"name": "wavespeed"})
     assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit", "extend",
-                                   "depth", "style", "ref_video"}
+                                   "depth", "style", "ref_video", "t2i"}
     legacy = build_video_gen({"name": "wavespeed",
                               "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
     assert "ref_video" not in legacy.capabilities()
