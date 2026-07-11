@@ -210,19 +210,39 @@ class OpenAICompatVLM(BaseMLLMClient):
             return None
 
     # ── semantic checklist ──
-    def assess_semantic(self, clip: CandidateClip, spec: ShotSpec) -> list[tuple[str, bool, str]]:
+    def assess_semantic(self, clip: CandidateClip, spec: ShotSpec) -> list[tuple]:
+        """Items are (question, passed, fix) or — when the VLM localized the
+        failure — (question, passed, fix, (frame_start, frame_end)).
+        Q3 ruling: the VLM is REQUIRED to localize every FAILED item to a
+        frame span (segment repair needs WHERE); an item it cannot localize
+        honestly degrades to the 3-tuple (whole-clip defect), never a made-up
+        range. SemanticCritic accepts both shapes."""
         frames = self._sample_frames(clip)
         if frames is None:  # NO EVIDENCE → NO judgment (honesty branch)
             return []
+        # Original frame count so the VLM answers in ORIGINAL indices.
+        try:
+            from pathlib import Path as _P
+
+            decoded = _decode_frames(_P(str(clip.video_path)))
+            n_total = len(decoded) if decoded is not None else 0
+        except Exception:
+            n_total = 0
         prompt = (
-            "You are a strict video QA judge. The frames below are sampled from a "
-            "generated video clip. The clip is meant to depict:\n"
+            "You are a strict video QA judge. The frames below are sampled IN "
+            f"TIME ORDER ({len(frames)} frames evenly spaced across a "
+            f"{n_total}-frame clip). The clip is meant to depict:\n"
             f"  \"{spec.prompt}\"\n"
             "Check whether the clip clearly shows the prompt's key elements. "
             "Respond with STRICT JSON only: a list of objects "
-            "[{\"question\": str, \"passed\": bool, \"fix\": str}], one per key "
-            "element. 'fix' is a short instruction to improve the clip when "
-            "passed is false, else empty. No prose outside the JSON."
+            "[{\"question\": str, \"passed\": bool, \"fix\": str, "
+            "\"frame_start\": int, \"frame_end\": int}], one per key element. "
+            "'fix' is a short instruction to improve the clip when passed is "
+            "false, else empty. For every FAILED item you MUST localize the "
+            "problem: frame_start/frame_end are original-clip frame indices in "
+            f"[0, {max(n_total, 1)}] bounding WHERE the problem is visible — "
+            "the failure's own time span, NOT the whole clip unless it truly "
+            "spans everything. No prose outside the JSON."
         )
         reply = self._chat(frames, prompt)
         data = _extract_json(reply) if reply is not None else None
@@ -230,14 +250,22 @@ class OpenAICompatVLM(BaseMLLMClient):
             if reply is not None:
                 log.warning("VLM(%s) assess_semantic: unparseable reply, no verdict", self.name)
             return []
-        items: list[tuple[str, bool, str]] = []
+        items: list[tuple] = []
         for it in data:
             if not isinstance(it, dict):
                 continue
             q = str(it.get("question", "Does the clip match the prompt?"))
             passed = bool(it.get("passed", False))
             fix = "" if passed else str(it.get("fix", ""))
-            items.append((q, passed, fix))
+            fr = None
+            try:
+                fs, fe = int(it["frame_start"]), int(it["frame_end"])
+                if fe > fs >= 0:
+                    fr = (fs, fe)
+            except (KeyError, TypeError, ValueError):
+                fr = None      # VLM 没给/给废了 → 诚实的 None(回退整镜级)
+            items.append((q, passed, fix, fr) if fr is not None
+                         else (q, passed, fix))
         return items
 
     # ── physics verdicts ──

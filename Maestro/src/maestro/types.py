@@ -257,6 +257,12 @@ class ChecklistItem:
     # PhysFailureMode.value when this physics item mirrors a PhysicsVerdict
     # (keyed by ReviewBoard after critics run); "" for non-physics items.
     mode: str = ""
+    # WHERE the failure lives (original-video frame indices [start, end)).
+    # Real VLM critics are REQUIRED to localize failed semantic items (Q3
+    # ruling: accurate localization is the precondition for segment-level
+    # edit/regenerate). None = could not localize (mock mode / VLM omitted) →
+    # DefectReport falls back to the whole clip.
+    frame_range: Optional[tuple[int, int]] = None
 
 
 @dataclass

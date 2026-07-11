@@ -52,6 +52,10 @@ plan:
   shot_duration: 3.0
   max_plan_iters: 3
 
+# 窗口式全片生成(pipeline/window_loop.py)
+window:
+  tail_seconds: 2.0        # tiv2v_window 策略截取上镜尾段的长度(秒),可调
+
 # 生成 + 自改进循环
 compose:
   fps: 8

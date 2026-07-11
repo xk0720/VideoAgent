@@ -138,10 +138,20 @@ def build_defect_report(
     for item in clip.checklist.failed_items:
         if item.kind != "semantic":
             continue
+        # Q3: real VLM critics localize failed items to a frame span; use it
+        # so the brain can reach for SEGMENT-level tools on semantic defects
+        # too. No range (mock / VLM omitted) -> whole clip, as before.
+        fr = getattr(item, "frame_range", None)
+        if fr is not None:
+            lo = max(0, min(int(fr[0]), n_frames - 1))
+            hi = max(lo + 1, min(int(fr[1]), n_frames))
+            frame_range = (lo, hi)
+        else:
+            frame_range = (0, n_frames)
         defects.append(Defect(
             kind="semantic",
             entity=_entity_from_question(item.question, spec),
-            frame_range=(0, n_frames),
+            frame_range=frame_range,
             severity=0.5,   # semantic fails carry no measured severity; mid-rank
             fix_modality="content",
             note=item.question[:80],

@@ -103,7 +103,13 @@ class EpisodeMemory:
                 "label": e.label,
                 "description": e.description,
                 "keyframe_strategy": e.keyframe_source or "none",
+                # "strategy" 是【实际执行】的条件(胜出 seed 用的那个);brain 的
+                # 原始决定和降级痕迹一并带上 —— 未来 brain 读 avoid/replay 时能
+                # 分清"策略本身不行"和"策略没跑成、降级顶上"两种情况。
                 "condition_strategy": e.condition.get("strategy", "t2v"),
+                "decided_strategy": e.condition.get("decided_strategy",
+                                                    e.condition.get("strategy", "t2v")),
+                "degraded_from": e.condition.get("degraded_from"),
                 "converged": e.status == "verified",
                 "final_score": last.get("weighted_total"),
             }
@@ -114,6 +120,8 @@ class EpisodeMemory:
                 avoid.append({
                     "label": e.label,
                     "condition_strategy": row["condition_strategy"],
+                    "decided_strategy": row["decided_strategy"],
+                    "degraded_from": row["degraded_from"],
                     "keyframe_strategy": row["keyframe_strategy"],
                     "reason": last.get("brief_headline")
                               or f"{last.get('n_failed', '?')} defects unresolved",

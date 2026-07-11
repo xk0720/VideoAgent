@@ -50,3 +50,14 @@ def test_measured_physics_skill_documents_the_real_chain():
     for stage in ("GroundingDINO", "CoTracker", "CERTIFY", "fit_best_law",
                   "law_verifier"):
         assert stage in body, stage
+
+
+def test_folder_skill_form_and_user_drafts():
+    """标准 folder+SKILL.md 形态:名字从 frontmatter/文件夹名解析;用户草稿
+    (scene_write / video_retrieval)已填充并入目录。"""
+    from maestro.skills.loader import load_skill_catalog
+
+    cat = load_skill_catalog()
+    for name in ("scene_write", "video_retrieval", "window_generation"):
+        assert name in cat, name
+        assert cat[name]["path"].endswith(f"{name}/SKILL.md")

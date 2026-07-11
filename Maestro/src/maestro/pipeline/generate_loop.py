@@ -89,6 +89,11 @@ class SelfImproveResult:
     # Brain-orchestrated repair (generate_shot_orchestrated): one entry per turn
     # — the brain's raw decision {tool,args,reason} + the gate's outcome.
     actions: list[dict] = field(default_factory=list)
+    # Which INITIAL candidate won the tournament (its video_path at selection
+    # time). The window loop uses this to attribute the shipped shot to the
+    # per-seed condition that ACTUALLY produced it — never to the condition of
+    # whichever seed happened to be generated last.
+    initial_winner: str = ""
 
 
 def _tournament_select(candidates: list[CandidateClip]) -> CandidateClip:
@@ -792,6 +797,7 @@ def generate_shot_orchestrated(
             board.review(c, spec, asset_memory, fps)
             candidates.append(c)
     best = tournament.select(candidates, spec) if tournament else _tournament_select(candidates)
+    initial_winner_path = str(best.video_path)
 
     initial_modes: set[PhysFailureMode] = {v.mode for v in best.physics_verdicts}
     initial_severity_max = max((v.severity for v in best.physics_verdicts), default=0.0)
@@ -1001,4 +1007,5 @@ def generate_shot_orchestrated(
         distilled_repair_skill_id=distilled_repair_skill_id,
         distilled_lesson_id=distilled_lesson_id,
         actions=actions,
+        initial_winner=initial_winner_path,
     )

@@ -446,27 +446,39 @@ def generate_movie_windowed(
         log.info("window: %s condition → %s (via=%s) %s",
                  entry.label, d["strategy"], d["via"], d.get("reason", ""))
 
-        # 按条件生成首批候选(不同 seed;条件相同)
+        # 按条件生成首批候选(不同 seed;条件相同)。每个 seed 的实际条件
+        # 单独记账(per_seed):策略在执行中降级/崩溃时,那个 seed 的记录
+        # 必须如实写 degraded_from —— 台账绝不把降级伪装成 brain 的决定。
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
         initial: list[CandidateClip] = []
-        cond_used: dict = {"strategy": d["strategy"]}
+        seed_conds: list[dict] = []
+        # 子循环里 keyframe_edit 工具需要 clip.keyframes;窗口候选挂上本 shot
+        # 真实存在的关键帧(比生成器的占位帧更真),没有就空列表(该工具在
+        # 菜单中仍在,执行时诚实 no-op)。
+        cand_keyframes = ([Path(entry.keyframe_path)]
+                          if entry.keyframe_path
+                          and Path(entry.keyframe_path).exists() else [])
         for s in range(max(1, n_candidates)):
             try:
-                video_path, cond_used = _generate_with_condition(
+                video_path, cond = _generate_with_condition(
                     d["strategy"], entry, prev, spec, video_gen,
                     shot_dir, seed=s, fps=fps, window_tail_s=window_tail_s)
             except Exception as exc:
                 log.info("window: conditioned generation failed (%s): %s — "
                          "falling back to plain t2v for this seed",
                          d["strategy"], exc)
-                video_path, cond_used = _generate_with_condition(
+                video_path, cond = _generate_with_condition(
                     "t2v", entry, prev, spec, video_gen, shot_dir,
                     seed=s, fps=fps, window_tail_s=window_tail_s)
-            initial.append(CandidateClip(shot_idx=spec.shot_idx,
-                                         video_path=Path(video_path),
-                                         revision=0))
-        cond_used["decided_via"] = d["via"]
-        storyboard.set_condition(entry.shot_idx, cond_used)
+                # 异常降级必须留痕:没有这两行,台账会谎称 brain 主动选了 t2v
+                cond["degraded_from"] = d["strategy"]
+                cond["degraded_reason"] = f"exception: {exc}"[:200]
+            cond["seed"] = s
+            seed_conds.append(cond)
+            clip = CandidateClip(shot_idx=spec.shot_idx,
+                                 video_path=Path(video_path), revision=0)
+            clip.keyframes = list(cand_keyframes)
+            initial.append(clip)
 
         # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain 修复
         # → Verifier 闸门 —— 全部在现有 generate_shot_orchestrated 内完成。
@@ -481,6 +493,23 @@ def generate_movie_windowed(
         )
         shot_results.append(res)
         best = res.clip
+
+        # 台账条件按【初选胜出者】归因(res.initial_winner):n_candidates>1 时
+        # 各 seed 的条件可能不同(某个 seed 异常降级了),最终出镜的是锦标赛
+        # 赢家 —— 记它实际用的条件,而不是"最后一个 seed 恰好用的条件"。
+        winner_cond = next(
+            (c for clip_, c in zip(initial, seed_conds)
+             if str(clip_.video_path) == res.initial_winner),
+            seed_conds[-1] if seed_conds else {"strategy": d["strategy"]},
+        )
+        cond_used = dict(winner_cond)
+        cond_used["decided_strategy"] = d["strategy"]   # brain 的原始决定
+        cond_used["decided_via"] = d["via"]
+        distinct = {json.dumps({k: v for k, v in c.items() if k != "seed"},
+                               sort_keys=True) for c in seed_conds}
+        if len(distinct) > 1:
+            cond_used["per_seed"] = seed_conds          # 有分歧才展开全量流水
+        storyboard.set_condition(entry.shot_idx, cond_used)
 
         # 评审轨迹 + 修复动作嵌入台账(§D "意见嵌入轨迹")
         storyboard.add_review(entry.shot_idx, {

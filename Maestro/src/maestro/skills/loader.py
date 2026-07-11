@@ -1,22 +1,26 @@
-"""Predefined per-agent skill files (NEWTON planner_skills-style).
-
-Every agent's operating knowledge lives in an editable markdown file with YAML
-frontmatter (name / agent / description), grouped by role:
+"""Predefined per-agent skills — standard folder + files form (Claude/ChatGPT
+skill-framework convention, per the user's ruling):
 
     skills/
-      brain_skills/       orchestrator.md      (the brain — LOADED into its prompt)
-      reviewer_skills/    semantic_critic.md   (VLM semantics/character/object)
-                          physics_critic.md    (VLM physics opinion)
-                          physics_measure.md   (non-AI measured physics chain)
-      summarizer_skills/  review_summarizer.md (the review 整理员 — polish prompt)
-      verifier_skills/    verifier.md          (the monotonic gate)
+      brain_skills/
+        orchestrator/SKILL.md       (repair brain — loaded whole into its prompt)
+        window_generation/SKILL.md  (window brain — strategy selection)
+        scene_write/SKILL.md        (playwriting: prompt → ordered shot list)
+        video_retrieval/SKILL.md    (asset retrieval for keyframes/replacement)
+      reviewer_skills/
+        semantic_critic/SKILL.md    (VLM semantics/character/object dims)
+        physics_critic/SKILL.md     (VLM physics opinion)
+        physics_measure/SKILL.md    (non-AI measured physics chain)
+      summarizer_skills/review_summarizer/SKILL.md
+      verifier_skills/verifier/SKILL.md
 
-Loading (borrowed from NEWTON loop/run_loop.py `load_skill_catalog`, without
-the read_skill indirection — our catalog is small enough to load directly):
-frontmatter is stripped; `body` is what an agent puts in its prompt. LEARNED
-skills (memory/skill_library.py) are a different thing: those are distilled
-at runtime and retrieved by signature; THESE are the hand-written operating
-manuals each agent starts with.
+Each skill = a FOLDER named after the skill containing SKILL.md (frontmatter:
+name / agent / description) plus optional scripts/ or reference files. The
+skill name resolves from frontmatter `name:`, else the FOLDER name (for
+SKILL.md), else the file stem (legacy flat .md still loads). Empty SKILL.md
+files are drafts, skipped. LEARNED skills (memory/skill_library.py) are a
+different thing: distilled at runtime, retrieved by signature; THESE are the
+hand-written operating manuals each agent starts with.
 """
 from __future__ import annotations
 
@@ -54,7 +58,9 @@ def load_skill_catalog(root: Optional[Path] = None) -> dict[str, dict]:
         if not text.strip():
             continue    # empty placeholder (a skill being drafted) — not a skill yet
         fm, body = parse_frontmatter(text)
-        name = fm.get("name") or md.stem
+        # name: frontmatter > folder name (standard <skill>/SKILL.md form) > stem
+        default = md.parent.name if md.name == "SKILL.md" else md.stem
+        name = fm.get("name") or default
         catalog[name] = {
             "description": fm.get("description", ""),
             "agent": fm.get("agent", ""),

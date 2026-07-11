@@ -213,3 +213,68 @@ def test_replay_adoption_from_episode_memory(tmp_path, monkeypatch):
     assert all(e.keyframe_source == "t2i" for e in res2.storyboard.entries)
     assert all(e.condition["strategy"] == "i2v_keyframe"
                for e in res2.storyboard.entries)
+
+
+# ── 诚实性修复回归(对抗审查确认的 2 个 bug)──────────────────────────────
+def test_exception_fallback_recorded_with_degraded_from(tmp_path, monkeypatch):
+    """种子生成崩溃降级到 t2v 时,台账必须写 degraded_from + 原因——
+    绝不能把降级伪装成 brain 主动选了 t2v(否则污染 episode 记忆)。"""
+    import maestro.pipeline.window_loop as wl
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
+
+    class _CrashOnceGen(_WindowVideoGen):
+        def __init__(self):
+            super().__init__()
+            self._crashed = False
+
+        def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
+                     reference_images=None, seed=0, reference_video=None):
+            # 第一次带 first_frame 的调用(i2v_keyframe 策略)模拟 API 400
+            if first_frame is not None and not self._crashed:
+                self._crashed = True
+                raise RuntimeError("WaveSpeed submit failed: HTTP 400 — boom")
+            return super().generate(prompt, duration, out_path, fps=fps,
+                                    seed=seed)
+
+    res = generate_movie_windowed(
+        "a glass falls off a table", cache_dir=tmp_path,
+        llm=_JsonLLM(keyframe="t2i", condition="i2v_keyframe"),
+        max_turns=1, n_candidates=1, **_components(_CrashOnceGen()))
+    crashed = [e for e in res.storyboard.entries
+               if e.condition.get("degraded_from")]
+    assert crashed, "崩溃降级必须留痕"
+    c = crashed[0].condition
+    assert c["strategy"] == "t2v"                      # 实际执行的
+    assert c["degraded_from"] == "i2v_keyframe"        # brain 原本决定的
+    assert "400" in c["degraded_reason"]
+    assert c["decided_strategy"] == "i2v_keyframe"
+    assert c["decided_via"] == "llm"
+
+
+def test_condition_attributed_to_tournament_winner_not_last_seed(tmp_path, monkeypatch):
+    """n_candidates>1 且各 seed 条件不同(seed1 崩溃降级)时,台账条件必须
+    归因给【初选胜出者】那个 seed,不是最后一个 seed。"""
+    import maestro.pipeline.window_loop as wl
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
+
+    class _CrashSeed1Gen(_WindowVideoGen):
+        def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
+                     reference_images=None, seed=0, reference_video=None):
+            if first_frame is not None and seed == 1:
+                raise RuntimeError("HTTP 400 seed1")
+            return super().generate(prompt, duration, out_path, fps=fps,
+                                    first_frame=first_frame, seed=seed)
+
+    res = generate_movie_windowed(
+        "a glass falls off a table", cache_dir=tmp_path,
+        llm=_JsonLLM(keyframe="t2i", condition="i2v_keyframe"),
+        max_turns=1, n_candidates=2, **_components(_CrashSeed1Gen()))
+    for e in res.storyboard.entries:
+        cond = e.condition
+        # mock 评审下两个候选内容相同 → 锦标赛平局取第一个 = seed 0(未降级)
+        assert cond["strategy"] == "i2v_keyframe", cond
+        assert "degraded_from" not in cond or cond["degraded_from"] is None
+        # 但 per_seed 流水必须保留 seed1 的降级记录(有分歧就展开)
+        assert "per_seed" in cond
+        assert any(c.get("degraded_from") == "i2v_keyframe"
+                   for c in cond["per_seed"])

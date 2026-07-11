@@ -63,6 +63,8 @@ def main() -> int:
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--max-turns", type=int, default=3, help="每镜修复回合上限")
     ap.add_argument("--n-candidates", type=int, default=1)
+    ap.add_argument("--tail-seconds", type=float, default=2.0,
+                    help="tiv2v_window 截取上镜尾段的秒数(config: window.tail_seconds)")
     ap.add_argument("--with-physics-measure", action="store_true",
                     help="启用 CoTracker+GroundingDINO 测量 critic(需 GPU)")
     ap.add_argument("--device", default="cuda")
@@ -93,7 +95,7 @@ def main() -> int:
     generator = GeneratorAgent(video_gen=video_gen)
     orchestrator = OrchestratorAgent(
         llm=llm, generator=generator, refiner=RefinerAgent(),
-        image_edit=build_image_edit(None),
+        image_edit=build_image_edit({"name": "wavespeed"}),  # 真实 keyframe 编辑(seedream-v4)
         skill_library=SkillLibrary(run_dir / "skills.jsonl"),
         max_turns=args.max_turns)
     # 长期 episode 记忆放稳定目录(跨 run 累积 —— 这正是它存在的意义)
@@ -109,7 +111,8 @@ def main() -> int:
         tournament=Tournament(judge=mllm),
         skill_library=orchestrator.skill_library,
         episode_memory=episode_memory, llm=llm,
-        n_candidates=args.n_candidates, max_turns=args.max_turns)
+        n_candidates=args.n_candidates, max_turns=args.max_turns,
+        window_tail_s=args.tail_seconds)
 
     _section("brain 决策流水(§B keyframe + §C 条件;via=episode/llm/fallback)")
     for d in res.decisions:
