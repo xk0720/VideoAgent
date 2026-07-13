@@ -64,3 +64,32 @@ def test_gemini_vlm_dispatch_and_loud_without_key(tmp_path, monkeypatch):
         vlm.assess_semantic(clip, spec)
     # caption:非图片/缺文件 → ""(诚实),不碰网络
     assert vlm.caption_image(tmp_path / "nope.png") == ""
+
+
+def test_load_dotenv_semantics(tmp_path, monkeypatch):
+    """.env 加载:注释/空行/export 前缀/引号;已导出的环境变量优先;
+    空值占位行不写入;缺文件返回 0 不报错。"""
+    from maestro.config import load_dotenv
+
+    envf = tmp_path / ".env"
+    envf.write_text(
+        "# comment\n"
+        "OPENAI_API_KEY=sk-from-file\n"
+        "export GEMINI_API_KEY='g-key'\n"
+        'GEMINI_MODEL="gemini-3.5-flash"\n'
+        "EMPTY_PLACEHOLDER=\n"
+        "not a kv line\n",
+        encoding="utf-8")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("EMPTY_PLACEHOLDER", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-export")  # 真环境优先
+
+    import os
+    n = load_dotenv(envf)
+    assert n == 2                                    # gemini key + model
+    assert os.environ["OPENAI_API_KEY"] == "sk-real-export"
+    assert os.environ["GEMINI_API_KEY"] == "g-key"   # 引号剥掉
+    assert os.environ["GEMINI_MODEL"] == "gemini-3.5-flash"
+    assert "EMPTY_PLACEHOLDER" not in os.environ     # 空占位不写
+    assert load_dotenv(tmp_path / "missing.env") == 0

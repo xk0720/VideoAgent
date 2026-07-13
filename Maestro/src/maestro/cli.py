@@ -128,6 +128,11 @@ def _cmd_run_once(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # .env 自动加载(cwd 优先,其次仓库根;已导出的环境变量优先)
+    from .config import load_dotenv
+    from pathlib import Path as _P
+    load_dotenv(_P.cwd() / ".env")
+    load_dotenv(_P(__file__).resolve().parents[2] / ".env")
     ap = argparse.ArgumentParser(prog="maestro")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

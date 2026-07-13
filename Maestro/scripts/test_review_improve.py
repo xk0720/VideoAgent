@@ -37,6 +37,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+# .env 自动加载(仓库根;已导出的环境变量优先——文件只是便利,不是权威)
+from maestro.config import load_dotenv  # noqa: E402
+
+load_dotenv(REPO_ROOT / ".env")
+
 from maestro.agents.generator import GeneratorAgent          # noqa: E402
 from maestro.agents.refiner import RefinerAgent              # noqa: E402
 from maestro.agents.verifier import VerifierAgent            # noqa: E402

@@ -23,6 +23,40 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def load_dotenv(path: Path, override: bool = False) -> int:
+    """Load KEY=VALUE lines from a .env file into os.environ; returns how many
+    were set. Standard dotenv semantics, zero dependencies:
+      • blank lines and `#` comments skipped; optional `export ` prefix ok;
+      • values may be 'single' or "double" quoted (quotes stripped);
+      • EXISTING environment variables WIN unless override=True — a real
+        exported key always beats the file, so CI/server env stays in charge.
+    Missing file → 0 (no error): the file is a convenience, not a requirement."""
+    import os
+
+    p = Path(path)
+    if not p.is_file():
+        return 0
+    n = 0
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):]
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\'\"":
+            value = value[1:-1]
+        if not key or (key in os.environ and not override):
+            continue
+        if value == "":
+            continue                      # 空值占位行不写入(模板留空的 key)
+        os.environ[key] = value
+        n += 1
+    return n
+
+
 def load_yaml(path: Path) -> dict:
     if yaml is None:
         raise RuntimeError("PyYAML not installed; `pip install pyyaml`")
