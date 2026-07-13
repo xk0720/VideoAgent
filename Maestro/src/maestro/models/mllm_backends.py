@@ -456,9 +456,13 @@ class GeminiVLM(OpenAICompatVLM):
 
     def _headers(self) -> dict:
         key = self._require_key()
-        return {"Content-Type": "application/json",
-                "x-goog-api-key": key,               # official Google API
-                "Authorization": f"Bearer {key}"}    # proxy gateways
+        # return {"Content-Type": "application/json",
+        #         "x-goog-api-key": key,               # official Google API
+        #         "Authorization": f"Bearer {key}"}    # proxy gateways
+        return {
+            "x-goog-api-key": key, # official Google API
+            "Content-Type": "application/json",
+        }
 
     def _generate(self, parts: list) -> Optional[str]:
         """One generateContent call → reply text, or None (caller degrades)."""
