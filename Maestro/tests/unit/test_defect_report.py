@@ -94,8 +94,10 @@ def test_to_brain_json_is_compact_dicts():
     js = build_defect_report(_clip(verdicts=[v]), _spec()).to_brain_json()
     assert js == [{
         "kind": "physics", "entity": "glass", "frame_range": [2, 5],
+        "time_range_s": [0.25, 0.62],   # 帧号→秒(fps=8);编辑模型只认时刻/事件
         "severity": 0.8, "fix_modality": "motion",
         "note": js[0]["note"],
+        "fix_hint": "i",                # 评审员的修复建议原文直达 brain
     }]
     assert "gravity_inertia" in js[0]["note"]
 

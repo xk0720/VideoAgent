@@ -588,15 +588,18 @@ def test_llm_playwriting_replaces_clause_cycling(tmp_path):
             assert "past_task_shapes" in prompt       # 历史经验在上下文里
             assert "suggested_shot_count" not in prompt   # 数量绝不预设
             return json.dumps({"shots": [
-                "Shot 1: scene 1 — a clear glass teeters on the edge of a "
-                "wooden kitchen table, warm daylight, eye-level close-up",
-                "Shot 2: scene 1 — the glass shatters on the tile floor, "
-                "shards scattering outward, low floor-level camera",
-                "Shot 3: scene 1 — a young boy kneels, collects the shards "
-                "into his hand and walks away smiling, medium shot",
+                {"description": "Shot 1: scene 1 — a clear glass teeters on "
+                 "the edge of a wooden kitchen table, warm daylight, "
+                 "eye-level close-up", "duration_s": 5},
+                {"description": "Shot 2: scene 1 — the glass shatters on the "
+                 "tile floor, shards scattering outward, low floor-level "
+                 "camera", "duration_s": 4},
+                {"description": "Shot 3: scene 1 — a young boy kneels, "
+                 "collects the shards into his hand and walks away smiling, "
+                 "medium shot", "duration_s": 30},
             ]})
 
-    outline, via = _write_outline(
+    outline, durs, via = _write_outline(
         _Playwright(), "a glass falls; a boy collects shards", [],
         episode_guidance={"past_task_shapes": [
             {"n_shots": 3, "outcome": "good", "user_prompt": "similar"}]},
@@ -606,6 +609,8 @@ def test_llm_playwriting_replaces_clause_cycling(tmp_path):
     assert len(outline) == 3
     assert len({o.lower() for o in outline}) == 3       # 绝无重复分镜
     assert all(len(o.split()) >= 10 for o in outline)   # 描述带细节
+    # 时长是 brain 定的;越界(30)夹回生成模型的域 [4,15]
+    assert durs == [5, 4, 15]
 
 
 def test_llm_playwriting_validation_and_fallback(tmp_path):
@@ -622,10 +627,11 @@ def test_llm_playwriting_validation_and_fallback(tmp_path):
                 "Shot 4: extra beyond the cost cap in this test run",
             ]})
 
-    outline, via = _write_outline(
+    outline, durs, via = _write_outline(
         _Dupes(), "p", [], episode_guidance={}, max_shots=3,
         fallback_fn=lambda: ["fb"])
     assert via == "llm"
+    assert durs == [5, 5]                   # 纯字符串形态 → 每镜 API 默认 5s
     assert len(outline) == 2                # 硬顶 3 截断后再去重(1 条重复被丢)
     assert len(set(outline)) == len(outline)
 
@@ -633,10 +639,11 @@ def test_llm_playwriting_validation_and_fallback(tmp_path):
         def complete(self, prompt, **kw):
             return "I would suggest maybe some nice shots?"
 
-    outline2, via2 = _write_outline(
+    outline2, durs2, via2 = _write_outline(
         _Garbage(), "p", [], episode_guidance={}, max_shots=6,
         fallback_fn=lambda: ["Shot 1: fallback split"])
     assert via2 == "fallback" and outline2 == ["Shot 1: fallback split"]
+    assert durs2 == [5]                     # 兜底 = API 自然默认,绝非 config 预设
 
 
 def test_guidance_carries_past_task_shapes(tmp_path):

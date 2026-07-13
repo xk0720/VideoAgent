@@ -42,7 +42,7 @@ models:
     # docs/research/wavespeed_api_reference_2026_07.md). Durations 4-15 s,
     # up to 4k; i2v takes image + last_image (native first+last frame).
     model_id: "bytedance/seedance-2.0/text-to-video"   # i2v id auto-derived
-    resolution: "1080p"       # 480p | 720p | 1080p | 4k
+    resolution: "480p"        # 测试期默认(省钱);产线再升 720p/1080p/4k
     generate_audio: false
     # flf2v_model:  "bytedance/seedance-2.0/image-to-video"  # default; or wavespeed-ai/wan-flf2v
     # edit_model:   "bytedance/seedance-2.0/video-edit"

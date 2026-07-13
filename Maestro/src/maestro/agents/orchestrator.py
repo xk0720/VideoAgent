@@ -146,10 +146,14 @@ class OrchestratorAgent:
         if vg is not None and caps:
             menu.append({
                 "name": "regenerate_segment",
-                "description": "Re-generate ONLY the time segment a defect lives "
-                "in (by frame range), then re-anchor downstream segments forward "
-                "until continuity converges. The localized counterpart to a whole "
-                "reroll; PREFER this for a span-localized defect.",
+                "description": "THE frame-precise repair: physically CUTS the "
+                "clip at the defect's frame range, re-generates only that span "
+                "anchored on the good boundary frames, then re-anchors "
+                "downstream until continuity converges. The ONLY family of "
+                "tools that truly consumes a frame range (the cut is by frame). "
+                "PREFER this for any span-localized defect — including a "
+                "defect at the END of the clip (cut before it, regrow the "
+                "tail from the last good frame; never extend_clip there).",
                 "args": {
                     "frame_start": "int — defect span start frame",
                     "frame_end": "int — defect span end frame",
@@ -181,9 +185,13 @@ class OrchestratorAgent:
         if "edit" in caps and self.video_gen is not None:
             menu.append({
                 "name": "edit_clip",
-                "description": "Edit the rendered clip IN PLACE (preserves good "
-                "parts; no full reroll). Best for a physics MOTION defect "
-                "(gravity/inertia, collision, conservation, penetration).",
+                "description": "Whole-clip prompt-guided re-render (edit model). "
+                "It has NO frame addressing: NEVER write frame numbers into the "
+                "prompt — describe the EVENT MOMENT ('as the glass leaves the "
+                "table edge...') plus a DETAILED correction (subject, scene, "
+                "what was wrong, what correct motion looks like, what must stay "
+                "unchanged). Use for GLOBAL motion/look problems; for a "
+                "span-localized defect prefer regenerate_segment/frame_to_frame.",
                 "args": {
                     "prompt": "str — edit instruction describing the corrected motion",
                     "backend": "str — 'seedance' (default, best free-form) | "
@@ -210,8 +218,11 @@ class OrchestratorAgent:
         if "extend" in caps and self.video_gen is not None:
             menu.append({
                 "name": "extend_clip",
-                "description": "Continue the clip past its last frame. Best for an "
-                "incomplete / too-short clip or an object_permanence defect.",
+                "description": "Continue the clip FROM ITS CURRENT ENDING. Only "
+                "for a clip that is genuinely incomplete but whose ending is "
+                "GOOD. If the ending itself is the defect (e.g. the subject "
+                "vanished in the final frames), extending REPRODUCES the broken "
+                "state — use regenerate_segment on the tail instead.",
                 "args": {"prompt": "str — what should happen in the continuation"},
             })
         if self.sim_client is not None and "ref_video" in caps:

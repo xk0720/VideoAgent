@@ -321,7 +321,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
 
 def _write_outline(llm, user_prompt: str, asset_catalog: list,
                    episode_guidance: dict, max_shots: int,
-                   fallback_fn) -> tuple[list[str], str]:
+                   fallback_fn) -> tuple[list[str], list[int], str]:
     """§A 真·LLM playwriting → (outline, via)。三层纪律同 _decide:
 
     1) LLM + scene_write 技能全文 → 严格 JSON {"shots": [...]},逐条校验
@@ -346,30 +346,46 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                           },
                           "max_shots_hard_cost_cap": max_shots},
                          ensure_ascii=False)
-            + '\n\nSTRICT JSON only: {"shots": ["Shot 1: <detailed filmable '
-              'description>", ...]} — each shot 15-40 words (subject + action '
-              "+ setting + camera), scene N stated when the location changes. "
-              "YOU decide the shot count from the story itself (use "
-              "past_task_shapes as experience from similar past tasks); "
-              f"max_shots ({max_shots}) is only a COST ceiling, never a "
-              "target — never pad by repeating a shot."
+            + '\n\nSTRICT JSON only: {"shots": [{"description": "Shot 1: '
+              '<detailed filmable description>", "duration_s": <int 4-15>}, '
+              "...]} — each description 15-40 words (subject + action + "
+              "setting + camera), scene N stated when the location changes. "
+              "YOU decide the shot count AND each shot's duration_s from the "
+              "story itself (use past_task_shapes as experience from similar "
+              f"past tasks); max_shots ({max_shots}) is only a COST ceiling, "
+              "never a target — never pad by repeating a shot."
         )
         try:
             data = _extract_json(llm.complete(prompt))
         except Exception:
             data = None
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
-            shots, seen = [], set()
+            shots, durs, seen = [], [], set()
             for s_ in data["shots"][:max_shots]:
-                text = str(s_).strip()
+                # 兼容两种形态:纯字符串,或 {description, duration_s}
+                if isinstance(s_, dict):
+                    text = str(s_.get("description", "")).strip()
+                    dur = s_.get("duration_s")
+                else:
+                    text = str(s_).strip()
+                    dur = None
                 key = text.lower()
                 # 完全重复 = 凑数,丢弃(重复分镜正是本函数存在的原因)
                 if len(text) >= 12 and key not in seen:
                     seen.add(key)
                     shots.append(text)
+                    # 时长是 brain 的决定;缺失/非法 → API 自然默认 5s
+                    # (用户裁决:绝不用 config 预设的任意数)。夹在生成模型
+                    # 的时长域 [4,15] 内。
+                    try:
+                        durs.append(max(4, min(15, int(dur))))
+                    except (TypeError, ValueError):
+                        durs.append(5)
             if shots:
-                return shots, "llm"
-    return list(fallback_fn()), "fallback"
+                return shots, durs, "llm"
+    fb = list(fallback_fn())
+    # 兜底层没有 brain → 一律 API 自然默认 5s(不是 config 的 shot_duration)
+    return fb, [5] * len(fb), "fallback"
 
 
 def _skill_body_named(name: str) -> str:
@@ -946,7 +962,7 @@ def generate_movie_windowed(
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
     asset_catalog0 = _asset_catalog(asset_memory)
-    outline, outline_via = _write_outline(
+    outline, shot_durations, outline_via = _write_outline(
         llm, user_prompt, asset_catalog0,
         episode_guidance=guidance,
         max_shots=int(plan_cfg.get("max_shots", 6)),
@@ -958,6 +974,10 @@ def generate_movie_windowed(
                                 if outline_via == "llm"
                                 else "deterministic clause split (fallback)"})
     specs = director.run(outline, asset_memory, lesson_library)
+    # 时长是 brain 的决定(或兜底 5s)—— 覆盖 director 从 config 带来的预设
+    # (用户裁决:千万不能自己随意指定时长)。
+    for spec_, dur_ in zip(specs, shot_durations):
+        spec_.duration = float(dur_)
     storyboard = StoryboardMemory.from_outline(
         outline, path=cache_dir / "storyboard.json")
     log.info("window: playwriting done via=%s — %s",

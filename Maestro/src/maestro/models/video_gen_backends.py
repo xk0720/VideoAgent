@@ -81,7 +81,7 @@ class WaveSpeedClient(BaseVideoGenClient):
       models.video_gen:
         name: "wavespeed"
         model_id: "bytedance/seedance-2.0/text-to-video"   # i2v id derived
-        resolution: "1080p"        # 480p | 720p | 1080p | 4k (seedance-2.0)
+        resolution: "480p"         # 测试期默认最低价;产线再升 720p/1080p/4k
         generate_audio: false      # seedance-2.0 native AV co-generation
         flf2v_model:  "bytedance/seedance-2.0/image-to-video"  # or wavespeed-ai/wan-flf2v
         edit_model:   "bytedance/seedance-2.0/video-edit"
@@ -101,7 +101,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         self.config = config or {}
         self.api_key = self.config.get("api_key") or os.getenv("WAVESPEED_API_KEY")
         self.model_id = self.config.get("model_id", "bytedance/seedance-2.0/text-to-video")
-        self.resolution = self.config.get("resolution", "1080p")
+        self.resolution = self.config.get("resolution", "480p")
         self.generate_audio = bool(self.config.get("generate_audio", False))
         self.flf2v_model = self.config.get(
             "flf2v_model", "bytedance/seedance-2.0/image-to-video")

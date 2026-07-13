@@ -32,7 +32,7 @@ models:
   video_gen:
     name: "wavespeed"
     model_id: "bytedance/seedance-2.0/text-to-video"   # i2v id 自动推导
-    resolution: "1080p"       # 480p | 720p | 1080p | 4k
+    resolution: "480p"        # 测试期默认(省钱);产线再升 720p/1080p/4k
     generate_audio: false     # seedance-2.0 可原生出声；评审链路默认关
     # flf2v_model:  "bytedance/seedance-2.0/image-to-video"  # 首尾帧路由（默认）
     # edit_model:   "bytedance/seedance-2.0/video-edit"
@@ -52,7 +52,7 @@ models:
 plan:
   n_shots: 3
   max_shots: 6
-  shot_duration: 3.0
+  shot_duration: 3.0       # 仅旧阶梯管线用;窗口管线的时长由 brain 逐镜决定
   max_plan_iters: 3
 
 # 评审员开关(可能不用纯 physics 评审 → 分支开关控制)

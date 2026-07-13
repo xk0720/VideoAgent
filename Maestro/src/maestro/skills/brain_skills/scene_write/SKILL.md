@@ -40,11 +40,16 @@ strategy, review, repair) hangs off these entries.
 
 ## Output format (STRICT JSON — output this and nothing else)
 
-{"shots": ["Shot 1: <detailed filmable description>",
-           "Shot 2: <detailed filmable description>", ...]}
+{"shots": [{"description": "Shot 1: <detailed filmable description>",
+            "duration_s": <int 4-15>},
+           {"description": "Shot 2: <detailed filmable description>",
+            "duration_s": <int 4-15>}, ...]}
 
 - Each description is 15-40 words: subject + action + setting + camera /
   lighting where useful. One sentence that a video model can shoot.
+- `duration_s` is YOUR call per shot (integer seconds, 4-15 — the generation
+  model's domain): a quick impact beat wants 4-5s, a slow establishing pan or
+  a multi-step action wants 8-12s. It is never preset by config.
 - YOU decide the shot count — it is never preset. Read it off the story's
   beats, informed by `episode_guidance.past_task_shapes` (how many shots
   similar past tasks used and whether they succeeded). `max_shots` is ONLY a
@@ -62,9 +67,9 @@ strategy, review, repair) hangs off these entries.
 user_prompt: "a glass falls off a table; shards scatter on the floor. Then a
 boy comes and collects all shards, leaves happily"
 {"shots": [
-  "Shot 1: scene 1 — a clear drinking glass teeters on the edge of a wooden kitchen table, warm daylight, eye-level close-up, then tips over the edge",
-  "Shot 2: scene 1 — the glass shatters on the tile floor and shards scatter outward, low camera angle at floor level, shallow depth of field",
-  "Shot 3: scene 1 — a young boy kneels down, carefully collects the shards into his hand, then stands up and walks away smiling, medium shot"
+  {"description": "Shot 1: scene 1 — a clear drinking glass teeters on the edge of a wooden kitchen table, warm daylight, eye-level close-up, then tips over the edge", "duration_s": 5},
+  {"description": "Shot 2: scene 1 — the glass shatters on the tile floor and shards scatter outward, low camera angle at floor level, shallow depth of field", "duration_s": 4},
+  {"description": "Shot 3: scene 1 — a young boy kneels down, carefully collects the shards into his hand, then stands up and walks away smiling, medium shot", "duration_s": 8}
 ]}
 
 ## Where the output goes

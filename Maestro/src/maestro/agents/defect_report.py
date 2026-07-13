@@ -56,15 +56,24 @@ class Defect:
     severity: float                   # 0-1
     fix_modality: str                 # "motion" | "presence" | "content"
     note: str = ""
+    # 评审员自己的修复建议原文(物理 verdict 的 suggested_intervention /
+    # 语义项的 fix_instruction)——brain 写修复 prompt 的素材,别让它凭空编。
+    fix_hint: str = ""
+    fps: int = 8                      # 帧号→秒数换算(brain 的 prompt 用秒/事件)
 
     def to_dict(self) -> dict:
+        lo, hi = self.frame_range
         return {
             "kind": self.kind,
             "entity": self.entity,
             "frame_range": list(self.frame_range),
+            # 秒数视图:编辑类模型不认帧号;brain 描述"事件时刻"时用它换算
+            "time_range_s": [round(lo / max(1, self.fps), 2),
+                             round(hi / max(1, self.fps), 2)],
             "severity": round(float(self.severity), 3),
             "fix_modality": self.fix_modality,
             "note": self.note,
+            "fix_hint": self.fix_hint,
         }
 
 
@@ -133,6 +142,8 @@ def build_defect_report(
             severity=float(v.severity),
             fix_modality=_modality_for_mode(v.mode),
             note=f"{v.mode.value} ({v.source})",
+            fix_hint=v.suggested_intervention or "",
+            fps=fps,
         ))
 
     for item in clip.checklist.failed_items:
@@ -155,6 +166,8 @@ def build_defect_report(
             severity=0.5,   # semantic fails carry no measured severity; mid-rank
             fix_modality="content",
             note=item.question[:80],
+            fix_hint=item.fix_instruction or "",
+            fps=fps,
         ))
 
     report = DefectReport(defects=defects, n_frames=n_frames)

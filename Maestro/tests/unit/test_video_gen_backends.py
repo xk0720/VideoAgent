@@ -210,7 +210,7 @@ def test_wavespeed_seedance2_payloads_match_official_docs(tmp_path: Path, monkey
     assert calls[0]["model_id"] == "bytedance/seedance-2.0/text-to-video"
     assert calls[0]["payload"]["aspect_ratio"] == "16:9"
     assert calls[0]["payload"]["duration"] == 5
-    assert calls[0]["payload"]["resolution"] == "1080p"
+    assert calls[0]["payload"]["resolution"] == "480p"
     assert calls[0]["payload"]["generate_audio"] is False
     assert "seed" not in calls[0]["payload"]
 
