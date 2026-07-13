@@ -319,6 +319,72 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
     return out
 
 
+def _write_outline(llm, user_prompt: str, asset_catalog: list,
+                   episode_guidance: dict, max_shots: int,
+                   fallback_fn) -> tuple[list[str], str]:
+    """§A 真·LLM playwriting → (outline, via)。三层纪律同 _decide:
+
+    1) LLM + scene_write 技能全文 → 严格 JSON {"shots": [...]},逐条校验
+       (字符串、非空、去完全重复、1..max_shots 截断)。【分镜数由 brain
+       自己定】(用户裁决:绝不预设)——依据是剧情本身 + episode 记忆里
+       相似任务的形状经验(past_task_shapes:当年几镜、成没成);
+       max_shots 只是成本硬顶,不是创作指令。【绝不靠重复子句凑数】;
+    2) 校验不过/LLM 不可用 → fallback_fn(确定性拆条,mock 模式的老路)。
+
+    背景:v0.1 的确定性拆条按 `子句[i % n]` 循环填充——子句少于 n_shots 时
+    必然产出重复分镜(实测翻车:2 子句 3 镜,第 3 镜重复第 1 镜)。真剧本
+    必须由 LLM 写,拆条只配当兜底。"""
+    if llm is not None:
+        prompt = (
+            _skill_body_named("scene_write")
+            + "\n\nTHIS TASK (JSON):\n"
+            + json.dumps({"user_prompt": user_prompt,
+                          "asset_catalog": asset_catalog,
+                          "episode_guidance": {
+                              "past_task_shapes":
+                                  episode_guidance.get("past_task_shapes", []),
+                          },
+                          "max_shots_hard_cost_cap": max_shots},
+                         ensure_ascii=False)
+            + '\n\nSTRICT JSON only: {"shots": ["Shot 1: <detailed filmable '
+              'description>", ...]} — each shot 15-40 words (subject + action '
+              "+ setting + camera), scene N stated when the location changes. "
+              "YOU decide the shot count from the story itself (use "
+              "past_task_shapes as experience from similar past tasks); "
+              f"max_shots ({max_shots}) is only a COST ceiling, never a "
+              "target — never pad by repeating a shot."
+        )
+        try:
+            data = _extract_json(llm.complete(prompt))
+        except Exception:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("shots"), list):
+            shots, seen = [], set()
+            for s_ in data["shots"][:max_shots]:
+                text = str(s_).strip()
+                key = text.lower()
+                # 完全重复 = 凑数,丢弃(重复分镜正是本函数存在的原因)
+                if len(text) >= 12 and key not in seen:
+                    seen.add(key)
+                    shots.append(text)
+            if shots:
+                return shots, "llm"
+    return list(fallback_fn()), "fallback"
+
+
+def _skill_body_named(name: str) -> str:
+    """按名载入技能全文(缓存;缺文件返回 "")。"""
+    if name not in _SKILL_CACHE:
+        try:
+            from ..skills.loader import load_skill
+
+            sk = load_skill(name)
+            _SKILL_CACHE[name] = sk["body"] if sk and sk["body"].strip() else ""
+        except Exception:
+            _SKILL_CACHE[name] = ""
+    return _SKILL_CACHE.get(name, "")
+
+
 def _decide(llm, kind: str, menu: list[dict], context: dict,
             replay_hint: Optional[str], priority: list[str]) -> dict:
     """三层决策(§M 的可执行记忆就落在这):
@@ -874,13 +940,28 @@ def generate_movie_windowed(
                  len(guidance["replay_hints"]), len(guidance["avoid"]))
 
     # ── §A playwriting:prompt → outline → specs → 台账 ────────────────────
+    # 真·LLM 剧本(scene_write 技能驱动,分镜数按剧情定、描述带细节、绝不
+    # 重复凑数);LLM 不可用/输出不合格 → 确定性拆条兜底(mock 模式老路)。
     screenwriter = screenwriter or ScreenwriterAgent()
     director = director or DirectorAgent()
-    outline = screenwriter.run(user_prompt, asset_memory)
+    plan_cfg = getattr(screenwriter, "config", {}) or {}
+    asset_catalog0 = _asset_catalog(asset_memory)
+    outline, outline_via = _write_outline(
+        llm, user_prompt, asset_catalog0,
+        episode_guidance=guidance,
+        max_shots=int(plan_cfg.get("max_shots", 6)),
+        fallback_fn=lambda: screenwriter.run(user_prompt, asset_memory),
+    )
+    decisions.append({"stage": "playwriting", "label": "outline",
+                      "strategy": f"{len(outline)} shots", "via": outline_via,
+                      "reason": "LLM playwriting (scene_write skill)"
+                                if outline_via == "llm"
+                                else "deterministic clause split (fallback)"})
     specs = director.run(outline, asset_memory, lesson_library)
     storyboard = StoryboardMemory.from_outline(
         outline, path=cache_dir / "storyboard.json")
-    log.info("window: playwriting done — %s", storyboard.summary())
+    log.info("window: playwriting done via=%s — %s",
+             outline_via, storyboard.summary())
 
     # ── §B' Image Plan 阶段(逐 shot:brain 定【数量+角色+来源】→ 产图 →
     #     台账)。用户设定:单图 = 首帧或参考;双图 = 首尾帧或双参考;角色
@@ -1002,10 +1083,23 @@ def generate_movie_windowed(
             cond_used["per_seed"] = seed_conds          # 有分歧才展开全量流水
         storyboard.set_condition(entry.shot_idx, cond_used)
 
+        # 评审证据量:0 条 checklist + 0 条物理判定 = 评审员们什么都没说
+        # (真实 VLM 静默失败的典型症状:分数全默认、revision 0 即"收敛")。
+        # 这种"没证据 = 全过"必须在台账里现形,不许伪装成真收敛。
+        n_items = len(best.checklist.items)
+        n_verd = len(best.physics_verdicts)
+        if n_items == 0 and n_verd == 0:
+            log.warning(
+                "window: %s review produced ZERO evidence (no checklist "
+                "items, no verdicts) — convergence is VACUOUS; check the "
+                "VLM warnings above (HTTP errors / unparseable replies)",
+                entry.label)
         # 评审轨迹 + 修复动作嵌入台账(§D "意见嵌入轨迹")
         storyboard.add_review(entry.shot_idx, {
             "revision": best.revision,
             "weighted_total": best.metric_scores.get("weighted_total", 0.0),
+            "review_evidence": {"checklist_items": n_items,
+                                "physics_verdicts": n_verd},
             "n_failed": len(best.checklist.failed_items),
             "physics_verdicts": [
                 {"entity": v.entity, "mode": v.mode.value,

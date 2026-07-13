@@ -174,7 +174,7 @@ class EpisodeMemory:
         via="episode");bad episode 只贡献 avoid(它的教训,不是它的做法)。
         命中的 episode 记一次 uses(使用台账,同 skill mark_used 哲学)。"""
         hits = self.retrieve(user_prompt, k)
-        replay_hints, avoid = [], []
+        replay_hints, avoid, shapes = [], [], []
         for ep in hits:
             ep.uses += 1
             if ep.outcome == "good":
@@ -183,9 +183,15 @@ class EpisodeMemory:
                 # bad episode 里收敛的局部经验也值得借(见模块 docstring)
                 replay_hints.extend(r for r in ep.replay if r.get("converged"))
             avoid.extend(ep.avoid)
+            # 任务形状经验:相似任务当年拆了几镜、成没成 —— 供 playwriting
+            # 的 brain 决定本次 shot 数量(用户裁决:数量绝不预设,由 brain
+            # 结合这些历史经验自己定)。
+            shapes.append({"n_shots": ep.n_shots, "outcome": ep.outcome,
+                           "user_prompt": ep.user_prompt[:80]})
         if hits:
             self._save()
         return {"replay_hints": replay_hints[:8], "avoid": avoid[:8],
+                "past_task_shapes": shapes[:5],
                 "n_episodes_matched": len(hits)}
 
     # ── 持久化(JSONL,原子重写)─────────────────────────────────────────────

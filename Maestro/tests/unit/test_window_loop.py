@@ -205,10 +205,10 @@ def test_replay_adoption_from_episode_memory(tmp_path, monkeypatch):
 
     class _Boom(BaseLLMClient):        # 命中 replay 的决策绝不消耗 LLM 推理
         def __init__(self):
-            self.called = False
+            self.prompts = []
 
         def complete(self, prompt, **kw):
-            self.called = True
+            self.prompts.append(prompt)
             return "should not matter"
 
     boom = _Boom()
@@ -216,9 +216,13 @@ def test_replay_adoption_from_episode_memory(tmp_path, monkeypatch):
         "the glass falls off the table again", cache_dir=tmp_path / "run2",
         llm=boom, max_turns=1, n_candidates=1, episode_memory=em,
         **_components(_WindowVideoGen()))
-    via = {d["via"] for d in res2.decisions}
+    # 剧本层每次任务都该新写(不重放),它可以咨询 LLM;但 image_plan 和
+    # condition 两个决策阶段命中历史 → 全部 via=episode,零 LLM 消耗。
+    via = {d["via"] for d in res2.decisions
+           if d["stage"] in ("image_plan", "condition")}
     assert via == {"episode"}, res2.decisions           # 检索即执行
-    assert not boom.called                              # 零 LLM 消耗
+    assert all("Image Plan" not in pr[:200] and "Window Generation"
+               not in pr[:200] for pr in boom.prompts)  # 只有剧本层碰过 LLM
     # 采纳的正是历史策略
     assert all(e.keyframe_source == "t2i" for e in res2.storyboard.entries)
     assert all(e.condition["strategy"] == "i2v_keyframe"
@@ -570,3 +574,95 @@ def test_window_brain_prompts_load_the_skill_bodies(tmp_path, monkeypatch):
     assert plan_prompts and cond_prompts
     assert "Role → video-model family" in plan_prompts[0]     # 技能正文在场
     assert "Reference syntax per model family" in cond_prompts[0]
+
+
+# ── §A 真·LLM playwriting(实测翻车修复:确定性拆条循环填充产重复分镜)──
+def test_llm_playwriting_replaces_clause_cycling(tmp_path):
+    """2 子句的故事:老拆条按 n_shots=3 循环会让第 3 镜重复第 1 镜;LLM
+    剧本由 brain 自己定数量、每镜带细节、互不相同,且能看到历史任务形状。"""
+    from maestro.pipeline.window_loop import _write_outline
+
+    class _Playwright(BaseLLMClient):
+        def complete(self, prompt, **kw):
+            assert "Scene Write" in prompt[:200]      # 技能全文在场
+            assert "past_task_shapes" in prompt       # 历史经验在上下文里
+            assert "suggested_shot_count" not in prompt   # 数量绝不预设
+            return json.dumps({"shots": [
+                "Shot 1: scene 1 — a clear glass teeters on the edge of a "
+                "wooden kitchen table, warm daylight, eye-level close-up",
+                "Shot 2: scene 1 — the glass shatters on the tile floor, "
+                "shards scattering outward, low floor-level camera",
+                "Shot 3: scene 1 — a young boy kneels, collects the shards "
+                "into his hand and walks away smiling, medium shot",
+            ]})
+
+    outline, via = _write_outline(
+        _Playwright(), "a glass falls; a boy collects shards", [],
+        episode_guidance={"past_task_shapes": [
+            {"n_shots": 3, "outcome": "good", "user_prompt": "similar"}]},
+        max_shots=6,
+        fallback_fn=lambda: ["Shot 1: x", "Shot 2: y", "Shot 3: x"])
+    assert via == "llm"
+    assert len(outline) == 3
+    assert len({o.lower() for o in outline}) == 3       # 绝无重复分镜
+    assert all(len(o.split()) >= 10 for o in outline)   # 描述带细节
+
+
+def test_llm_playwriting_validation_and_fallback(tmp_path):
+    """LLM 输出重复/超上限 → 去重+截断;垃圾输出 → 确定性拆条兜底。"""
+    from maestro.pipeline.window_loop import _write_outline
+
+    class _Dupes(BaseLLMClient):
+        def complete(self, prompt, **kw):
+            return json.dumps({"shots": [
+                "Shot 1: the glass teeters on the table edge and tips over",
+                "Shot 1: the glass teeters on the table edge and tips over",
+                "Shot 2: shards scatter across the tile floor at low angle",
+                "Shot 3: a boy collects the shards and leaves smiling",
+                "Shot 4: extra beyond the cost cap in this test run",
+            ]})
+
+    outline, via = _write_outline(
+        _Dupes(), "p", [], episode_guidance={}, max_shots=3,
+        fallback_fn=lambda: ["fb"])
+    assert via == "llm"
+    assert len(outline) == 2                # 硬顶 3 截断后再去重(1 条重复被丢)
+    assert len(set(outline)) == len(outline)
+
+    class _Garbage(BaseLLMClient):
+        def complete(self, prompt, **kw):
+            return "I would suggest maybe some nice shots?"
+
+    outline2, via2 = _write_outline(
+        _Garbage(), "p", [], episode_guidance={}, max_shots=6,
+        fallback_fn=lambda: ["Shot 1: fallback split"])
+    assert via2 == "fallback" and outline2 == ["Shot 1: fallback split"]
+
+
+def test_guidance_carries_past_task_shapes(tmp_path):
+    """episode 记忆给 playwriting 供数量经验:相似任务的 (n_shots, outcome)。"""
+    em = EpisodeMemory(tmp_path / "ep.jsonl")
+    from maestro.memory.storyboard import StoryboardMemory
+    old = StoryboardMemory.from_outline(
+        ["Shot 1: a glass falls", "Shot 2: shards scatter"])
+    for i in range(2):
+        old.set_result(i, tmp_path / f"v{i}.mp4", converged=True)
+    em.distill_episode("a glass falls off a table", old)
+    g = em.guidance_for("the glass falls from the table")
+    assert g["past_task_shapes"] == [
+        {"n_shots": 2, "outcome": "good",
+         "user_prompt": "a glass falls off a table"}]
+
+
+def test_review_evidence_recorded_in_ledger(tmp_path, monkeypatch):
+    """评审证据量进台账:mock 评审有 checklist 项 → 数字非零;"零证据即
+    收敛"的空洞收敛在台账里现形(review_evidence 全 0 才可疑)。"""
+    import maestro.pipeline.window_loop as wl
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
+    res = generate_movie_windowed(
+        "a glass falls off a table", cache_dir=tmp_path, llm=_JsonLLM(),
+        max_turns=1, n_candidates=1, **_components(_WindowVideoGen()))
+    for e in res.storyboard.entries:
+        ev = e.reviews[-1]["review_evidence"]
+        assert set(ev) == {"checklist_items", "physics_verdicts"}
+        assert ev["checklist_items"] > 0     # mock 评审真的说了话
