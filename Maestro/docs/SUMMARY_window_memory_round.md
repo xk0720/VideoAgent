@@ -42,13 +42,15 @@ good/bad 完全由客观收敛状态判定;bad episode 里收敛镜头的策略�
 
 - `5865ecd` 窗口大循环 + 双层记忆(初版)
 - `9070ec4` Q2-Q4 裁决 + 2 个诚实性修复 + folder 形态 skills + 真实 keyframe 编辑
-- `2d6dfcc` Q1 落地:多图条件(调研核验)+ 工具库盘点
+- `2d6dfcc` Q1 落地:多图条件(初版)+ 工具库盘点
+- `a95bf7b` 按完整调研报告修正多图语义(refs 仅 t2v;multi_i2v 换 video-o1)
 
 ## 4. 已知边界(诚实声明)
 
-- seedance-2.0 i2v 端点页对 reference_images 的显式列出未单独核验(博客称
-  限额全端点统一);真跑若 400,报错正文透传会直说哪个字段;
-- kling-elements(角色元素注册)、vidu reference-to-video 在缺口台账排队;
+- seedance-2.0 i2v 端点 schema 已核验:无 reference_images 字段——代码按
+  验证结论处理(i2v 丢弃 refs + 告警,refs 走 t2v);
+- kling-v3.0-4k 双硬锚+element_list、kling-elements、pixverse-c1、vidu r2v
+  在缺口台账排队;
 - ScreenwriterAgent 的 playwriting 仍是确定性拆条(LLM 版的操作手册已写在
   scene_write/SKILL.md,升级时照办);
 - 服务器实跑(scripts/test_window_movie.py,三个 key)还没做——那是检验
