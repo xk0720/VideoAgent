@@ -25,7 +25,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from ..logging_utils import get_logger
 from .video_gen import BaseVideoGenClient
+
+log = get_logger(__name__)
 
 _UPLOAD_URL = "https://api.wavespeed.ai/api/v3/media/upload/binary"
 
@@ -208,9 +211,56 @@ class WaveSpeedClient(BaseVideoGenClient):
                     f"model '{model_id}' has no reference_videos channel — "
                     "reference-video conditioning needs the seedance-2.0 family")
             payload["reference_videos"] = [self._upload_media(reference_video)]
+        if reference_images:
+            # seedance-2.0 reference_images channel (docs-verified: ≤9 images,
+            # referenced in the prompt as @Image1…@ImageN, combinable with
+            # image/last_image and reference_videos up to 12 files total).
+            if not self._is_range_family(model_id):
+                raise RuntimeError(
+                    f"model '{model_id}' has no reference_images channel — "
+                    "multi-image conditioning needs the seedance-2.0 family "
+                    "(or use multi_image_to_video for the Kling multi-i2v route)")
+            refs = list(reference_images)[:9]
+            if len(reference_images) > 9:
+                log.info("reference_images capped to 9 (got %d) — seedance-2.0 "
+                         "documented limit", len(reference_images))
+            payload["reference_images"] = [self._upload_media(p) for p in refs]
         payload.update(self.config.get("extra_params") or {})
 
         return self._run_task(model_id, payload, out_path)
+
+    def multi_image_to_video(
+        self,
+        prompt: str,
+        images: list,
+        out_path: Path,
+        duration: float = 5,
+        seed: int = 0,
+    ) -> Path:
+        """Multi-image FUSION i2v — capability "multi_i2v". One request takes an
+        `images` ARRAY (≤4, docs-verified) and composes ONE video consistent
+        with all of them (scene composition + character consistency), e.g.
+        [previous shot's last frame, this shot's keyframe, identity anchor].
+        Default route kwaivgi/kling-v1.6-multi-i2v-standard (the only array-
+        input i2v verified on WaveSpeed 2026-07); configurable via
+        `multi_i2v_model`. Distinct from `reference_images` (steering refs on
+        top of a first-frame anchor): here the images ARE the condition, with
+        no designated first frame."""
+        if not images:
+            raise ValueError("multi_image_to_video needs at least one image")
+        model = self.config.get("multi_i2v_model",
+                                "kwaivgi/kling-v1.6-multi-i2v-standard")
+        imgs = list(images)[:4]
+        if len(images) > 4:
+            log.info("multi_image_to_video: images capped to 4 (got %d) — "
+                     "documented Kling multi-i2v limit", len(images))
+        payload = {
+            "prompt": prompt,
+            "images": [self._upload_media(p) for p in imgs],
+            "duration": self._snap_duration(duration, model),   # {5,10} enum
+            "aspect_ratio": self.config.get("aspect_ratio", "16:9"),
+        }
+        return self._run_task(model, payload, out_path)
 
     @staticmethod
     def _summarize_payload(payload: dict) -> dict:
@@ -460,9 +510,14 @@ class WaveSpeedClient(BaseVideoGenClient):
                 "t2i"}   # t2i: text_to_image (keyframe stage of the window loop)
         # "ref_video": generate(reference_video=...) — the seedance-2.0
         # reference_videos channel (motion conditioning, e.g. a physics-sim
-        # reference clip). Legacy v1 model ids have no such channel.
+        # reference clip) + reference_images channel (≤9 steering images with
+        # @ImageN prompt mentions). Legacy v1 model ids have neither.
         if self._is_range_family(self.model_id):
             caps.add("ref_video")
+            caps.add("ref_images")
+        # multi-image FUSION i2v (images array ≤4) — the Kling multi-i2v route,
+        # always addressable on this client (own model id per call).
+        caps.add("multi_i2v")
         return caps
 
 

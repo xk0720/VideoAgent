@@ -60,7 +60,8 @@ def test_capabilities_per_client():
     # seedance-2.0 family — legacy v1 ids have no such channel.
     wave = build_video_gen({"name": "wavespeed"})
     assert wave.capabilities() == {"t2v", "i2v", "flf2v", "edit", "extend",
-                                   "depth", "style", "ref_video", "t2i"}
+                                   "depth", "style", "ref_video", "ref_images",
+                                   "t2i", "multi_i2v"}
     legacy = build_video_gen({"name": "wavespeed",
                               "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
     assert "ref_video" not in legacy.capabilities()
@@ -395,3 +396,69 @@ def test_wavespeed_reference_video_channel(tmp_path: Path, monkeypatch):
                               "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
     with pytest.raises(RuntimeError, match="reference_videos"):
         legacy.generate("x", 5.0, tmp_path / "o2.mp4", reference_video=ref)
+
+
+def test_wavespeed_reference_images_channel(tmp_path: Path, monkeypatch):
+    """generate(reference_images=[...]) rides seedance-2.0 reference_images
+    (docs: ≤9 images, uploaded URLs, combinable with first frame). Over-limit
+    input caps at 9; legacy model ids raise honestly."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    calls = []
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls.append({"model_id": model_id, "payload": payload})
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media",
+                        lambda p: f"https://fake.host/{Path(p).name}")
+    first = tmp_path / "prev_last.png"; first.write_bytes(b"\x89PNG")
+    kf = tmp_path / "kf.png"; kf.write_bytes(b"\x89PNG")
+    # first frame + one steering reference in ONE call (the ti2v_prev_plus_
+    # keyframe strategy's exact backend shape)
+    wave.generate("continue @Image1", 5.0, tmp_path / "o.mp4",
+                  first_frame=first, reference_images=[kf])
+    p0 = calls[0]["payload"]
+    assert p0["image"].endswith("prev_last.png")
+    assert p0["reference_images"] == ["https://fake.host/kf.png"]
+    # cap at 9
+    many = []
+    for i in range(11):
+        f = tmp_path / f"r{i}.png"; f.write_bytes(b"\x89PNG")
+        many.append(f)
+    wave.generate("x", 5.0, tmp_path / "o2.mp4", reference_images=many)
+    assert len(calls[1]["payload"]["reference_images"]) == 9
+    # legacy family has no channel
+    legacy = build_video_gen({"name": "wavespeed",
+                              "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
+    with pytest.raises(RuntimeError, match="reference_images"):
+        legacy.generate("x", 5.0, tmp_path / "o3.mp4", reference_images=[kf])
+
+
+def test_wavespeed_multi_image_to_video(tmp_path: Path, monkeypatch):
+    """multi_image_to_video posts the images ARRAY to the Kling multi-i2v
+    route (docs: ≤4 images, duration {5,10} enum). Caps at 4; empty raises."""
+    monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
+    wave = build_video_gen({"name": "wavespeed"})
+    calls = []
+
+    def _fake_run_task(model_id, payload, out_path):
+        calls.append({"model_id": model_id, "payload": payload})
+        out = Path(out_path); out.write_bytes(b"OUT")
+        return out
+
+    monkeypatch.setattr(wave, "_run_task", _fake_run_task)
+    monkeypatch.setattr(wave, "_upload_media",
+                        lambda p: f"https://fake.host/{Path(p).name}")
+    imgs = []
+    for i in range(6):
+        f = tmp_path / f"m{i}.png"; f.write_bytes(b"\x89PNG")
+        imgs.append(f)
+    wave.multi_image_to_video("fuse", imgs, tmp_path / "o.mp4", duration=7)
+    assert calls[0]["model_id"] == "kwaivgi/kling-v1.6-multi-i2v-standard"
+    assert len(calls[0]["payload"]["images"]) == 4          # documented cap
+    assert calls[0]["payload"]["duration"] == 10            # {5,10} snap-up
+    with pytest.raises(ValueError):
+        wave.multi_image_to_video("x", [], tmp_path / "o2.mp4")

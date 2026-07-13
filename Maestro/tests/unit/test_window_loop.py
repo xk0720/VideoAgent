@@ -278,3 +278,75 @@ def test_condition_attributed_to_tournament_winner_not_last_seed(tmp_path, monke
         assert "per_seed" in cond
         assert any(c.get("degraded_from") == "i2v_keyframe"
                    for c in cond["per_seed"])
+
+
+# ── Q1 多图策略(调研落地:seedance ref_images / kling multi-i2v)──────────
+class _MultiImageVideoGen(_WindowVideoGen):
+    """加上多图能力的窗口 mock;记录多图调用。"""
+
+    def capabilities(self):
+        return {"t2v", "i2v", "flf2v", "ref_video", "ref_images",
+                "multi_i2v", "t2i"}
+
+    def multi_image_to_video(self, prompt, images, out_path, duration=5, seed=0):
+        self.calls.append({"kind": "multi_i2v",
+                           "images": [str(p) for p in images]})
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(f"MOCK VIDEO\nprompt={prompt}\n", encoding="utf-8")
+        return out
+
+
+def test_multi_image_strategies_gated_and_executed(tmp_path, monkeypatch):
+    from maestro.memory.storyboard import StoryboardMemory
+    from maestro.pipeline.window_loop import _generate_with_condition
+    from maestro.types import ShotSpec
+
+    vg = _MultiImageVideoGen()
+    sb = StoryboardMemory.from_outline(["Shot 1: a", "Shot 2: b"])
+    e0, e1 = sb.entries
+    kf = tmp_path / "kf.png"; kf.write_bytes(b"\x89PNG")
+    e1.keyframe_path = str(kf)
+    e0.video_path = str(tmp_path / "v0.mp4")
+
+    # 门控:两个多图策略都出现;能力/前提缺失时消失
+    names = {m["name"] for m in _condition_menu(e1, e0, vg)}
+    assert {"ti2v_prev_plus_keyframe", "multi_image_fusion"} <= names
+    no_kf_names = {m["name"] for m in _condition_menu(e0, None, vg)}
+    assert "ti2v_prev_plus_keyframe" not in no_kf_names
+    assert "multi_image_fusion" not in no_kf_names
+
+    # 执行 ti2v_prev_plus_keyframe:尾帧当首帧 + keyframe 进 reference_images
+    import maestro.pipeline.window_loop as wl
+    prev_last = tmp_path / "prev_last.png"; prev_last.write_bytes(b"\x89PNG")
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: prev_last)
+    spec = ShotSpec(shot_idx=1, duration=5.0, prompt="b continues")
+    _, cond = _generate_with_condition(
+        "ti2v_prev_plus_keyframe", e1, e0, spec, vg, tmp_path / "g",
+        seed=0, fps=8, window_tail_s=2.0)
+    assert cond["strategy"] == "ti2v_prev_plus_keyframe"
+    assert cond["first_frame"].endswith("prev_last.png")
+    assert cond["reference_images"] == [str(kf)]
+    call = vg.calls[-1]
+    assert call["first_frame"].endswith("prev_last.png")
+
+    # 执行 multi_image_fusion:[尾帧, keyframe] 进 images 数组
+    _, cond2 = _generate_with_condition(
+        "multi_image_fusion", e1, e0, spec, vg, tmp_path / "g2",
+        seed=0, fps=8, window_tail_s=2.0)
+    assert cond2["strategy"] == "multi_image_fusion"
+    assert vg.calls[-1]["kind"] == "multi_i2v"
+    assert vg.calls[-1]["images"] == [str(prev_last), str(kf)]
+
+    # 降级链:尾帧抽不出 → 两策略都如实降级(degraded_from 保留)
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
+    _, cond3 = _generate_with_condition(
+        "ti2v_prev_plus_keyframe", e1, e0, spec, vg, tmp_path / "g3",
+        seed=0, fps=8, window_tail_s=2.0)
+    assert cond3["strategy"] == "i2v_keyframe"
+    assert cond3["degraded_from"] == "ti2v_prev_plus_keyframe"
+    _, cond4 = _generate_with_condition(
+        "multi_image_fusion", e1, e0, spec, vg, tmp_path / "g4",
+        seed=0, fps=8, window_tail_s=2.0)
+    assert cond4["strategy"] == "i2v_keyframe"
+    assert cond4["degraded_from"] == "multi_image_fusion"

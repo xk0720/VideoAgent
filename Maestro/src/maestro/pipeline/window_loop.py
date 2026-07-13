@@ -78,9 +78,16 @@ from ..types import AssetMemory, CandidateClip, ShotSpec
 
 log = get_logger(__name__)
 
-# §C 确定性兜底的优先级(强锚优先;仅在菜单里可用的策略间比较)
-_CONDITION_PRIORITY = ["flf2v_bridge", "tiv2v_window", "ti2v_prev_last",
-                       "i2v_keyframe", "t2v"]
+# §C 确定性兜底的优先级(强锚优先;仅在菜单里可用的策略间比较)。
+# Q1 多图调研落地后新增两个多图策略:
+#   ti2v_prev_plus_keyframe — 上镜尾帧当首帧 + 本镜 keyframe 进
+#     reference_images(@Image1 提及)——用户 4.(2.1)(1) "尾帧以及 keyframe"
+#     的字面实现:两张图一次调用(seedance-2.0,连续性锚定 + 目标画面引导);
+#   multi_image_fusion — [上镜尾帧, 本镜 keyframe(, 身份锚)] 作 images 数组
+#     一次融合生成(kling multi-i2v):无指定首帧,画面按全部图片融合。
+_CONDITION_PRIORITY = ["flf2v_bridge", "ti2v_prev_plus_keyframe",
+                       "tiv2v_window", "ti2v_prev_last",
+                       "multi_image_fusion", "i2v_keyframe", "t2v"]
 # §B 确定性兜底的优先级(用户素材优先于生成 —— 真材实料的外观赢过再生成)
 _KEYFRAME_PRIORITY = ["asset_image", "video_extract", "t2i", "none"]
 
@@ -275,6 +282,25 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
                                         "a motion reference (+ keyframe as "
                                         "first frame if present) + text — the "
                                         "generator SEES the ongoing motion."})
+        if has_kf and "ref_images" in caps:
+            menu.append({"name": "ti2v_prev_plus_keyframe",
+                         "description": "TWO images in ONE call: previous "
+                                        "shot's last frame as the FIRST FRAME "
+                                        "+ this shot's keyframe as a steering "
+                                        "reference image (@Image1) — pixel-"
+                                        "exact continuity AND target look, "
+                                        "without locking the end frame."})
+        if has_kf and "multi_i2v" in caps and hasattr(video_gen,
+                                                      "multi_image_to_video"):
+            menu.append({"name": "multi_image_fusion",
+                         "description": "FUSE multiple images (previous "
+                                        "shot's last frame + this shot's "
+                                        "keyframe, ≤4) into one video — no "
+                                        "designated first frame; the scene is "
+                                        "composed to stay consistent with ALL "
+                                        "of them. Use when the shot should "
+                                        "blend elements rather than continue "
+                                        "pixel-exactly."})
     return menu
 
 
@@ -298,6 +324,44 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                 out_path=out, duration=spec.duration, seed=seed)), cond
         strategy = "ti2v_prev_last"      # 尾帧抽不出来 → 逐级降级(如实改写)
         cond = {"strategy": strategy, "degraded_from": "flf2v_bridge"}
+
+    if strategy == "ti2v_prev_plus_keyframe":
+        # 用户 4.(2.1)(1) 字面版:上镜尾帧 + 本镜 keyframe,一次调用两张图。
+        # 尾帧 = 首帧锚(像素级续接);keyframe = reference_images[0],prompt 里
+        # 按 seedance-2.0 文档用 @Image1 提及引导目标画面。
+        last = _last_frame(Path(prev.video_path),
+                           cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
+        if last is not None and kf is not None:
+            cond.update(first_frame=str(last), reference_images=[str(kf)])
+            prompt2 = (spec.prompt + ". Match the composition and look of "
+                       "@Image1 (this shot's target keyframe).")
+            return Path(video_gen.generate(
+                prompt=prompt2, duration=spec.duration, out_path=out, fps=fps,
+                first_frame=last, reference_images=[kf], seed=seed)), cond
+        # 尾帧抽不出来 → 还有 keyframe 可锚(门控保证 kf 存在)
+        strategy = "i2v_keyframe" if kf is not None else "t2v"
+        cond = {"strategy": strategy,
+                "degraded_from": "ti2v_prev_plus_keyframe"}
+
+    if strategy == "multi_image_fusion":
+        # 多图融合(kling multi-i2v):无指定首帧,images 数组共同约束画面。
+        # 图片顺序 = [上镜尾帧, 本镜 keyframe];都拿不到才逐级降级。
+        imgs: list = []
+        last = _last_frame(Path(prev.video_path),
+                           cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
+        if last is not None:
+            imgs.append(last)
+        if kf is not None:
+            imgs.append(kf)
+        if len(imgs) >= 2:
+            cond.update(images=[str(p) for p in imgs])
+            return Path(video_gen.multi_image_to_video(
+                prompt=spec.prompt, images=imgs, out_path=out,
+                duration=spec.duration, seed=seed)), cond
+        # 不足两张 → 逐级降级(落到下方对应策略块,degraded_from 保留)
+        strategy = ("i2v_keyframe" if kf is not None
+                    else "ti2v_prev_last" if last is not None else "t2v")
+        cond = {"strategy": strategy, "degraded_from": "multi_image_fusion"}
 
     if strategy == "tiv2v_window":
         tail = _cut_tail(Path(prev.video_path), window_tail_s,
