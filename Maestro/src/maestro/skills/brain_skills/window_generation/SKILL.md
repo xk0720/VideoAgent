@@ -29,6 +29,16 @@ shot 列表(storyboard 台账)。你的两类决策,都是从门控后的菜单�
 - `none`          不用 keyframe(t2v 路线)。适合:三者皆无。
 
 ## 条件策略(§C)——给"下一个未生成 shot"搭生成条件
+
+菜单由【本镜 Image Plan 的角色】+【上镜是否存在】+【后端能力】三重门控:
+图是按什么角色计划的,就只会看到匹配该角色的策略(杜绝"首尾帧图被当参考
+用"的错配)。新增(Image Plan 配套):
+- `flf2v_own_pair`  本镜自己的首尾双图(plan=pair_first_last)驱动首尾帧
+                   模型:开场收场都像素级锁定。video_prompt 描述两帧之间
+                   的运动过程。
+- `t2v_own_refs`    本镜自己的参考图(1-2 张)走 seedance t2v @refs,无需
+                   上镜。video_prompt 必须用 @Image1(, @Image2) 提及并说明
+                   各自角色。
 - `flf2v_bridge`   上镜尾帧 → 本镜 keyframe 双端锚定。首选:连续性+目标画面
                    两头都锁死(结尾也被锁死——想给模型留自由结尾时别用它)。
                    要求:上镜已生成 + 本镜有 keyframe + flf2v 能力。
@@ -50,6 +60,26 @@ shot 列表(storyboard 台账)。你的两类决策,都是从门控后的菜单�
                    连续时,故意不用上镜的锚)。
 - `t2v`            纯文本。兜底,或刻意的全新开场。
 
+## 输出格式升级(Q-A 分工:你只出语义字段,机械字段执行器补)
+
+{"strategy": "<菜单名>", "reason": "<一句话>",
+ "video_prompt": "<按图片角色写好的完整视频 prompt(可选但强烈建议)>",
+ "use_prev_tail_video": true|false(仅 multi_image_fusion 有意义,可选)}
+
+video_prompt 的引用语法【按模型族】:
+- seedance 路线(t2v_own_refs / ti2v_prev_plus_keyframe):用 @Image1、
+  @Image2 提及,如 "Reference @Image1 for the man's appearance in
+  @Image2's living-room setting."
+- kling 路线(multi_image_fusion):用 "reference image 1/2" 措辞,如
+  "Use reference image 1 as the female character and reference image 2 as
+  the male character. Blend their appearances into the same style…"
+  (注意:ti2v_prev_plus_keyframe / multi_image_fusion 带上镜时,
+  @Image1 / reference image 1 = 上镜尾帧,你自己的图从 2 号开始。)
+- 首尾帧路线(flf2v_own_pair / flf2v_bridge):不用引用语法,直接描述从
+  开场帧到收场帧的运动。
+机械字段(aspect_ratio / duration / keep_original_sound / 图片上传 URL)
+你【不要】输出 —— 执行器确定性补齐,保证 payload 与官方 schema 逐字段一致。
+
 ## 决策规则
 1. episode replay_hints 里同 label 的已验证策略,除非台账显示本次条件不同
    (比如这次没有 keyframe),否则直接采纳。
@@ -57,6 +87,8 @@ shot 列表(storyboard 台账)。你的两类决策,都是从门控后的菜单�
 3. 连续性优先:上镜存在且剧情连续 → flf2v_bridge > tiv2v_window >
    ti2v_prev_last;剧本明示切场(新场景开头)→ i2v_keyframe / t2v。
 4. 只选菜单里有的名字;输出严格 JSON,别的什么都不要写。
+5. video_prompt 必须与所选策略的引用语法匹配(见上);写错语法 = 图片
+   引用失效,画面不会跟着你的图走。
 
 ## 输出格式(严格 JSON)
 {"strategy": "<menu 里的 name>", "reason": "<一句话理由>"}

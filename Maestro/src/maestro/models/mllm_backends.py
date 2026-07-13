@@ -209,6 +209,53 @@ class OpenAICompatVLM(BaseMLLMClient):
             )
             return None
 
+    def caption_image(self, image_path) -> str:
+        """One-sentence asset label from the REAL VLM (Q-D: fills the middle
+        link of user-description > VLM caption > filename). Reads the image
+        file directly; any failure returns "" (fall through the chain)."""
+        import base64 as _b64
+        from pathlib import Path as _P
+
+        p = _P(str(image_path))
+        if not p.exists() or p.suffix.lower() not in (
+            ".png", ".jpg", ".jpeg", ".webp", ".bmp"
+        ):
+            return ""
+        try:
+            b64 = _b64.b64encode(p.read_bytes()).decode()
+        except OSError:
+            return ""
+        mime = "png" if p.suffix.lower() == ".png" else "jpeg"
+        headers = {"Authorization": f"Bearer {self.api_key}",
+                   "Content-Type": "application/json"}
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/{mime};base64,{b64}"}},
+                {"type": "text", "text":
+                 "Describe this image in ONE short sentence for retrieval: "
+                 "what/who it shows and the setting. Also start with one "
+                 "category word from [background, character, object, style] "
+                 "and a colon. Example: 'background: a cozy living room at "
+                 "night with a lit fireplace'. No other text."},
+            ]}],
+        }
+        try:
+            import requests  # lazy
+
+            self._require_key()
+            resp = requests.post(
+                f"{self.base_url}/chat/completions", json=payload,
+                headers=headers, timeout=float(self.config.get("timeout", 120)),
+            )
+            resp.raise_for_status()
+            return str(resp.json()["choices"][0]["message"]["content"]).strip()
+        except Exception as exc:  # degrade down the Q-D chain, loudly
+            log.warning("VLM(%s) caption_image failed for %s: %r",
+                        self.name, p.name, exc)
+            return ""
+
     # ── semantic checklist ──
     def assess_semantic(self, clip: CandidateClip, spec: ShotSpec) -> list[tuple]:
         """Items are (question, passed, fix) or — when the VLM localized the

@@ -32,6 +32,13 @@ class BaseMLLMClient(ABC):
     def assess_physics(self, clip: CandidateClip, spec: ShotSpec, fps: int) -> list[PhysicsVerdict]:
         ...
 
+    def caption_image(self, image_path) -> str:
+        """One-sentence description of an image file, or "" when this client
+        cannot caption (mock / no vision). Used to LABEL user assets at ingest
+        (Q-D priority chain: user description > VLM caption > filename) — a
+        "" here means the caller falls through the chain, never a fake label."""
+        return ""
+
     def compare(self, a: CandidateClip, b: CandidateClip, spec: ShotSpec) -> int:
         """Judge which candidate is better: +1 if a, -1 if b, 0 tie.
 
@@ -58,6 +65,10 @@ RESOLVED_BELOW = 0.3          # severities below this count as resolved (no verd
 
 
 class MockMLLMClient(BaseMLLMClient):
+    # caption_image: inherited base returns "" — the mock must not invent a
+    # description for pixels it never saw (asset labeling falls back to the
+    # user description / filename chain, per the Q-D ruling).
+
     def __init__(self, name: str = "mock-mllm", strictness: float = 1.0):
         self.name = name
         self.strictness = strictness

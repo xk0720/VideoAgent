@@ -30,15 +30,26 @@
 
 ## ② 窗口 brain 的策略盘(pipeline/window_loop.py)
 
-**keyframe 策略(§B)**:t2i(flux-kontext-pro 文生图)/ asset_image(用户
-身份/风格图)/ video_extract(源视频抽中间帧)/ none(诚实降级)。
+**Image Plan(§B',升级版 keyframe)**:brain 逐 shot 一次决定
+数量(0/1/2)+ 角色 + 来源。计划 = none / single_first_frame /
+single_reference / pair_first_last / pair_reference;角色锁死后续模型族
+(首帧→i2v;参考→seedance t2v refs 或 kling-o1;首尾→flf2v 族;双参考→
+kling-o1)。来源逐张选 t2i / asset_image / video_extract,可混搭;素材
+检索按描述关键词重叠打分(打标链:用户描述 > VLM caption(
+ensure_asset_descriptions)> 文件名)。产不出的图丢弃并把计划如实降级
+(plan_degraded_from 留痕)。技能:brain_skills/image_plan/SKILL.md。
 
-**条件策略(§C,共 7 个)**:t2v / i2v_keyframe(本镜 keyframe 当首帧)/
-ti2v_prev_last(上镜尾帧当首帧)/ flf2v_bridge(上镜尾帧→本镜 keyframe
-双锚)/ tiv2v_window(上镜尾段视频当运动参考,`window.tail_seconds` 配置)/
-ti2v_prev_plus_keyframe(多图:上镜尾帧当首帧 + keyframe 进
-reference_images,@Image1 提及——续接且引导画面、不锁结尾)/
-multi_image_fusion(多图融合:[尾帧, keyframe] 进 images 数组,无指定首帧)。
+**条件策略(§C,共 9 个;菜单按 Image Plan 角色门控)**:
+t2v / i2v_keyframe(首帧角色图当首帧)/ **flf2v_own_pair**(自有首尾双图,
+像素级锁两端)/ **t2v_own_refs**(参考角色图走 seedance t2v @refs,无需
+上镜)/ ti2v_prev_last(上镜尾帧当首帧)/ flf2v_bridge(上镜尾帧→自有图
+改用作收场锚)/ tiv2v_window(上镜尾段视频当运动参考,`window.tail_seconds`
+配置)/ ti2v_prev_plus_keyframe([上镜尾帧]+自有图全走 t2v refs 软锚)/
+multi_image_fusion(kling-o1:[上镜尾帧?]+自有图 ≤7,可选带上镜尾段
+`video`)。brain 输出语义字段(strategy + 角色化 video_prompt +
+use_prev_tail_video;kling 用 "reference image N" 语法、seedance 用
+"@ImageN"),aspect_ratio/duration/keep_original_sound/上传 URL 等机械
+字段由执行器确定性补齐(Q-A 分工:LLM 不碰机械字段,payload 永不写错)。
 
 决策三层:episode replay(via=episode)→ LLM 严格 JSON(via=llm)→
 确定性优先级(via=fallback);执行降级必记 degraded_from。

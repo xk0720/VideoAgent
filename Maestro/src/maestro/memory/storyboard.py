@@ -55,9 +55,21 @@ class ShotEntry:
     scene_idx: int                      # 场号
     label: str                          # "scene 1 shot 2"(人读的键)
     description: str                    # 文本描述(playwriting 产物)
-    # keyframe:路径 + 来源(t2i 生成 | 素材库图片 | 素材视频抽帧 | 无)
+    # keyframe:路径 + 来源(t2i 生成 | 素材库图片 | 素材视频抽帧 | 无)。
+    # Image Plan 升级后仍保留:= images 里第一张 first/first_frame 角色图
+    # (老策略 i2v_keyframe / flf2v_bridge 读它,兼容不破)。
     keyframe_path: Optional[str] = None
     keyframe_source: str = ""           # "t2i" | "asset_image" | "video_extract" | ""
+    # Image Plan(升级版关键帧):brain 决定的 0-2 张图,每张带角色。
+    #   plan  ∈ none | single_first_frame | single_reference |
+    #           pair_first_last | pair_reference
+    #   images = [{path, role: first_frame|reference|first|last,
+    #              source: t2i|asset_image|video_extract, description}]
+    # 执行降级(比如第二张图产不出来,pair→single)必须在 plan_degraded_from
+    # 留痕 —— 台账绝不把降级伪装成 brain 的原始决定。
+    image_plan: str = ""
+    images: list = field(default_factory=list)
+    plan_degraded_from: str = ""
     # 视频:生成后才有
     video_path: Optional[str] = None
     status: str = "pending"             # pending|keyframed|generated|verified|generated_with_defects
@@ -71,6 +83,15 @@ class ShotEntry:
     # 物理测量轨迹(实体 → 逐帧归一化 (x,y));无测量 = None,绝不伪造
     physics_trajectory: Optional[dict] = None
 
+    def images_by_role(self, *roles: str) -> list:
+        """按角色取图(路径存在的才算数 —— 检索命中但文件丢了 = 没有)。"""
+        out = []
+        for im in self.images:
+            if im.get("role") in roles and im.get("path") \
+                    and Path(im["path"]).exists():
+                out.append(im)
+        return out
+
     def to_brain_line(self) -> dict:
         """喂给 brain prompt 的单行紧凑视图(不带大对象)。"""
         last_review = self.reviews[-1] if self.reviews else None
@@ -78,6 +99,10 @@ class ShotEntry:
             "label": self.label,
             "description": self.description,
             "status": self.status,
+            "image_plan": self.image_plan,
+            "images": [{"role": im.get("role"), "source": im.get("source"),
+                        "description": im.get("description", "")[:80]}
+                       for im in self.images],
             "keyframe": self.keyframe_path or "",
             "keyframe_source": self.keyframe_source,
             "video": self.video_path or "",
@@ -149,6 +174,28 @@ class StoryboardMemory:
         e.keyframe_path = str(path)
         e.keyframe_source = source
         if e.status == "pending":
+            e.status = "keyframed"
+        self._save()
+
+    def set_image_plan(self, shot_idx: int, plan: str, images: list,
+                       degraded_from: str = "") -> None:
+        """记录 brain 的 Image Plan 及其实际产出的图(升级版 set_keyframe)。
+
+        兼容:第一张 first/first_frame 角色图同步进 keyframe_path/source,
+        老的读取方(i2v_keyframe / flf2v_bridge / cand.keyframes)照常工作。"""
+        e = self.get(shot_idx)
+        if e is None:
+            return
+        e.image_plan = plan
+        e.images = [dict(im) for im in images]
+        e.plan_degraded_from = degraded_from
+        first = next((im for im in e.images
+                      if im.get("role") in ("first_frame", "first")
+                      and im.get("path")), None)
+        if first is not None:
+            e.keyframe_path = str(first["path"])
+            e.keyframe_source = first.get("source", "")
+        if e.status == "pending" and (e.images or plan != "none"):
             e.status = "keyframed"
         self._save()
 

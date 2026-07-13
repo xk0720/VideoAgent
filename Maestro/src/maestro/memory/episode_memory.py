@@ -102,6 +102,9 @@ class EpisodeMemory:
             row = {
                 "label": e.label,
                 "description": e.description,
+                # Image Plan(数量+角色):可执行重放的主键;老台账没有该
+                # 字段就留空("" → 不重放,诚实降级到 LLM/兜底层)。
+                "image_plan": getattr(e, "image_plan", "") or "",
                 "keyframe_strategy": e.keyframe_source or "none",
                 # "strategy" 是【实际执行】的条件(胜出 seed 用的那个);brain 的
                 # 原始决定和降级痕迹一并带上 —— 未来 brain 读 avoid/replay 时能

@@ -189,7 +189,10 @@ def test_replay_adoption_from_episode_memory(tmp_path, monkeypatch):
     old = StoryboardMemory.from_outline(
         [f"Shot {i + 1}: a glass falls off a table" for i in range(3)])
     for i in range(3):
-        old.set_keyframe(i, tmp_path / f"kf{i}.png", "t2i")
+        kf = tmp_path / f"kf{i}.png"; kf.write_bytes(b"\x89PNG")
+        old.set_image_plan(i, "single_first_frame",
+                           [{"path": str(kf), "role": "first_frame",
+                             "source": "t2i", "description": "glass"}])
         old.set_condition(i, {"strategy": "i2v_keyframe"})
         old.add_review(i, {"weighted_total": 0.8, "n_failed": 0})
         old.set_result(i, tmp_path / f"v{i}.mp4", converged=True)
@@ -290,9 +293,11 @@ class _MultiImageVideoGen(_WindowVideoGen):
         return {"t2v", "i2v", "flf2v", "ref_video", "ref_images",
                 "multi_i2v", "t2i"}
 
-    def multi_image_to_video(self, prompt, images, out_path, duration=5, seed=0):
-        self.calls.append({"kind": "multi_i2v",
-                           "images": [str(p) for p in images]})
+    def multi_image_to_video(self, prompt, images, out_path, duration=5,
+                             seed=0, video=None):
+        self.calls.append({"kind": "multi_i2v", "prompt": prompt,
+                           "images": [str(p) for p in images],
+                           "video": str(video) if video else None})
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f"MOCK VIDEO\nprompt={prompt}\n", encoding="utf-8")
@@ -355,3 +360,178 @@ def test_multi_image_strategies_gated_and_executed(tmp_path, monkeypatch):
         seed=0, fps=8, window_tail_s=2.0)
     assert cond4["strategy"] == "i2v_keyframe"
     assert cond4["degraded_from"] == "multi_image_fusion"
+
+
+# ── Image Plan(数量+角色+来源;Q-A/Q-B/Q-D 裁决)──────────────────────────
+def _plan_entry(tmp_path, desc="a glass falls off a table"):
+    from maestro.memory.storyboard import StoryboardMemory
+    sb = StoryboardMemory.from_outline([f"Shot 1: {desc}"],
+                                       path=tmp_path / "sb.json")
+    return sb, sb.entries[0]
+
+
+def test_image_plan_menu_gating(tmp_path):
+    from maestro.pipeline.window_loop import _image_plan_menu
+    from maestro.types import Identity
+
+    vg = _MultiImageVideoGen()          # t2i + flf2v + ref_images + multi_i2v
+    names = {m["name"] for m in _image_plan_menu(vg, AssetMemory())}
+    assert names == {"none", "single_first_frame", "single_reference",
+                     "pair_first_last", "pair_reference"}
+    # 无任何来源(无 t2i、无素材)→ 只剩 none(没法产图就别许诺计划)
+    plain = MockVideoGenClient()
+    assert {m["name"] for m in _image_plan_menu(plain, AssetMemory())} == {"none"}
+    # 无 t2i 但有素材 → 计划可选(来源=素材)
+    kf = tmp_path / "hero.png"; kf.write_bytes(b"\x89PNG")
+    mem = AssetMemory(identity_anchors={
+        "h": Identity(identity_id="h", name="hero", source=str(kf))})
+    names2 = {m["name"] for m in _image_plan_menu(plain, mem)}
+    assert "single_first_frame" in names2
+    assert "pair_first_last" not in names2      # 无 flf2v 能力
+
+
+def test_image_plan_execution_mixed_sources_and_roles(tmp_path):
+    """Q-B:双图混搭来源;角色按 plan 落进台账;keyframe_path 兼容同步。"""
+    from maestro.pipeline.window_loop import _execute_image_plan
+    from maestro.types import Identity
+
+    vg = _MultiImageVideoGen()
+    hero = tmp_path / "hero_portrait.png"; hero.write_bytes(b"\x89PNG")
+    mem = AssetMemory(identity_anchors={
+        "h": Identity(identity_id="h", name="hero",
+                      description="hero portrait", source=str(hero))})
+    sb, entry = _plan_entry(tmp_path)
+    decision = {"strategy": "pair_reference", "images": [
+        {"source": "asset_image", "description": "hero portrait"},
+        {"source": "t2i", "description": "a cozy living room at night"}]}
+    plan, images, degraded = _execute_image_plan(
+        decision, entry, vg, mem, None, tmp_path / "kf")
+    assert plan == "pair_reference" and degraded == ""
+    assert [im["role"] for im in images] == ["reference", "reference"]
+    assert images[0]["source"] == "asset_image"
+    assert images[0]["path"] == str(hero)          # 检索命中用户素材
+    assert images[1]["source"] == "t2i"
+    sb.set_image_plan(entry.shot_idx, plan, images)
+    ff, refs, pf, pl = __import__(
+        "maestro.pipeline.window_loop", fromlist=["_entry_images"]
+    )._entry_images(sb.get(0))
+    assert ff is None and len(refs) == 2           # 参考角色,不冒充首帧
+
+
+def test_image_plan_degrades_pair_to_single_honestly(tmp_path):
+    """pair 第二张产不出 → 降级 single,degraded_from 留痕(台账不说谎)。"""
+    from maestro.pipeline.window_loop import _execute_image_plan
+
+    class _T2IFailsSecond(_MultiImageVideoGen):
+        def __init__(self):
+            super().__init__()
+            self._n = 0
+
+        def text_to_image(self, prompt, out_path, seed=0):
+            self._n += 1
+            if self._n >= 2:
+                raise RuntimeError("HTTP 400 — t2i quota")
+            return super().text_to_image(prompt, out_path, seed=seed)
+
+    sb, entry = _plan_entry(tmp_path)
+    decision = {"strategy": "pair_first_last", "images": [
+        {"source": "t2i", "description": "opening frame"},
+        {"source": "t2i", "description": "closing frame"}]}
+    plan, images, degraded = _execute_image_plan(
+        decision, entry, _T2IFailsSecond(), AssetMemory(), None,
+        tmp_path / "kf")
+    assert plan == "single_first_frame"
+    assert degraded == "pair_first_last"
+    assert len(images) == 1 and images[0]["role"] == "first_frame"
+
+
+def test_flf2v_own_pair_and_t2v_own_refs_execution(tmp_path):
+    """新条件策略:自有首尾双图 → frame_to_frame;参考角色图 → t2v refs;
+    brain 的 video_prompt(语义字段)原样传给生成调用。"""
+    from maestro.pipeline.window_loop import (
+        _condition_menu,
+        _generate_with_condition,
+    )
+    from maestro.types import ShotSpec
+
+    vg = _MultiImageVideoGen()
+    sb, entry = _plan_entry(tmp_path)
+    f1 = tmp_path / "f1.png"; f1.write_bytes(b"\x89PNG")
+    f2 = tmp_path / "f2.png"; f2.write_bytes(b"\x89PNG")
+    sb.set_image_plan(0, "pair_first_last", [
+        {"path": str(f1), "role": "first", "source": "t2i", "description": "a"},
+        {"path": str(f2), "role": "last", "source": "t2i", "description": "b"}])
+    entry = sb.get(0)
+    names = {m["name"] for m in _condition_menu(entry, None, vg)}
+    assert "flf2v_own_pair" in names
+    assert "t2v_own_refs" not in names             # 角色门控:非参考图
+    spec = ShotSpec(shot_idx=0, duration=5.0, prompt="p")
+    _, cond = _generate_with_condition(
+        "flf2v_own_pair", entry, None, spec, vg, tmp_path / "g",
+        seed=0, fps=8, window_tail_s=2.0,
+        brain_prompt="one continuous dolly from frame A to frame B")
+    assert cond["strategy"] == "flf2v_own_pair" and cond["brain_prompt"]
+    assert vg.calls[-1]["kind"] == "flf2v"
+
+    # reference 计划 → t2v_own_refs(无上镜也可用),@ImageN prompt 透传
+    sb2, e2 = _plan_entry(tmp_path, desc="hero waves")
+    sb2.set_image_plan(0, "single_reference", [
+        {"path": str(f1), "role": "reference", "source": "asset_image",
+         "description": "hero"}])
+    e2 = sb2.get(0)
+    names2 = {m["name"] for m in _condition_menu(e2, None, vg)}
+    assert "t2v_own_refs" in names2
+    assert "i2v_keyframe" not in names2            # 角色门控:参考图不当首帧
+    _, cond2 = _generate_with_condition(
+        "t2v_own_refs", e2, None, spec, vg, tmp_path / "g2",
+        seed=0, fps=8, window_tail_s=2.0,
+        brain_prompt="@Image1 is the hero — keep his face recognizable")
+    assert cond2["reference_images"] == [str(f1)]
+    call = vg.calls[-1]
+    assert call["kind"] == "generate" and call["first_frame"] is None
+    assert call["reference_images"] == [str(f1)]
+    assert "@Image1" in call["prompt"]             # brain 的角色化 prompt 生效
+
+
+def test_asset_retrieval_scores_by_overlap_not_order(tmp_path):
+    """Q-D:多素材按描述关键词重叠打分选,不再"拿第一张"。"""
+    from maestro.pipeline.window_loop import _retrieve_asset_image
+    from maestro.types import Identity
+
+    room = tmp_path / "room.png"; room.write_bytes(b"\x89PNG")
+    hero = tmp_path / "hero.png"; hero.write_bytes(b"\x89PNG")
+    mem = AssetMemory(identity_anchors={
+        "bg": Identity(identity_id="bg", name="living room",
+                       description="a cozy living room background at night",
+                       source=str(room)),
+        "hero": Identity(identity_id="hero", name="hero",
+                         description="portrait of the male hero character",
+                         source=str(hero))})
+    got = _retrieve_asset_image("the male hero character smiles", mem)
+    assert got == hero                              # 第二个素材才是最优
+    got2 = _retrieve_asset_image("cozy living room at night", mem)
+    assert got2 == room
+
+
+def test_ensure_asset_descriptions_qd_chain(tmp_path):
+    """Q-D 打标链:有用户描述不覆盖;无描述且 VLM 能 caption → 回填;
+    mock VLM(caption 返回 "")→ 不写,不伪造。"""
+    from maestro.models.mllm import MockMLLMClient
+    from maestro.pipeline.window_loop import ensure_asset_descriptions
+    from maestro.types import Identity
+
+    img = tmp_path / "img.png"; img.write_bytes(b"\x89PNG")
+    mem = AssetMemory(identity_anchors={
+        "a": Identity(identity_id="a", name="", description="", source=str(img)),
+        "b": Identity(identity_id="b", name="", description="user says: a dog",
+                      source=str(img))})
+    assert ensure_asset_descriptions(mem, MockMLLMClient()) == 0   # mock 不发明
+
+    class _CaptionVLM(MockMLLMClient):
+        def caption_image(self, image_path):
+            return "background: a cozy living room at night"
+
+    n = ensure_asset_descriptions(mem, _CaptionVLM())
+    assert n == 1
+    assert mem.identity_anchors["a"].description.startswith("background:")
+    assert mem.identity_anchors["b"].description == "user says: a dog"  # 不覆盖

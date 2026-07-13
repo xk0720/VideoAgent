@@ -105,7 +105,13 @@ def main() -> int:
     # 长期 episode 记忆放稳定目录(跨 run 累积 —— 这正是它存在的意义)
     episode_memory = EpisodeMemory(base / "memory" / "episodes.jsonl")
 
-    _section("窗口式全片生成(§A 剧本 → §B keyframe → §C+§D 逐镜 → §E 合成 → §M 蒸馏)")
+    # Q-D 素材打标链:用户描述 > VLM caption > 文件名(真 VLM 才回填)
+    from maestro.pipeline.window_loop import ensure_asset_descriptions
+    n_cap = ensure_asset_descriptions(None, mllm)  # 无素材时为 0;接入素材库后生效
+    if n_cap:
+        print(f"  素材打标: VLM 补了 {n_cap} 条描述")
+
+    _section("窗口式全片生成(§A 剧本 → §B' Image Plan → §C+§D 逐镜 → §E 合成 → §M 蒸馏)")
     res = generate_movie_windowed(
         args.prompt,
         board=ReviewBoard(critics=critics, metric_tool=MetricTool()),

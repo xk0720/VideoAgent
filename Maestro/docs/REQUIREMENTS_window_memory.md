@@ -171,3 +171,88 @@ Verifier 保持纯相对闸门("比上一版好吗"),停不停是循环的事—
 `physics_vlm`(VLM 物理观点)与 `physics_measure`(非 AI 测量链)各自
 独立开关,默认全开(行为不变);双关 = 纯语义/一致性/节奏评审。关掉的
 评审员不出判定,其指标读作"未发现违规"(未评审 ≠ 扣分),权重可按需重调。
+
+
+---
+
+## 追加需求(2026-07-13,已裁决并实施):Image Plan + 素材检索
+
+> 裁决:Q-A = 语义字段方案;Q-B/Q-D 同意;Q-C = 不写死场景规则,把
+> brain 的技能(brain_skills/image_plan/SKILL.md)写完整、教它对任意素材
+> 场景推理。全部已实现(见 git log)。
+
+### 要点 1:关键帧升级为 Image Plan(数量 + 角色 + 来源,brain 决策)
+
+现状问题:keyframe 阶段固定"每镜一张图",角色(当首帧还是当参考)被后面的
+条件策略隐式决定 —— brain 没有"要几张图、每张干什么用"的显式决策。
+
+标准化:生成视频前,brain 先出【Image Plan】,三件事一起定:
+
+1. **数量**:0 / 1 / 2(暂定最多 2)。
+2. **角色**(提前设定,锁死角色→模型族映射):
+   | 数量 | 角色 | 视频生成必须调用 | payload 图片字段 |
+   |---|---|---|---|
+   | 1 | first_frame(首帧锚) | seedance-2.0 i2v(ti2v) | `image` |
+   | 1 | reference(人物/物体/场景参考) | seedance-2.0 t2v+refs 或 kling-video-o1 | `reference_images` / `images` |
+   | 2 | first_last(首尾帧) | seedance-2.0 i2v / wan-flf2v / veo3.1-lite / vidu q3 | `image`+`last_image` |
+   | 2 | reference_pair(双参考) | kling-video-o1(images ≤7;可再带 `video`) | `images` |
+3. **来源**:每张图独立选 t2i / 用户素材 / 素材视频抽帧(允许混搭,
+   例:ref1=用户人物图,ref2=t2i 场景图)。
+
+**最关键的要求**:brain 必须【按图片的角色】写视频 prompt,并输出能精确
+解码成官方 payload 的 JSON。以 kling-video-o1 为例(用户给的目标形态):
+prompt 要写成 "Use reference image 1 as the female character and reference
+image 2 as the male character…" 这样的角色化描述;seedance 则用 @Image1
+语法。执行器解码出的 payload 必须与官方 schema 逐字段一致
+(aspect_ratio/duration/images/keep_original_sound/prompt/video)。
+
+**分工提案(Q-A,请裁决)**:brain 只输出【语义字段】(策略、每张图的角色
+与描述、按角色写好的 prompt、要不要带上镜尾段 video);机械字段
+(aspect_ratio、duration、keep_original_sound、图片上传成 URL)由执行器
+确定性补齐 —— LLM 不碰机械字段,格式永远不会错。
+(替代方案:brain 直接输出完整 payload —— 更接近你的例子,但 LLM 填错
+机械字段的风险高,需要逐字段校验器兜底。)
+
+### 要点 2:素材检索逻辑(现状交底 + 背景图场景方案)
+
+**现状(诚实交底)**:
+- 源视频片段:`retrieve_source_shots(query)` = caption/标签的关键词重叠
+  打分,确定性,无向量检索;
+- 图片素材:目前【没有真正的检索】—— asset_image 策略是"按顺序拿第一张
+  路径存在的 identity/style 锚",单图没问题,多图会拿错;
+- 素材入库没有自动打描述:用户不给 description,检索无从匹配。
+
+**背景图场景方案(用户 prompt + 一张关键背景图),四步(Q-C 请裁决)**:
+1. **入库打标**:上传时给素材定 kind(background/character/object/style)
+   + 一句描述。来源优先级:用户给的 description > VLM 自动 caption(有
+   key 时)> 文件名(诚实降级,并警告检索质量受限)。(Q-D)
+2. **剧本感知素材**:screenwriter/director 的输入带素材清单摘要("用户
+   提供:客厅夜景背景图 ×1"),分镜描述必须围绕素材可用的场景写 ——
+   否则写出海边剧本,背景图白给。
+3. **镜头级分配**:同一张背景图对该场景【所有】shot 都可用:
+   - 场景首镜(establishing shot):背景图直接当 first_frame;
+   - 后续镜头:当 reference image(场景一致性),或经 seedream-v4 图像
+     编辑"把人物/物体摆进背景"生成该镜专属 keyframe(编辑底图用法);
+4. **逐镜检索**:shot description 关键词 vs 素材描述重叠打分选图
+   (多素材时不再"拿第一张");CLIP 向量检索列为升级项登记缺口台账,
+   本轮不做。
+
+### 要点 3:技能文件同步(格式必须与 API 一致)
+
+- 新增 brain 技能 `image_plan`(或并入 window_generation):数量/角色/来源
+  的决策规则、角色→模型族映射表、**每个模型的 payload 模板**(与
+  TOOL_LIBRARY 和多图调研报告逐字段一致)、两种引用语法的 prompt 写法
+  规范(kling "reference image N" / seedance "@ImageN")、以用户的
+  kling-video-o1 例子作为 worked example。
+- 窗口条件策略与 Image Plan 对齐:角色决定条件菜单(role=first_last →
+  只开 flf2v 族;role=reference_pair → 只开 kling-o1/seedance-refs 路线),
+  避免"图是按首尾帧生成的、却被当参考图用"的错配。
+
+### 待裁决问题汇总
+
+- **Q-A**:brain 输出语义字段+执行器补机械字段(我推荐),还是 brain 直接
+  输出完整 payload?
+- **Q-B**:双图允许混来源(一张用户素材 + 一张 t2i)?我建议允许。
+- **Q-C**:背景图的默认用法按"首镜当首帧、后续当参考/编辑底图"来?
+- **Q-D**:素材入库描述的优先级(用户描述 > VLM caption > 文件名)同意?
+  VLM caption 需要消耗 QWEN key。
