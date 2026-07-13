@@ -20,7 +20,7 @@
                  时【省略】这个 critic（绝不改用 mock）
 
 用法：
-    export OPENAI_API_KEY=...  QWEN_API_KEY=...  WAVESPEED_API_KEY=...
+    export OPENAI_API_KEY=...  GEMINI_API_KEY=...  WAVESPEED_API_KEY=...
     python scripts/test_orchestrator.py --prompt "a glass falls off a table and shatters"
     # 无 GPU：再加 --no-physics-measure
 """
@@ -80,8 +80,21 @@ def main() -> int:
                     help="启用 simulate_reference 工具（需 genesis-world + GPU）")
     args = ap.parse_args()
 
-    missing = [k for k in ("OPENAI_API_KEY", "QWEN_API_KEY", "WAVESPEED_API_KEY")
-               if not os.getenv(k)]
+    from maestro.config import load_yaml
+
+    cfg = load_yaml(Path(args.config))
+    models_cfg = cfg.get("models", {})
+    _KEY_OF = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY",
+               "qwen": "QWEN_API_KEY", "qwen-vl": "QWEN_API_KEY",
+               "gpt": "OPENAI_API_KEY", "gpt-4o": "OPENAI_API_KEY",
+               "wavespeed": "WAVESPEED_API_KEY"}
+    def _key_for(spec):
+        name = (spec or {}).get("name", "") if isinstance(spec, dict) else str(spec or "")
+        return _KEY_OF.get(name.lower()) or _KEY_OF.get(name.split("-")[0].lower())
+    required = {k for k in (_key_for(models_cfg.get("llm")),
+                            _key_for(models_cfg.get("mllm")),
+                            _key_for(models_cfg.get("video_gen"))) if k}
+    missing = [k for k in sorted(required) if not os.getenv(k)]
     if missing:
         print(f"❌ 缺少环境变量: {', '.join(missing)}")
         return 2

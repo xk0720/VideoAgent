@@ -11,11 +11,15 @@
     §E 合成      时间顺序 ffmpeg concat → movie.mp4
     §M 记忆      storyboard.json 全程落盘;收工蒸馏 episode(good/bad)
 
-全部真实后端:brain=OpenAI LLM;评审 VLM=Qwen;生成/编辑/t2i=WaveSpeed
-(seedance-2.0 + flux);物理测量默认省略(--with-physics-measure 打开,需 GPU)。
+全部真实后端,【模型一律来自 config】(configs/basic.yaml,--config 可换):
+brain LLM=OpenAI;评审 VLM=Gemini(gemini-3.5-flash,$GEMINI_MODEL/
+$GEMINI_BASE_URL 可覆盖);生成/编辑/t2i=WaveSpeed(seedance-2.0 全家桶)。
+命令行不设模型旗子 —— 模型 id 归 config,每镜用哪条路由归 brain 的 skill
+决策(image_plan / window_generation)。物理测量默认省略
+(--with-physics-measure 打开,需 GPU)。
 
 用法:
-    export OPENAI_API_KEY=... QWEN_API_KEY=... WAVESPEED_API_KEY=...
+    export OPENAI_API_KEY=... GEMINI_API_KEY=... WAVESPEED_API_KEY=...
     python scripts/test_window_movie.py \
         --prompt "a glass falls off a table; shards scatter on the floor"
 """
@@ -57,9 +61,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt",
                     default="a glass falls off a table; shards scatter on the floor")
-    ap.add_argument("--model", default="gpt-4o", help="brain 纯语言 LLM(OpenAI)")
-    ap.add_argument("--vlm-model", default="qwen-vl-max", help="评审 VLM(Qwen)")
-    ap.add_argument("--video-model", default="bytedance/seedance-2.0/text-to-video")
+    ap.add_argument("--config", default=str(REPO_ROOT / "configs" / "basic.yaml"),
+                    help="模型/参数全部来自这里(不设模型命令行旗子)")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("--max-turns", type=int, default=3, help="每镜修复回合上限")
     ap.add_argument("--n-candidates", type=int, default=1)
@@ -74,8 +77,22 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
-    missing = [k for k in ("OPENAI_API_KEY", "QWEN_API_KEY", "WAVESPEED_API_KEY")
-               if not os.getenv(k)]
+    from maestro.config import load_yaml
+
+    cfg = load_yaml(Path(args.config))
+    models_cfg = cfg.get("models", {})
+    # 必需 key 按 config 里选的后端推导(换供应商不用改脚本)
+    _KEY_OF = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY",
+               "qwen": "QWEN_API_KEY", "qwen-vl": "QWEN_API_KEY",
+               "gpt": "OPENAI_API_KEY", "gpt-4o": "OPENAI_API_KEY",
+               "wavespeed": "WAVESPEED_API_KEY"}
+    def _key_for(spec):
+        name = (spec or {}).get("name", "") if isinstance(spec, dict) else str(spec or "")
+        return _KEY_OF.get(name.lower()) or _KEY_OF.get(name.split("-")[0].lower())
+    required = {k for k in (_key_for(models_cfg.get("llm")),
+                            _key_for(models_cfg.get("mllm")),
+                            _key_for(models_cfg.get("video_gen"))) if k}
+    missing = [k for k in sorted(required) if not os.getenv(k)]
     if missing:
         print(f"❌ 缺少环境变量: {', '.join(missing)}")
         return 2
@@ -85,9 +102,13 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"用户指令: {args.prompt}\n输出目录: {run_dir.resolve()}")
 
-    llm = build_llm({"name": "openai", "model": args.model})
-    mllm = build_mllm({"name": "qwen-vl", "model": args.vlm_model})
-    video_gen = build_video_gen({"name": "wavespeed", "model_id": args.video_model})
+    llm = build_llm(models_cfg.get("llm"))
+    mllm = build_mllm(models_cfg.get("mllm"))
+    video_gen = build_video_gen(models_cfg.get("video_gen"))
+    print(f"配置: {args.config}")
+    print(f"  brain LLM = {getattr(llm, 'model', '?')}  |  评审 VLM = "
+          f"{getattr(mllm, 'model', '?')}  |  视频 = "
+          f"{getattr(video_gen, 'model_id', '?')}")
     critics = [SemanticCritic(mllm=mllm), PhysicsCritic(mllm=mllm)]
     if args.with_physics_measure:
         from maestro.critics.physics_consistency import PhysicsConsistencyCritic

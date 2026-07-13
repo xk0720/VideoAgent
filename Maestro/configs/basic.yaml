@@ -2,12 +2,12 @@
 #
 # 目标：把 multi-agent + 视频生成跑通，最少的真实后端，不碰 GPU / 物理 / 音频。
 #   • 纯语言大模型 → OpenAI    （$OPENAI_API_KEY）
-#   • 多模态大模型 → Qwen-VL   （$QWEN_API_KEY）
+#   • 多模态大模型 → Gemini    （$GEMINI_API_KEY,任意能读视频帧的多模态模型）
 #   • 视频生成     → WaveSpeed  （$WAVESPEED_API_KEY，云 API，无需本地 GPU）
 #   • 其余（物理 tracker / 关键帧编辑 / 音频）一律 mock —— 先不开。
 #
 # 跑：
-#   export OPENAI_API_KEY=...  QWEN_API_KEY=...  WAVESPEED_API_KEY=...
+#   export OPENAI_API_KEY=...  GEMINI_API_KEY=...  WAVESPEED_API_KEY=...
 #   maestro run-once --prompt "..." -o outputs/demo.mp4 --config configs/basic.yaml
 # 不需要起 server。
 
@@ -17,10 +17,12 @@ models:
     name: "openai"
     model: "gpt-4o"        # 任意 OpenAI chat 模型；纯文本规划用
 
-  # 多模态大模型（语义/物理 VLM 评审 + 镜头对比）——只用 Qwen 系列。
+  # 多模态大模型（语义/物理 VLM 评审 + 镜头对比 + 素材打标）。
+  # Gemini 官方 generateContent 端点;$GEMINI_MODEL / $GEMINI_BASE_URL 可覆盖。
+  # 备用:name: "qwen-vl" + model: "qwen-vl-max"($QWEN_API_KEY)。
   mllm:
-    name: "qwen-vl"
-    model: "qwen-vl-max"
+    name: "gemini"
+    model: "gemini-3.5-flash"
     n_frames: 4            # 每个 clip 抽几帧给评审看
 
   # 视频生成——只调 WaveSpeed API（真像素，无本地 GPU）。

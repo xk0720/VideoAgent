@@ -28,8 +28,8 @@ models:
   # A clip the VLM cannot decode yields NO verdict (never a fabricated one).
   # Alternative:  name: gpt-4o   model: gpt-4o   $OPENAI_API_KEY
   mllm:
-    name: "qwen-vl"
-    model: "qwen-vl-max"
+    name: "gemini"            # 或 qwen-vl / gpt-4o(任意能读视频帧的多模态模型)
+    model: "gemini-3.5-flash" # $GEMINI_MODEL / $GEMINI_BASE_URL 可覆盖
     n_frames: 4             # frames sampled from each clip for the judge
     # api_key: "..."        # or $QWEN_API_KEY
 

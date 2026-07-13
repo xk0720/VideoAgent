@@ -403,12 +403,121 @@ class OpenAICompatVLM(BaseMLLMClient):
 
 
 # name (or its provider prefix) → backend class
+class GeminiVLM(OpenAICompatVLM):
+    """Gemini as the review VLM (any video-reading multimodal model works —
+    user's pick: gemini-3.5-flash). Reuses EVERY prompt/parse/honesty rule of
+    OpenAICompatVLM and overrides only the TRANSPORT: Google's native
+    `generateContent` API instead of OpenAI-style /chat/completions
+    (`POST {base}/v1beta/models/{model}:generateContent`, frames as
+    inline_data JPEG parts — the shape NEWTON's verifier uses).
+
+    config (models.mllm):
+      name: "gemini"
+      model: "gemini-3.5-flash"     # or $GEMINI_MODEL
+      api_key: ...                  # or $GEMINI_API_KEY
+      base_url: ...                 # or $GEMINI_BASE_URL (official default)
+      n_frames: 4
+
+    Auth: both `x-goog-api-key` (official Google API) and `Authorization:
+    Bearer` (Gemini-compatible proxy gateways) are sent — whichever the
+    endpoint expects, it finds it."""
+
+    def __init__(self, name: str = "gemini", config: Optional[dict] = None):
+        self.name = name
+        self.config = config or {}
+        self.base_url = (
+            self.config.get("base_url") or os.getenv("GEMINI_BASE_URL")
+            or "https://generativelanguage.googleapis.com"
+        ).rstrip("/")
+        self.model = (self.config.get("model") or os.getenv("GEMINI_MODEL")
+                      or "gemini-3.5-flash")
+        self.api_key = self.config.get("api_key") or os.getenv("GEMINI_API_KEY")
+        self.max_tokens = int(self.config.get("max_tokens", 1024))
+        self.n_frames = int(self.config.get("n_frames", 4))
+
+    def _require_key(self) -> str:
+        if not self.api_key:
+            raise RuntimeError(
+                f"GeminiVLM('{self.name}') needs an API key: set "
+                "models.mllm.api_key or $GEMINI_API_KEY, or switch "
+                "models.mllm.name back to 'mock-mllm'."
+            )
+        return self.api_key
+
+    def _headers(self) -> dict:
+        key = self._require_key()
+        return {"Content-Type": "application/json",
+                "x-goog-api-key": key,               # official Google API
+                "Authorization": f"Bearer {key}"}    # proxy gateways
+
+    def _generate(self, parts: list) -> Optional[str]:
+        """One generateContent call → reply text, or None (caller degrades)."""
+        import requests  # lazy
+
+        url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
+        payload = {"contents": [{"role": "user", "parts": parts}],
+                   "generationConfig": {"temperature": 0}}
+        try:
+            resp = requests.post(url, json=payload, headers=self._headers(),
+                                 timeout=float(self.config.get("timeout", 120)))
+            resp.raise_for_status()
+            cands = resp.json().get("candidates") or []
+            for part in reversed((cands[0].get("content") or {}).get("parts", [])
+                                 if cands else []):
+                if part.get("text"):
+                    return str(part["text"])
+            log.warning("GeminiVLM(%s): no text part in response", self.name)
+            return None
+        except Exception as exc:            # transport error → no verdict
+            log.warning("GeminiVLM(%s) inference failed: %r — no verdict "
+                        "emitted", self.name, exc)
+            return None
+
+    def _chat(self, frames, text: str) -> Optional[str]:
+        self._require_key()                  # loud misconfig check first
+        parts: list[dict] = []
+        for fr in frames:
+            b64 = _encode_jpeg_b64(fr)
+            if b64 is not None:
+                parts.append({"inline_data": {"mime_type": "image/jpeg",
+                                              "data": b64}})
+        parts.append({"text": text})
+        return self._generate(parts)
+
+    def caption_image(self, image_path) -> str:
+        import base64 as _b64
+        from pathlib import Path as _P
+
+        p = _P(str(image_path))
+        if not p.exists() or p.suffix.lower() not in (
+            ".png", ".jpg", ".jpeg", ".webp", ".bmp"
+        ):
+            return ""
+        try:
+            b64 = _b64.b64encode(p.read_bytes()).decode()
+        except OSError:
+            return ""
+        mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+        self._require_key()
+        reply = self._generate([
+            {"inline_data": {"mime_type": mime, "data": b64}},
+            {"text": "Describe this image in ONE short sentence for "
+                     "retrieval: what/who it shows and the setting. Start "
+                     "with one category word from [background, character, "
+                     "object, style] and a colon. Example: 'background: a "
+                     "cozy living room at night with a lit fireplace'. No "
+                     "other text."},
+        ])
+        return (reply or "").strip()
+
+
 _REGISTRY = {
     "gpt-4o": OpenAICompatVLM,
     "openai-vlm": OpenAICompatVLM,
     "openai": OpenAICompatVLM,
     "qwen-vl": OpenAICompatVLM,
     "qwen": OpenAICompatVLM,
+    "gemini": GeminiVLM,
 }
 
 
