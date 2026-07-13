@@ -70,6 +70,11 @@ from ..types import CandidateClip, PhysFailureMode, ShotSpec
 
 log = get_logger(__name__)
 
+# quality_bar early stop: a remaining defect at/above this severity blocks the
+# "good enough" stop even when the score clears the bar (a high-severity
+# physics violation is never shippable just because the average looks fine).
+_HIGH_SEVERITY = 0.7
+
 
 @dataclass
 class SelfImproveResult:
@@ -94,6 +99,10 @@ class SelfImproveResult:
     # per-seed condition that ACTUALLY produced it — never to the condition of
     # whichever seed happened to be generated last.
     initial_winner: str = ""
+    # WHY the orchestrated repair loop stopped (turn control is automatic;
+    # max_turns is only the cost ceiling): "converged" | "quality_bar_met" |
+    # "no_improvement" | "brain_accept" | "turns_exhausted".
+    stop_reason: str = ""
 
 
 def _tournament_select(candidates: list[CandidateClip]) -> CandidateClip:
@@ -744,6 +753,8 @@ def generate_shot_orchestrated(
     max_turns: int = 4,
     summarizer=None,
     initial_candidates: Optional[list[CandidateClip]] = None,
+    patience: int = 2,
+    quality_bar: Optional[float] = None,
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
@@ -760,6 +771,21 @@ def generate_shot_orchestrated(
       5. verifier.is_better gates it: accept (best ← cand) or reject. The
          outcome is appended to `history`, which the brain sees next turn so it
          never repeats a rejected action.
+
+    TURN CONTROL (user ruling: "越早停越好" — stop as early as possible).
+    `max_turns` is only the COST CEILING (hyperparameter safety fuse); the
+    ACTUAL stop is automatic, first hit wins (result.stop_reason records which):
+      • "converged"       — the review board fully passed (all_passed);
+      • "quality_bar_met" — `quality_bar` set AND weighted_total ≥ bar AND no
+        remaining defect at/above _HIGH_SEVERITY. `converged` stays HONEST
+        (False — the review did NOT fully pass); only the stop is early;
+      • "no_improvement"  — `patience` consecutive Verifier REJECTIONS: the
+        loop is not making progress, stop burning generations (VISTA-style
+        champion-unchanged; patience<=0 disables);
+      • "brain_accept"    — the brain chose accept on the final turn;
+      • "turns_exhausted" — the ceiling was the binding constraint.
+    The Verifier itself stays a RELATIVE gate (is this candidate strictly
+    better) — acceptance never means "done"; stopping is the loop's job.
 
     Every accepted/rejected decision is recorded in `result.actions` (the brain's
     trace). Verification bar NEVER moves — the monotonic contract is identical to
@@ -826,16 +852,35 @@ def generate_shot_orchestrated(
         initial_defect_signature = sorted(sig)
 
     converged = board.all_passed(best)
+    stop_reason = "converged" if converged else ""
+    consecutive_rejects = 0
     turns_used = 0
     for turn in range(1, max_turns + 1):
         if board.all_passed(best):
             converged = True
+            stop_reason = "converged"
             break
-        turns_used = turn
 
         # Re-localize EVERY turn from the freshly-reviewed best: which entity,
         # which frames, severity — the brain reads this guide, not a flat blob.
         defect_report = build_defect_report(best, spec, fps)
+
+        # Quality-bar early stop: "good enough to ship" even though the review
+        # did not FULLY pass — score at/above the bar and nothing severe left.
+        # converged stays False (honest); only the stop is early.
+        if quality_bar is not None:
+            total_now = best.metric_scores.get("weighted_total", 0.0)
+            worst_now = defect_report.worst()
+            if total_now >= float(quality_bar) and (
+                worst_now is None or worst_now.severity < _HIGH_SEVERITY
+            ):
+                stop_reason = "quality_bar_met"
+                log.info("shot %d turn%d EARLY STOP: weighted_total %.4f ≥ "
+                         "quality_bar %.4f and no defect ≥ %.2f severity",
+                         spec.shot_idx, turn, total_now, float(quality_bar),
+                         _HIGH_SEVERITY)
+                break
+        turns_used = turn
         # Consolidate ALL critiques into the prioritized review_brief (ranked
         # issues + provenance + progress vs last turn + do_not_repeat ledger).
         review_brief = summarizer.summarize(
@@ -886,14 +931,25 @@ def generate_shot_orchestrated(
                     "via": "repair_router_fallback", "outcome": outcome,
                     "new_total": round(new_total, 4),
                     "defects": defect_report.to_brain_json(),
-            "brief_headline": review_brief.get("headline", ""),
+                    "brief_headline": review_brief.get("headline", ""),
                 })
+                # patience counts EVERY turn without strict improvement — the
+                # override fallback is a repair attempt like any other.
+                consecutive_rejects = 0 if outcome == "accepted" else consecutive_rejects + 1
+                if patience > 0 and consecutive_rejects >= patience:
+                    stop_reason = "no_improvement"
+                    log.info("shot %d turn%d EARLY STOP: %d consecutive "
+                             "rejections (patience=%d) — no progress, stop "
+                             "burning generations", spec.shot_idx, turn,
+                             consecutive_rejects, patience)
+                    break
                 continue
             actions.append({"tool": "accept", "args": {}, "outcome": "stop",
                             "reason": decision.get("reason", ""),
                             "defects": defect_report.to_brain_json(),
                             "brief_headline": review_brief.get("headline", "")})
             log.info("shot %d turn%d brain chose ACCEPT → stop", spec.shot_idx, turn)
+            stop_reason = "brain_accept"
             break
 
         if invalid:
@@ -949,7 +1005,20 @@ def generate_shot_orchestrated(
         log.info("shot %d turn%d via=%s tool=%s → %s (total=%.4f)",
                  spec.shot_idx, turn, via, decision.get("tool"), outcome, new_total)
 
+        # Patience early stop (user ruling: stop as early as possible): after
+        # `patience` consecutive Verifier rejections the next attempt is very
+        # unlikely to land — cut the loss instead of spending to max_turns.
+        consecutive_rejects = 0 if outcome == "accepted" else consecutive_rejects + 1
+        if patience > 0 and consecutive_rejects >= patience:
+            stop_reason = "no_improvement"
+            log.info("shot %d turn%d EARLY STOP: %d consecutive rejections "
+                     "(patience=%d) — no progress, stop burning generations",
+                     spec.shot_idx, turn, consecutive_rejects, patience)
+            break
+
     converged = converged or board.all_passed(best)
+    if not stop_reason:
+        stop_reason = "converged" if converged else "turns_exhausted"
     best.accepted = True
     if spec.physics_annotation is not None:
         spec.physics_annotation.strictness = 1.0
@@ -1008,4 +1077,5 @@ def generate_shot_orchestrated(
         distilled_lesson_id=distilled_lesson_id,
         actions=actions,
         initial_winner=initial_winner_path,
+        stop_reason=stop_reason,
     )

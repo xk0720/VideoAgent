@@ -437,6 +437,8 @@ def generate_movie_windowed(
     n_candidates: int = 2,
     max_turns: int = 4,
     window_tail_s: float = 2.0,         # §C5 尾段窗口长度(秒)
+    patience: int = 2,                  # 小循环:连续 N 轮被拒即止损(≤0 关闭)
+    quality_bar: Optional[float] = None,  # 小循环:达标即停(None 关闭)
 ) -> MovieResult:
     """窗口式全片生成:§A playwriting → §B keyframe → §C+§D 逐镜窗口循环
     → §E 合成 → §M episode 蒸馏。全程读写 StoryboardMemory(R1)。"""
@@ -566,6 +568,7 @@ def generate_movie_windowed(
             skill_library=skill_library, fps=fps, n_candidates=n_candidates,
             max_turns=max_turns, summarizer=summarizer,
             initial_candidates=initial,
+            patience=patience, quality_bar=quality_bar,
         )
         shot_results.append(res)
         best = res.clip
@@ -602,6 +605,7 @@ def generate_movie_windowed(
                 (a.get("brief_headline", "") for a in reversed(res.actions)
                  if a.get("brief_headline")), ""),
             "converged": res.converged,
+            "stop_reason": res.stop_reason,   # 小循环为何停(自动轮数控制留痕)
         })
         storyboard.set_result(entry.shot_idx, best.video_path,
                               converged=res.converged,

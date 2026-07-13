@@ -94,22 +94,29 @@ def build_components(
         cfg.get("metrics", {}).get("weights"),
         world_reward=build_world_reward(cfg.get("models", {}).get("world_reward")),
     )
-    # C6 oracle track extractor: mock by default; 'cotracker'/'tapir' recovers
-    # observed motion from REAL generated frames (lazy torch).
-    track_extractor = build_track_extractor(cfg.get("models", {}).get("track_extractor"))
-    board = ReviewBoard(
-        critics=[
-            SemanticCritic(mllm=mllm, logger=trajectory),
-            PhysicsCritic(mllm=mllm, logger=trajectory),
-            PhysicsConsistencyCritic(
-                violation_threshold=cfg.get("physics", {}).get("violation_threshold", 0.4),
-                logger=trajectory, extractor=track_extractor,
-            ),  # C6
-            ConsistencyCritic(logger=trajectory),
-            RhythmCritic(logger=trajectory),
-        ],
-        metric_tool=metric_tool,
-    )
+    # Reviewer switches (user ruling: physics review must be OPTIONAL — we may
+    # review without the pure-physics branch). Both default ON (unchanged
+    # behavior); flip in config:
+    #   review:
+    #     physics_vlm: false       # drop the VLM physics-opinion critic
+    #     physics_measure: false   # drop the non-AI measured chain (C6)
+    # A disabled critic emits NO verdicts — its metric reads "no violations
+    # found" (not-reviewed ≠ penalized). Re-tune metrics.weights if desired.
+    review_cfg = cfg.get("review", {}) or {}
+    critics = [SemanticCritic(mllm=mllm, logger=trajectory)]
+    if review_cfg.get("physics_vlm", True):
+        critics.append(PhysicsCritic(mllm=mllm, logger=trajectory))
+    if review_cfg.get("physics_measure", True):
+        # C6 oracle track extractor: mock by default; 'cotracker'/'tapir'
+        # recovers observed motion from REAL generated frames (lazy torch).
+        track_extractor = build_track_extractor(
+            cfg.get("models", {}).get("track_extractor"))
+        critics.append(PhysicsConsistencyCritic(
+            violation_threshold=cfg.get("physics", {}).get("violation_threshold", 0.4),
+            logger=trajectory, extractor=track_extractor,
+        ))
+    critics += [ConsistencyCritic(logger=trajectory), RhythmCritic(logger=trajectory)]
+    board = ReviewBoard(critics=critics, metric_tool=metric_tool)
     plan_cfg = cfg.get("plan", {})
     return MaestroComponents(
         screenwriter=ScreenwriterAgent(llm=llm, config=plan_cfg, logger=trajectory),

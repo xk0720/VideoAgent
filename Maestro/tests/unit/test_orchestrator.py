@@ -387,6 +387,7 @@ def test_orchestrated_loop_converges_and_records_trace(tmp_path):
     assert all(h[i] <= h[i + 1] + 1e-9 for i in range(len(h) - 1)), h
     assert res.clip.accepted
     assert res.converged  # content-derived convergence
+    assert res.stop_reason == "converged"
 
 
 class _DistillRecorderLibrary:
@@ -698,3 +699,60 @@ def test_execute_simulate_reference_invalid_spec_noops(tmp_path):
     # liquid = not rigid -> ValueError inside -> honest no-op, never a crash
     assert orch.execute(decision, best, _spec(), tmp_path, r=2,
                         board=_board()) is None
+
+
+# ── automatic turn control (user ruling: stop as early as possible) ─────────
+class _AlwaysRejectVerifier(VerifierAgent):
+    """Every candidate is judged not-strictly-better — drives the patience stop."""
+
+    def is_better(self, candidate, best, eps=1e-4, spec=None):
+        return best is None
+
+
+def test_patience_stops_after_consecutive_rejections(tmp_path):
+    """连续 patience 轮被拒 → 止损停(不烧满 max_turns),留 stop_reason。"""
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    reply = json.dumps({"tool": "regenerate", "args": {"hint": "again"},
+                        "reason": "keep trying"})
+    orch = OrchestratorAgent(llm=StubBrainLLM(reply), generator=gen)
+    spec = _spec()
+    res = generate_shot_orchestrated(
+        spec, _board(), gen, RefinerAgent(), _AlwaysRejectVerifier(), tmp_path,
+        orch, n_candidates=1, max_turns=6, patience=2,
+    )
+    assert res.stop_reason == "no_improvement"
+    assert len(res.actions) == 2          # exactly patience turns, not 6
+    assert all(a["outcome"] == "rejected" for a in res.actions)
+    assert not res.converged
+
+
+def test_patience_disabled_runs_to_ceiling(tmp_path):
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    reply = json.dumps({"tool": "regenerate", "args": {"hint": "x"}, "reason": "r"})
+    orch = OrchestratorAgent(llm=StubBrainLLM(reply), generator=gen)
+    res = generate_shot_orchestrated(
+        _spec(), _board(), gen, RefinerAgent(), _AlwaysRejectVerifier(),
+        tmp_path, orch, n_candidates=1, max_turns=3, patience=0,
+    )
+    assert res.stop_reason == "turns_exhausted"
+    assert len(res.actions) == 3
+
+
+def test_quality_bar_stops_early_but_converged_stays_honest(tmp_path):
+    """总分过线 → 提前收工;但高危缺陷(severity ≥ 0.7)在场时达标停被拦住,
+    修到高危降级后才放行;converged 仍如实为 False。"""
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    reply = json.dumps({"tool": "regenerate", "args": {"hint": "fix gravity"},
+                        "reason": "r"})
+    orch = OrchestratorAgent(llm=StubBrainLLM(reply), generator=gen)
+    spec = _spec()
+    res = generate_shot_orchestrated(
+        spec, _board(), gen, RefinerAgent(), VerifierAgent(), tmp_path, orch,
+        n_candidates=1, max_turns=5, quality_bar=0.01, patience=0,
+    )
+    assert res.stop_reason == "quality_bar_met"
+    # 初评带 severity 0.8 的重力缺陷 → 第 1 轮不许达标停(先修高危),之后停
+    assert 1 <= len(res.actions) < 5
+    assert not res.converged              # 评审没全过就是没全过
+
+

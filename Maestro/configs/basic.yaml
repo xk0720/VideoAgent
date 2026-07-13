@@ -52,6 +52,11 @@ plan:
   shot_duration: 3.0
   max_plan_iters: 3
 
+# 评审员开关(可能不用纯 physics 评审 → 分支开关控制)
+review:
+  physics_vlm: true        # VLM 物理观点评审(看画面判断合理性)
+  physics_measure: true    # 非 AI 测量链(basic 下 track 是 mock,中性;关掉即纯语义评审)
+
 # 窗口式全片生成(pipeline/window_loop.py)
 window:
   tail_seconds: 2.0        # tiv2v_window 策略截取上镜尾段的长度(秒),可调
@@ -60,8 +65,11 @@ window:
 compose:
   fps: 8
   n_candidates: 2           # 每镜 best-of-N 候选数
-  max_revisions: 5          # 自改进轮数上限
+  max_revisions: 5          # 自改进轮数上限(旧阶梯循环)
   k_retries: 2
+  # 小循环轮数【自动】控制(brain 修复循环;max_turns 只是成本天花板):
+  patience: 2               # 连续 N 轮被 Verifier 拒 → 止损停(≤0 关闭)
+  quality_bar: null         # 总分 ≥ 此值且无高危缺陷 → 提前收工(如 0.75;null 关闭)
 
 # 评审指标权重（驱动单调 Verifier）
 metrics:

@@ -146,3 +146,28 @@ brain 给每个 shot 从【门控后的菜单】选一种:
 2. 多候选(n_candidates>1)时台账只记最后一个 seed 的条件,最终胜出的可能
    是另一个 seed 的策略——张冠李戴进 replay 表。
 另有一批审查项因会话额度耗尽未完成对抗验证,修复时我会人工复核。
+
+
+---
+
+## 追加裁决(2026-07-13):小循环轮数控制 + 物理评审开关
+
+**裁决原文**:"可以,越早停越好。然后我们有可能不用纯 physics 来评审,
+这个分支要做成开关控制的。"
+
+**轮数控制(已实现)**:max_turns 只是成本天花板(超参保险丝),实际停止
+自动决定,先到先停,`result.stop_reason` 留痕:
+| stop_reason | 含义 |
+|---|---|
+| converged | 评审全过(唯一 converged=True 的情形) |
+| quality_bar_met | 总分 ≥ compose.quality_bar 且无 severity ≥ 0.7 的缺陷;converged 如实为 False |
+| no_improvement | 连续 compose.patience(默认 2)轮被 Verifier 拒 → 止损 |
+| brain_accept | brain 末轮主动 accept |
+| turns_exhausted | 天花板兜底 |
+Verifier 保持纯相对闸门("比上一版好吗"),停不停是循环的事——
+"接受 ≠ 完事"这一语义不变。stop_reason 同时写进分镜台账的评审记录。
+
+**物理评审开关(已实现)**:configs `review:` 段——
+`physics_vlm`(VLM 物理观点)与 `physics_measure`(非 AI 测量链)各自
+独立开关,默认全开(行为不变);双关 = 纯语义/一致性/节奏评审。关掉的
+评审员不出判定,其指标读作"未发现违规"(未评审 ≠ 扣分),权重可按需重调。

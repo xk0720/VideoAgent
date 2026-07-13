@@ -65,6 +65,10 @@ def main() -> int:
     ap.add_argument("--n-candidates", type=int, default=1)
     ap.add_argument("--tail-seconds", type=float, default=2.0,
                     help="tiv2v_window 截取上镜尾段的秒数(config: window.tail_seconds)")
+    ap.add_argument("--patience", type=int, default=2,
+                    help="小循环连续 N 轮被拒即止损(≤0 关闭)")
+    ap.add_argument("--quality-bar", type=float, default=None,
+                    help="小循环总分达标线(≥即提前收工;默认关闭)")
     ap.add_argument("--with-physics-measure", action="store_true",
                     help="启用 CoTracker+GroundingDINO 测量 critic(需 GPU)")
     ap.add_argument("--device", default="cuda")
@@ -112,7 +116,8 @@ def main() -> int:
         skill_library=orchestrator.skill_library,
         episode_memory=episode_memory, llm=llm,
         n_candidates=args.n_candidates, max_turns=args.max_turns,
-        window_tail_s=args.tail_seconds)
+        window_tail_s=args.tail_seconds,
+        patience=args.patience, quality_bar=args.quality_bar)
 
     _section("brain 决策流水(§B keyframe + §C 条件;via=episode/llm/fallback)")
     for d in res.decisions:
@@ -120,9 +125,11 @@ def main() -> int:
               f"via={d['via']:8s} {d.get('reason', '')[:70]}")
 
     _section("台账终态(StoryboardMemory)")
-    for row in res.storyboard.to_brain_json():
-        print(f"  {row['label']}: {row['status']}  score={row['last_score']}  "
-              f"kf={row['keyframe_source'] or '—'}  cond={row['condition_strategy']}")
+    for e in res.storyboard.entries:
+        last = e.reviews[-1] if e.reviews else {}
+        print(f"  {e.label}: {e.status}  score={last.get('weighted_total')}  "
+              f"kf={e.keyframe_source or '—'}  cond={e.condition.get('strategy')}  "
+              f"stop={last.get('stop_reason', '?')}")
 
     _section("结果")
     print(f"  成片: {res.final_video or '(合成降级 — 单镜产物保留在台账里)'}")

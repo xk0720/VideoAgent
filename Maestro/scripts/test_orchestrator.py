@@ -150,6 +150,7 @@ def main() -> int:
         cache_dir=run_dir, orchestrator=orchestrator, asset_memory=None,
         image_edit=image_edit, tournament=tournament, skill_library=skill_library,
         fps=8, n_candidates=args.n_candidates, max_turns=args.max_turns,
+        patience=args.patience, quality_bar=args.quality_bar,
     )
 
     # ── 复盘真实循环记录的逐回合轨迹（res.actions：真实发生了几回合就有几条）──
@@ -176,7 +177,7 @@ def main() -> int:
 
     _section("结果")
     best = res.clip
-    print(f"  收敛 converged = {res.converged}")
+    print(f"  收敛 converged = {res.converged}   停止原因 stop_reason = {res.stop_reason}")
     print(f"  最终 weighted_total = {best.metric_scores.get('weighted_total', 0.0):.4f}")
     print(f"  最终评审: 失败项 {len(best.checklist.failed_items)} 个, "
           f"物理 verdict {len(best.physics_verdicts)} 个")
