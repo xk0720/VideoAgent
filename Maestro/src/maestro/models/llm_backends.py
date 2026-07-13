@@ -31,12 +31,21 @@ from .llm import BaseLLMClient
 # A generic OpenAI-compatible endpoint (vllm / openai-compat) requires the
 # caller to supply base_url + model; its env fallback is the generic LLM_API_KEY.
 _OPENAI_COMPAT_DEFAULTS: dict[str, tuple[str, str, str]] = {
-    "openai": ("https://api.openai.com/v1", "gpt-4o", "OPENAI_API_KEY"),
+    "openai": ("https://api.openai.com/v1", "gpt-5.5", "OPENAI_API_KEY"),
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat", "DEEPSEEK_API_KEY"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "QWEN_API_KEY"),
     "vllm": ("http://localhost:8000/v1", "", "LLM_API_KEY"),
     "openai-compat": ("", "", "LLM_API_KEY"),
 }
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """gpt-5.x / o-series reasoning models take DIFFERENT chat-completions
+    params than gpt-4-era models: `max_completion_tokens` instead of
+    `max_tokens` (which they REJECT with 400), and no custom `temperature`
+    (only the default is supported). Detect by id prefix."""
+    m = (model or "").lower()
+    return m.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
 class OpenAICompatLLM(BaseLLMClient):
@@ -78,7 +87,11 @@ class OpenAICompatLLM(BaseLLMClient):
         # vLLM is keyless by convention — keep a placeholder so headers are valid.
         self._key_optional = key == "vllm"
         self.temperature = float(self.config.get("temperature", 0.7))
-        self.max_tokens = int(self.config.get("max_tokens", 1024))
+        # Reasoning models burn part of the completion budget on REASONING
+        # tokens before any visible text — 1024 truncates the brain's JSON
+        # mid-reply. Default higher for the gpt-5/o family.
+        default_max = 4096 if _is_reasoning_model(self.model) else 1024
+        self.max_tokens = int(self.config.get("max_tokens", default_max))
 
     def supports_function_calling(self) -> bool:
         return True
@@ -94,6 +107,24 @@ class OpenAICompatLLM(BaseLLMClient):
             f"models.llm.name back to 'mock-llm'."
         )
 
+    def _payload(self, prompt: str, **kwargs) -> dict:
+        """Chat-completions payload, per model family:
+        • gpt-5.x / o-series → `max_completion_tokens`, NO temperature (they
+          400 on `max_tokens` and on non-default temperature);
+        • everything else    → classic `max_tokens` + `temperature`."""
+        payload: dict = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        limit = int(kwargs.get("max_tokens", self.max_tokens))
+        if _is_reasoning_model(self.model):
+            payload["max_completion_tokens"] = limit
+        else:
+            payload["max_tokens"] = limit
+            payload["temperature"] = float(
+                kwargs.get("temperature", self.temperature))
+        return payload
+
     def complete(self, prompt: str, **kwargs) -> str:
         import requests  # lazy — no hard dep (mirrors WaveSpeedClient)
 
@@ -106,17 +137,39 @@ class OpenAICompatLLM(BaseLLMClient):
             "Authorization": f"Bearer {self._resolved_key()}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": float(kwargs.get("temperature", self.temperature)),
-            "max_tokens": int(kwargs.get("max_tokens", self.max_tokens)),
-        }
-        resp = requests.post(
-            f"{self.base_url}/chat/completions", json=payload, headers=headers,
-            timeout=float(kwargs.get("timeout", 120)),
-        )
-        resp.raise_for_status()
+        payload = self._payload(prompt, **kwargs)
+        url = f"{self.base_url}/chat/completions"
+        timeout = float(kwargs.get("timeout", 120))
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        if resp.status_code == 400:
+            # Param-name mismatch safety net (proxies / older gateways):
+            # if the server rejects the token-limit PARAM NAME, retry ONCE
+            # with the other name (NEWTON does the same swap). Only for the
+            # named-param complaint — any other 400 surfaces as-is.
+            body = resp.text or ""
+            swapped = None
+            # Trigger on the body mentioning EITHER token-limit param name,
+            # then swap based on WHICH ONE WE SENT ("max_tokens" is NOT a
+            # substring of "max_completion_tokens" — direction can't be read
+            # from the body alone).
+            if "max_tokens" in body or "max_completion_tokens" in body:
+                if "max_completion_tokens" in payload:
+                    swapped = dict(payload)
+                    swapped["max_tokens"] = swapped.pop("max_completion_tokens")
+                elif "max_tokens" in payload:
+                    swapped = dict(payload)
+                    swapped["max_completion_tokens"] = swapped.pop("max_tokens")
+                    swapped.pop("temperature", None)  # reasoning models reject it
+            if swapped is not None:
+                resp = requests.post(url, json=swapped, headers=headers,
+                                     timeout=timeout)
+        if resp.status_code >= 400:
+            # Surface the API's own explanation — raise_for_status() drops the
+            # body, which is where the server says WHICH field is wrong.
+            raise RuntimeError(
+                f"LLM('{self.name}' model={self.model}) HTTP "
+                f"{resp.status_code}: {resp.text[:1000]}"
+            )
         return resp.json()["choices"][0]["message"]["content"]
 
 

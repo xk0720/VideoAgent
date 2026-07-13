@@ -53,7 +53,7 @@ def test_base_url_defaults_resolve(monkeypatch):
 
 def test_model_defaults_resolve():
     assert build_llm({"name": "deepseek"}).model == "deepseek-chat"
-    assert build_llm({"name": "openai"}).model == "gpt-4o"
+    assert build_llm({"name": "openai"}).model == "gpt-5.5"
     assert build_llm({"name": "anthropic"}).model == "claude-sonnet-4-6"
 
 
@@ -86,3 +86,63 @@ def test_openai_compat_loud_without_base_url(monkeypatch):
     client = build_llm({"name": "openai-compat", "api_key": "k"})
     with pytest.raises(RuntimeError, match="base_url"):
         client.complete("hello")
+
+
+# ── gpt-5/o 系列参数规范(不合规会被 API 400)────────────────────────────
+def test_reasoning_model_payload_uses_max_completion_tokens():
+    """gpt-5.x/o 系列:max_completion_tokens、不发 temperature、预算加大;
+    gpt-4o 等旧模型:经典 max_tokens + temperature(行为不变)。"""
+    from maestro.models.llm_backends import OpenAICompatLLM
+
+    new = OpenAICompatLLM("openai", {"model": "gpt-5.5", "api_key": "k"})
+    p = new._payload("hi")
+    assert p["max_completion_tokens"] == 4096       # 推理令牌吃预算,默认加大
+    assert "max_tokens" not in p and "temperature" not in p
+
+    old = OpenAICompatLLM("openai", {"model": "gpt-4o", "api_key": "k"})
+    p2 = old._payload("hi")
+    assert p2["max_tokens"] == 1024 and p2["temperature"] == 0.7
+    assert "max_completion_tokens" not in p2
+
+
+def test_400_param_swap_retry_and_body_surfacing(monkeypatch):
+    """代理网关拒收参数名 → 换名重试一次;其余 4xx 必须带响应正文报错
+    (raise_for_status 会吞正文——那里写着哪个字段错了)。"""
+    import sys
+    import types
+
+    import pytest
+
+    from maestro.models.llm_backends import OpenAICompatLLM
+
+    calls = []
+
+    class _Resp:
+        def __init__(self, status, text="", data=None):
+            self.status_code = status
+            self.text = text
+            self._data = data or {}
+
+        def json(self):
+            return self._data
+
+    def _post(url, json=None, headers=None, timeout=0):
+        calls.append(json)
+        if "max_completion_tokens" in json:
+            return _Resp(400, "Unsupported parameter: 'max_completion_tokens'")
+        return _Resp(200, data={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setitem(sys.modules, "requests",
+                        types.SimpleNamespace(post=_post))
+    llm = OpenAICompatLLM("openai", {"model": "gpt-5.5", "api_key": "k"})
+    assert llm.complete("hi") == "ok"
+    assert len(calls) == 2                          # 一次 400 + 一次换名重试
+    assert "max_tokens" in calls[1] and "max_completion_tokens" not in calls[1]
+
+    def _post_403(url, json=None, headers=None, timeout=0):
+        return _Resp(403, '{"error": {"message": "insufficient quota"}}')
+
+    monkeypatch.setitem(sys.modules, "requests",
+                        types.SimpleNamespace(post=_post_403))
+    with pytest.raises(RuntimeError, match="insufficient quota"):
+        llm.complete("hi")

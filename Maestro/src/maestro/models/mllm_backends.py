@@ -200,7 +200,14 @@ class OpenAICompatVLM(BaseMLLMClient):
                 f"{self.base_url}/chat/completions", json=payload, headers=headers,
                 timeout=float(self.config.get("timeout", 120)),
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # keep the response BODY in the warning — that is where the
+                # API says WHICH field is wrong (raise_for_status drops it)
+                log.warning(
+                    "VLM(%s model=%s) HTTP %d: %s — no verdict emitted",
+                    self.name, self.model, resp.status_code, resp.text[:500],
+                )
+                return None
             return resp.json()["choices"][0]["message"]["content"]
         except Exception as exc:  # non-fatal: degrade + warn
             log.warning(
@@ -249,7 +256,10 @@ class OpenAICompatVLM(BaseMLLMClient):
                 f"{self.base_url}/chat/completions", json=payload,
                 headers=headers, timeout=float(self.config.get("timeout", 120)),
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                log.warning("VLM(%s) caption HTTP %d: %s", self.name,
+                            resp.status_code, resp.text[:300])
+                return ""
             return str(resp.json()["choices"][0]["message"]["content"]).strip()
         except Exception as exc:  # degrade down the Q-D chain, loudly
             log.warning("VLM(%s) caption_image failed for %s: %r",
@@ -460,7 +470,11 @@ class GeminiVLM(OpenAICompatVLM):
         try:
             resp = requests.post(url, json=payload, headers=self._headers(),
                                  timeout=float(self.config.get("timeout", 120)))
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                log.warning("GeminiVLM(%s model=%s) HTTP %d: %s — no verdict "
+                            "emitted", self.name, self.model,
+                            resp.status_code, resp.text[:500])
+                return None
             cands = resp.json().get("candidates") or []
             for part in reversed((cands[0].get("content") or {}).get("parts", [])
                                  if cands else []):

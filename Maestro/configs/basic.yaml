@@ -15,7 +15,8 @@ models:
   # 纯语言大模型（编剧 / 导演 / 修复 / 验证）——只用 OpenAI。
   llm:
     name: "openai"
-    model: "gpt-4o"        # 任意 OpenAI chat 模型；纯文本规划用
+    model: "gpt-5.5"       # brain 默认;gpt-5/o 系列自动用 max_completion_tokens、
+                           # 不发 temperature(它们拒收);gpt-4o 等旧模型也兼容
 
   # 多模态大模型（语义/物理 VLM 评审 + 镜头对比 + 素材打标）。
   # Gemini 官方 generateContent 端点;$GEMINI_MODEL / $GEMINI_BASE_URL 可覆盖。
