@@ -1,31 +1,41 @@
 ---
 name: video_retrieval
-agent: RetrievalTool + AssetMemory(素材检索,窗口大循环 §B / 修复工具 retrieve_replace)
-description: 从用户上传的素材库(图片/视频/身份锚)检索材料——keyframe 的两种来源(asset_image / video_extract)和修复工具 retrieve_replace 的底座。
+agent: RetrievalTool + AssetMemory (asset retrieval; window stage B sources / repair tool retrieve_replace)
+description: Retrieve material from the user's uploaded assets (images / videos / identity anchors) — the base of the asset_image / video_extract image sources and of the retrieve_replace repair tool.
 ---
 
-# Video Retrieval — 素材检索技能
+# Video Retrieval — asset retrieval skill
 
-## 角色
-用户上传的素材(AssetMemory:video_shots 源视频片段、identity_anchors
-身份图、style_anchors 风格图)是"真实外观"的唯一来源。三个消费方:
+## Role
+User-uploaded assets (AssetMemory: video_shots source clips, identity_anchors
+character images, style_anchors style images) are the ONLY source of "real
+appearance". Three consumers:
 
-1. §B keyframe 策略 `asset_image`:直接拿身份/风格锚的图片当本 shot 的
-   keyframe(角色长相一致性的最强保证——真图赢过任何再生成)。
-2. §B keyframe 策略 `video_extract`:按 shot 描述检索源视频片段
-   (retrieve_source_shots),抽中间帧当 keyframe(中间帧比首帧更能代表
-   片段内容)。
-3. 修复工具 `retrieve_replace`(修复 brain 的菜单项):语义缺陷"缺某个真
-   实元素"时,用源片段整段替换生成镜头。
+1. Image-plan source `asset_image`: use a user image directly as a planned
+   image (the strongest guarantee of character-look consistency — a real
+   photo beats any regeneration).
+2. Image-plan source `video_extract`: retrieve a source clip by the shot
+   description (retrieve_source_shots) and extract its MIDDLE frame (more
+   representative of the clip than the first frame).
+3. Repair tool `retrieve_replace` (repair brain's menu): when a semantic
+   defect is "a real element is missing", replace the generated shot with a
+   source clip.
 
-## 检索规则
-- retrieve_source_shots(query):query 用 shot 的完整描述,不要只给单词
-  (匹配按 caption/标签重叠打分)。
-- 优先级:identity 锚 > style 锚(身份是一致性的命门);源视频片段必须
-  验证路径存在才算命中——检索命中但文件丢失 = 未命中,诚实降级。
-- 门控:素材库为空时,依赖本技能的策略/工具从菜单里消失(brain 看不见
-  不可执行的选项),绝不允许"假装检索到了"。
+## Retrieval rules
+- retrieve_source_shots(query): use the FULL shot description as the query,
+  never a single word (matching scores by caption/label keyword overlap).
+- Image assets are scored across the WHOLE catalog by keyword overlap between
+  the query and each asset's label; the label priority chain is
+  user-provided description > VLM caption (backfilled by
+  ensure_asset_descriptions when a real VLM is available) > filename
+  (honest degradation — retrieval quality is limited and logged).
+- A hit whose file no longer exists is NOT a hit — degrade honestly.
+- Gating: with an empty asset library, the strategies/tools that depend on
+  this skill disappear from the menus (the brain never sees an inexecutable
+  option); "pretending to retrieve" is forbidden.
 
-## 当前实现状态(诚实声明)
-检索目前是确定性关键词/标签匹配(RetrievalTool);CLIP 向量检索是升级
-方向,升级时本文件的规则(query 用全描述、路径必须存在、空库即隐藏)不变。
+## Current implementation status (honest note)
+Retrieval is currently deterministic keyword/label matching; CLIP-embedding
+retrieval is the registered upgrade path. The rules above (full-description
+queries, existing-path requirement, empty-library gating) stay unchanged
+when it lands.

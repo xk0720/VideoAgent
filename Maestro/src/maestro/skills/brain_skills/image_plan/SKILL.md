@@ -1,72 +1,91 @@
 ---
 name: image_plan
-agent: window brain(pipeline/window_loop.py 的 Image Plan 决策)
-description: 逐 shot 决定【要几张图、每张什么角色、每张什么来源】,并为后续视频调用写出角色化 prompt——角色锁死模型族,输出严格 JSON。
+agent: window brain (the Image Plan decision in pipeline/window_loop.py)
+description: Per shot, decide HOW MANY images (0/1/2), each image's ROLE and SOURCE, before video generation — the role locks which video-model family may be called. Strict JSON output.
 ---
 
-# Image Plan — 图片计划技能(数量 + 角色 + 来源)
+# Image Plan — count + role + source, decided in ONE step
 
-## 角色
-你在为【一个 shot】的视频生成做图片准备。你的决定有三层,一次给全:
-1. **要几张图**:0 / 1 / 2(暂定最多两张);
-2. **每张图的角色**(提前设定,角色**锁死**后续能用的视频模型族):
-3. **每张图的来源**:t2i 文生图 / asset_image 用户素材检索 / video_extract
-   用户视频抽帧 —— **来源可以混搭**(例:图1 用用户人物照,图2 文生图场景)。
+## Role
+You are preparing the images for ONE shot's video generation. Your single
+decision covers three things at once:
+1. **How many images**: 0 / 1 / 2 (two is the current maximum);
+2. **Each image's ROLE** — the role LOCKS which video-model family the
+   condition stage may call (mismatches are impossible by design);
+3. **Each image's SOURCE**: `t2i` (text-to-image) / `asset_image` (retrieve a
+   user-provided image) / `video_extract` (extract a frame from a user-provided
+   video) — sources MAY MIX across the two images (e.g. image 1 = the user's
+   character photo, image 2 = a t2i scene).
 
-## 角色 → 视频模型族(锁死映射,不允许错配)
+## Role → video-model family (locked mapping)
 
-| plan | 图片角色 | 后续视频调用 | payload 图片字段 |
+| plan | image role(s) | video call that follows | payload image field |
 |---|---|---|---|
-| single_first_frame | 首帧锚 | seedance-2.0 i2v(ti2v) | `image` |
-| single_reference | 参考(人物/物体/场景一致性) | seedance-2.0 t2v+refs 或 kling-video-o1 | `reference_images` / `images` |
-| pair_first_last | 首帧+尾帧 | seedance-2.0 i2v(首尾双锚) | `image`+`last_image` |
-| pair_reference | 双参考(如两个角色;角色+场景) | kling-video-o1(可再带上镜尾段 `video`) | `images` |
-| none | 无图 | t2v / 上镜锚定路线 | — |
+| single_first_frame | first frame anchor | seedance-2.0 i2v (ti2v) | `image` |
+| single_reference | reference (character/object/scene consistency) | seedance-2.0 t2v + refs, or kling-video-o1 | `reference_images` / `images` |
+| pair_first_last | first frame + last frame | seedance-2.0 i2v (both ends locked) | `image` + `last_image` |
+| pair_reference | two references (e.g. two characters; character + scene) | kling-video-o1 (may also carry the previous shot's tail `video`) | `images` |
+| none | no images | t2v / previous-shot-anchored routes | — |
 
-## 决策思路(不是死规则——按剧情和素材推理)
+## How to decide (reason from the story and the assets — NOT rules to memorize)
 
-- **shot 必须从一个精确画面开场**(顺时续接、开场定格)→ first_frame。
-- **shot 里有需要长相/外观一致的主体**(角色、特定物体、特定场景),但
-  画面构图应该让模型自由发挥 → reference。
-- **shot 的开场和收场都明确**(一个动作从 A 到 B;转场镜头)→ pair_first_last:
-  图1 = 开场帧,图2 = 收场帧,两张图的描述要写成同一场景的两个时刻。
-- **shot 要把多个独立元素融进一个画面**(两个角色同框;把用户的角色放进
-  用户的场景)→ pair_reference。
-- **素材场景举例(推理示范,不要背成规则)**:
-  · 用户给了一张【背景/场景图】:该场景的第一镜可以 single_first_frame
-    直接用它开场(source=asset_image);同场景后续镜头用它当
-    single_reference(场景一致性)——别每镜都拿它当首帧,那会让每一镜都
-    从同一个静止画面开始。
-  · 用户给了一张【人物照】:人物出场的每一镜都带上它当 reference
-    (single_reference 或 pair_reference 的一张);除非剧本要求"从人物
-    特写定格开场"才当 first_frame。
-  · 用户给了【两张人物照】(如男女主):两人同框的镜头用 pair_reference。
-  · 用户给了【源视频】:video_extract 抽帧,当首帧(续用户的画面)或参考。
-  · 什么都没给、纯生成:t2i;开场镜头 single_first_frame 定基调,后续镜头
-    多数 none(靠上镜尾帧/尾段续接,见 window_generation 技能)——
-    **不是每一镜都需要自己的图**,滥造 keyframe 反而打断连续性。
-- asset_catalog 里每个素材带 kind + 描述,选 asset_image 时把检索词写进
-  该图的 description(检索按关键词重叠打分)。
+- The shot must OPEN on one exact picture (in-scene continuation, a held
+  opening frame) → **first_frame**.
+- The shot contains a subject whose LOOK must stay consistent (a character, a
+  specific object, a specific place) but the model should compose the frame
+  freely → **reference**.
+- Both the opening and the closing of the shot are known (an action from state
+  A to state B; a transition shot) → **pair_first_last**: image 1 = the
+  opening moment, image 2 = the closing moment — write the two descriptions as
+  two moments of the SAME scene.
+- The shot must blend several independent elements into one frame (two
+  characters together; the user's character inside the user's location) →
+  **pair_reference**.
+- Worked reasoning over asset scenarios (reason like this, do not hardcode):
+  - The user provided a BACKGROUND/location image: the first shot in that
+    location may open on it directly (single_first_frame, source=asset_image);
+    later shots in the same location should use it as single_reference for
+    scene consistency — do NOT open every shot on it, or every shot starts
+    frozen on the same still.
+  - The user provided a CHARACTER photo: every shot the character appears in
+    should carry it as a reference (single_reference, or one slot of
+    pair_reference); only use it as first_frame when the script explicitly
+    opens on a held close-up of the character.
+  - The user provided TWO character photos (e.g. the leads): shots with both
+    on screen → pair_reference.
+  - The user provided a SOURCE VIDEO: video_extract a frame — as first_frame
+    (continuing the user's own footage) or as a reference.
+  - Nothing provided (pure generation): t2i; give the opening shot a
+    single_first_frame to set the look, and prefer **none** for most
+    mid-scene shots (they anchor on the previous shot's last frame / tail —
+    see the window_generation skill). NOT every shot needs its own image;
+    gratuitous keyframes BREAK continuity instead of helping it.
+- `asset_catalog` entries carry kind + a description. When you pick
+  asset_image, put the retrieval query into that image's `description`
+  (retrieval scores by keyword overlap with asset descriptions).
 
-## 输出格式(严格 JSON,只输出这个)
+## Output format (STRICT JSON — output this and nothing else)
 
-{"strategy": "<菜单里的 plan 名>",
+{"strategy": "<one plan name from the menu>",
  "images": [{"source": "t2i"|"asset_image"|"video_extract",
-             "description": "<t2i 的完整生图 prompt,或检索词>"}, ...],
- "reason": "<一句话>"}
+             "description": "<full t2i prompt, or the retrieval query>"}, ...],
+ "reason": "<one short sentence>"}
 
-- images 数量必须等于 plan 要求(single_*=1,pair_*=2,none=0/省略)。
-- pair_first_last 的两条 description 必须是【同一场景的开场时刻和收场时刻】。
-- t2i 的 description 是完整生图 prompt(主体+场景+光线+风格),不是一个词。
+- The number of `images` entries MUST match the plan (single_* = 1,
+  pair_* = 2, none = 0 / omit).
+- For pair_first_last the two descriptions MUST read as the opening moment
+  and the closing moment of the same scene.
+- A `t2i` description is a COMPLETE image-generation prompt (subject + setting
+  + lighting + style), never a single word.
 
-### 例 1 —— 纯生成,开场镜头
-{"strategy": "single_first_frame", "images": [{"source": "t2i", "description": "a glass of water standing near the edge of a wooden kitchen table, warm morning light, photorealistic, eye-level close-up"}], "reason": "opening shot sets the look; the shot must start exactly on this framing"}
+### Example 1 — pure generation, opening shot
+{"strategy": "single_first_frame", "images": [{"source": "t2i", "description": "a glass of water standing near the edge of a wooden kitchen table, warm morning light, photorealistic, eye-level close-up"}], "reason": "opening shot sets the look; the video must start exactly on this framing"}
 
-### 例 2 —— 用户给了男女主两张照片,本镜两人同框
-{"strategy": "pair_reference", "images": [{"source": "asset_image", "description": "female character portrait"}, {"source": "asset_image", "description": "male character portrait"}], "reason": "both characters appear together; their faces must stay recognizable — reference pair via kling"}
+### Example 2 — the user provided two character photos; both appear in this shot
+{"strategy": "pair_reference", "images": [{"source": "asset_image", "description": "female character portrait"}, {"source": "asset_image", "description": "male character portrait"}], "reason": "both characters share the frame; their faces must stay recognizable — reference pair via the kling route"}
 
-### 例 3 —— 动作从 A 到 B 的转场镜头(混搭来源)
-{"strategy": "pair_first_last", "images": [{"source": "video_extract", "description": "the corridor from the user's source clip"}, {"source": "t2i", "description": "the same corridor, door at the end now open, camera slightly closer, same lighting"}], "reason": "shot opens on the user's real corridor and must end on the opened door"}
+### Example 3 — a transition shot from state A to state B (mixed sources)
+{"strategy": "pair_first_last", "images": [{"source": "video_extract", "description": "the corridor from the user's source clip"}, {"source": "t2i", "description": "the same corridor, the door at the end now open, camera slightly closer, same lighting"}], "reason": "the shot opens on the user's real corridor and must end on the opened door"}
 
-### 例 4 —— 同场景第三镜,不需要自己的图
+### Example 4 — third shot inside the same scene, no own image needed
 {"strategy": "none", "images": [], "reason": "mid-scene continuation — anchor on the previous shot's last frame instead of a fresh image"}

@@ -68,7 +68,7 @@ class _WindowVideoGen(MockVideoGenClient):
 
 
 class _JsonLLM(BaseLLMClient):
-    """按提问类别回固定 JSON 的窗口 brain 桩。"""
+    """按提问类别回固定 JSON 的窗口 brain 桩(靠技能标题区分决策类型)。"""
 
     def __init__(self, keyframe="t2i", condition="i2v_keyframe"):
         self.keyframe, self.condition = keyframe, condition
@@ -76,8 +76,13 @@ class _JsonLLM(BaseLLMClient):
 
     def complete(self, prompt: str, **kwargs) -> str:
         self.prompts.append(prompt)
-        pick = self.keyframe if "keyframe" in prompt[:400] else self.condition
-        return json.dumps({"strategy": pick, "reason": "stub"})
+        if "Image Plan" in prompt[:200]:      # image_plan 技能全文打头
+            return json.dumps({
+                "strategy": "single_first_frame",
+                "images": [{"source": self.keyframe,
+                            "description": "opening frame of the shot"}],
+                "reason": "stub"})
+        return json.dumps({"strategy": self.condition, "reason": "stub"})
 
 
 def _components(video_gen):
@@ -535,3 +540,33 @@ def test_ensure_asset_descriptions_qd_chain(tmp_path):
     assert n == 1
     assert mem.identity_anchors["a"].description.startswith("background:")
     assert mem.identity_anchors["b"].description == "user says: a dog"  # 不覆盖
+
+
+# ── 模型输入语言纪律(用户裁决:模型输入输出一律英文)─────────────────────
+def test_all_skill_files_are_english_only():
+    """全部 SKILL.md 是模型输入 —— 不允许出现中文字符。"""
+    import re
+
+    from maestro.skills.loader import load_skill_catalog
+
+    cjk = re.compile(r"[\u4e00-\u9fff]")
+    for name, meta in load_skill_catalog().items():
+        text = open(meta["path"], encoding="utf-8").read()
+        hits = cjk.findall(text)
+        assert not hits, f"skill '{name}' contains CJK characters: {hits[:5]}"
+
+
+def test_window_brain_prompts_load_the_skill_bodies(tmp_path, monkeypatch):
+    """窗口 brain 的两类决策 prompt 必须载入对应技能全文(和修复 brain 载
+    orchestrator/SKILL.md 同一机制)。"""
+    import maestro.pipeline.window_loop as wl
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
+    llm = _JsonLLM()
+    generate_movie_windowed(
+        "a glass falls off a table", cache_dir=tmp_path, llm=llm,
+        max_turns=1, n_candidates=1, **_components(_WindowVideoGen()))
+    plan_prompts = [p for p in llm.prompts if "Image Plan" in p[:200]]
+    cond_prompts = [p for p in llm.prompts if "Window Generation" in p[:200]]
+    assert plan_prompts and cond_prompts
+    assert "Role → video-model family" in plan_prompts[0]     # 技能正文在场
+    assert "Reference syntax per model family" in cond_prompts[0]

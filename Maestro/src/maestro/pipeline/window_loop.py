@@ -242,27 +242,55 @@ def _last_frame(video: Path, out_path: Path) -> Optional[Path]:
 _EXTRA_FIELDS = ("images", "video_prompt", "use_prev_tail_video")
 
 
+# kind → 该决策要载入 prompt 的技能文件(模型输入,全英文;和修复 brain
+# 载 orchestrator/SKILL.md 同一机制)。缺文件时用内联短指令兜底。
+_KIND_TO_SKILL = {"image-plan": "image_plan",
+                  "generation-condition": "window_generation"}
+
+
+def _skill_body(kind: str) -> str:
+    """载入该决策类型的技能全文(缓存);没有就返回内联短指令。"""
+    name = _KIND_TO_SKILL.get(kind, "")
+    if name and name not in _SKILL_CACHE:
+        try:
+            from ..skills.loader import load_skill
+
+            sk = load_skill(name)
+            _SKILL_CACHE[name] = sk["body"] if sk and sk["body"].strip() else ""
+        except Exception:
+            _SKILL_CACHE[name] = ""
+    body = _SKILL_CACHE.get(name, "")
+    if body:
+        return body
+    return (f"You are the window-generation brain. Pick EXACTLY ONE {kind} "
+            "strategy from `menu` for the CURRENT shot. Consider the "
+            "storyboard, the asset_catalog, and the episode guidance "
+            "(replay_hints = strategies that WORKED on similar past tasks — "
+            "prefer them; avoid = strategies that FAILED — never pick them "
+            "for a similar shot).")
+
+
+_SKILL_CACHE: dict = {}
+
+
 def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
     """让 brain 用严格 JSON 从菜单选一项;失败返回 {}(调用方走兜底)。
 
-    和 OrchestratorAgent.decide 同款纪律:只能选菜单里的 name,越界即无效。
-    语义附加字段(_EXTRA_FIELDS)做轻校验后透传;机械字段即使 brain 多嘴
-    也被丢弃。MockLLM 回 "ack:..." 必然解析失败 → 测试/mock 模式全程走
-    确定性兜底,不会伪造"brain 决策"。"""
+    prompt = 该决策的【技能全文】(skills/brain_skills/*/SKILL.md,纯英文
+    ——模型输入输出一律英文,用户裁决)+ 本回合 JSON 上下文。和
+    OrchestratorAgent.decide 同款纪律:只能选菜单里的 name,越界即无效;
+    语义附加字段(_EXTRA_FIELDS)轻校验透传,机械字段即使 brain 多嘴也被
+    丢弃。MockLLM 回 "ack:..." 必然解析失败 → mock 模式全程走确定性兜底,
+    不伪造"brain 决策"。"""
     if llm is None:
         return {}
     prompt = (
-        f"You are the window-generation brain. Pick EXACTLY ONE {kind} "
-        "strategy from `menu` for the CURRENT shot. Consider the storyboard "
-        "(what exists so far), the asset_catalog (user-provided images you "
-        "can retrieve), and the episode guidance (replay_hints = strategies "
-        "that WORKED on similar past tasks — prefer them; avoid = strategies "
-        "that FAILED — never pick them for a similar shot).\n\n"
+        _skill_body(kind)
+        + "\n\nTHIS TURN (JSON):\n"
         + json.dumps({"menu": menu, **context}, ensure_ascii=False)
         + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
-          '"reason": "<one short sentence>", ... optional fields the menu '
-          "entry's description asks for (images / video_prompt / "
-          "use_prev_tail_video)}"
+          '"reason": "<one short sentence>", ... optional semantic fields '
+          "per the skill above (images / video_prompt / use_prev_tail_video)}"
     )
     try:
         data = _extract_json(llm.complete(prompt))

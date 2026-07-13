@@ -1,35 +1,49 @@
 ---
 name: scene_write
-agent: ScreenwriterAgent + DirectorAgent (playwriting, 窗口大循环 §A)
-description: 用户 prompt → 按时间顺序的 scene/shot 文本描述列表 → ShotSpec;是 StoryboardMemory 台账的种子。
+agent: ScreenwriterAgent + DirectorAgent (playwriting, window loop stage A)
+description: Turn the user's prompt into a time-ordered list of scene/shot descriptions → ShotSpecs; the seed of the StoryboardMemory ledger.
 ---
 
-# Scene Write(playwriting)— 剧本拆解技能
+# Scene Write (playwriting) — shot breakdown
 
-## 角色
-把用户的一句话/一段话拆成【按时间顺序】的 shot 描述列表。这个列表就是
-窗口式生成的骨架:每一行变成台账(StoryboardMemory)的一个条目,后续的
-keyframe 策略、条件策略、评审修复都挂在这些条目上。
+## Role
+Split the user's prompt into a TIME-ORDERED list of shot descriptions. This
+list is the skeleton of window-based generation: each line becomes one entry
+of the storyboard ledger, and every later decision (image plan, condition
+strategy, review, repair) hangs off these entries.
 
-## 拆解规则
-1. 每个 shot 一句完整、可拍的描述:主体 + 动作 + 场景(+ 镜头语言可选)。
-   坏例:"然后它掉下来"(主体是谁?在哪?);
-   好例:"Shot 2: the glass tips over the table edge and falls (kitchen, close-up)"。
-2. 分场:场景/地点/时间跳变 = 新 scene。描述里显式写 "scene N",台账靠它
-   解析场号(解析不到全归 scene 1 —— 单场剧本这是对的)。
-3. shot 数量:默认跟配置(plan.n_shots,默认 3;上限 max_shots);素材库
-   有音乐 profile 时按乐段数。宁少勿碎——每镜 4-15 秒(生成模型的时长域)。
-4. 时间顺序即生成顺序:窗口循环严格按列表顺序推进,跨镜连续性(上镜尾帧/
-   尾段当锚)只对相邻 shot 成立——把需要连续的动作放进相邻的 shot。
-5. 实体一致性:同一角色/物体在所有 shot 描述里用同一个名字(检测、追踪、
-   素材检索都按名字对齐)。
+## Breakdown rules
+1. One complete, filmable sentence per shot: subject + action + setting
+   (+ optional camera language).
+   Bad: "then it falls" (whose? where?);
+   Good: "Shot 2: the glass tips over the table edge and falls (kitchen,
+   close-up)".
+2. Scene splits: a change of location/time = a new scene. Write "scene N"
+   explicitly in the description — the ledger parses the scene number from it
+   (no parse → everything is scene 1, which is correct for single-scene
+   scripts).
+3. Shot count: follow the config (plan.n_shots, default 3; capped by
+   max_shots); when the asset library carries a music profile, follow its
+   section count. Fewer, longer shots beat fragments — each shot runs 4-15
+   seconds (the generation model's duration domain).
+4. Time order IS generation order: the window loop walks the list strictly in
+   order, and cross-shot continuity (previous shot's last frame / tail as the
+   anchor) only holds between ADJACENT shots — put actions that must flow
+   continuously into adjacent shots.
+5. Entity consistency: use the SAME name for the same character/object across
+   all shot descriptions (detection, tracking and asset retrieval all align
+   by name).
+6. Asset awareness: when the user provided assets (a location image, character
+   photos, source clips), write the shots AROUND what the assets afford — a
+   living-room background image is wasted on a beach script.
 
-## 输出去向
-outline(每 shot 一行)→ DirectorAgent 逐行展开成 ShotSpec(时长、镜头
-语言、identity/style 引用、物理标注、事件图)→ StoryboardMemory.from_outline
-建台账(全 pending)。
+## Where the output goes
+outline (one line per shot) → DirectorAgent expands each line into a ShotSpec
+(duration, camera language, identity/style refs, physics annotation, event
+graph) → StoryboardMemory.from_outline builds the ledger (all pending).
 
-## 当前实现状态(诚实声明)
-ScreenwriterAgent 目前是确定性拆条(按分号切子句、按 n_shots 循环),LLM
-调用是占位;本技能文件是它升级成真 LLM playwriting 时的操作手册,规则
-以此为准。
+## Current implementation status (honest note)
+ScreenwriterAgent is currently a deterministic splitter (semicolon clauses,
+n_shots cycling); its LLM call is a placeholder. This file is the operating
+manual for the real LLM playwriting upgrade — the rules above are the
+contract.

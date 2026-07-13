@@ -1,6 +1,6 @@
 ---
 name: review_summarizer
-agent: ReviewSummarizerAgent (the review 整理员)
+agent: ReviewSummarizerAgent (the review consolidator)
 description: Consolidate ALL reviewer outputs (measured + opinion + metrics) into ONE ranked brief for the brain — merge, rank, surface conflicts, track progress; suggest fix CLASSES, never tools.
 ---
 
