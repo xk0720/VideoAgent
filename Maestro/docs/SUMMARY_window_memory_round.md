@@ -9,7 +9,7 @@
 
 | 裁决 | 落地 | 验证 |
 |---|---|---|
-| **Q1** 多图输入模型:深度调研,有则都实现 | 调研报告 docs/research/wavespeed_multi_image_2026_07.md(官方页逐条核验)。实现:① seedance-2.0 `reference_images` 通道(≤9 图,@ImageN 提及)——盘点时发现 generate() 签名有这参数但 payload 根本没接,已接线;② `multi_image_to_video()` → kling-v1.6-multi-i2v(images 数组 ≤4);③ 窗口新策略 `ti2v_prev_plus_keyframe`(你 4.(2.1)(1) 的字面实现:上镜尾帧当首帧 + keyframe 当 @Image1 引导,一次调用两张图、不锁结尾)和 `multi_image_fusion`(多图融合)。kling-elements / vidu reference-to-video 未核验部分登记缺口台账,不瞎实现 | test_video_gen_backends(9 图截断、legacy loud、4 图截断、时长吸附)+ test_window_loop(门控、执行、降级链) |
+| **Q1** 多图输入模型:深度调研,有则都实现 | 调研报告 docs/research/wavespeed_multi_image_2026_07.md(agent 18+ 官方页逐页核验)。实现:① seedance-2.0 `reference_images` 通道接线(≤9 图,@ImageN)——**仅 t2v 端点验证**;i2v+refs 是未验证 schema → 代码主动丢弃+loud 告警,不硬编码;② `multi_image_to_video()` → **kling-video-o1/reference-to-video**(≤7 图,带 video 参考自动收缩到 4;legacy v1.6 保留可配);③ 窗口新策略 `ti2v_prev_plus_keyframe`(t2v+refs 软锚:@Image1 续接起点 + @Image2 目标构图,一次两张图、不锁任何帧)和 `multi_image_fusion`;兜底优先级按硬锚>软锚重排。kling-v3.0-4k 双硬锚+element_list、pixverse-c1 标签 refs、vidu r2v 登记缺口台账 | test_video_gen_backends(t2v refs/9 图截断/i2v 丢弃/legacy loud/o1 7↔4 收缩/v1.6 legacy)+ test_window_loop(门控、执行、降级链) |
 | **Q2** 尾段 2s 不写死 | `window.tail_seconds`(configs/basic.yaml)+ demo `--tail-seconds` | 参数流到 `_cut_tail` |
 | **Q3** 强制 VLM 输出 frame_range | assess_semantic 提示要求逐失败项给 [frame_start, frame_end](原片帧号);ChecklistItem 加 `frame_range`;DefectReport 用它把语义缺陷也变成段级可修;VLM 没给/给废 → 诚实回退整镜级;mock 无像素证据永远不给帧号 | test_defect_report + semantic critic 日志记 localized 数 |
 | **Q4** Summarizer/brain/Verifier 三角分工保留;子循环逻辑要准 | 分工未动。子循环核对出一个真问题并修掉:窗口造的候选没带 keyframes,内层 keyframe_edit 工具会空转——现在窗口候选挂上本 shot 的真实 keyframe | test_window_loop(cand_keyframes) |

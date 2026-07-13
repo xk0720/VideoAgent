@@ -85,8 +85,11 @@ log = get_logger(__name__)
 #     的字面实现:两张图一次调用(seedance-2.0,连续性锚定 + 目标画面引导);
 #   multi_image_fusion — [上镜尾帧, 本镜 keyframe(, 身份锚)] 作 images 数组
 #     一次融合生成(kling multi-i2v):无指定首帧,画面按全部图片融合。
-_CONDITION_PRIORITY = ["flf2v_bridge", "ti2v_prev_plus_keyframe",
-                       "tiv2v_window", "ti2v_prev_last",
+#   排序依据:硬锚(像素级续接)优先于软锚 —— flf2v_bridge(双端硬锚)>
+#   tiv2v_window(尾段运动参考+可选首帧)> ti2v_prev_last(首帧硬锚)>
+#   ti2v_prev_plus_keyframe(t2v+refs 软锚)> multi_image_fusion(融合)。
+_CONDITION_PRIORITY = ["flf2v_bridge", "tiv2v_window", "ti2v_prev_last",
+                       "ti2v_prev_plus_keyframe",
                        "multi_image_fusion", "i2v_keyframe", "t2v"]
 # §B 确定性兜底的优先级(用户素材优先于生成 —— 真材实料的外观赢过再生成)
 _KEYFRAME_PRIORITY = ["asset_image", "video_extract", "t2i", "none"]
@@ -284,12 +287,15 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
                                         "generator SEES the ongoing motion."})
         if has_kf and "ref_images" in caps:
             menu.append({"name": "ti2v_prev_plus_keyframe",
-                         "description": "TWO images in ONE call: previous "
-                                        "shot's last frame as the FIRST FRAME "
-                                        "+ this shot's keyframe as a steering "
-                                        "reference image (@Image1) — pixel-"
-                                        "exact continuity AND target look, "
-                                        "without locking the end frame."})
+                         "description": "TWO images in ONE call via the t2v "
+                                        "reference channel: previous shot's "
+                                        "last frame as @Image1 (the moment to "
+                                        "continue from) + this shot's keyframe "
+                                        "as @Image2 (target composition). SOFT "
+                                        "anchoring — composition-level "
+                                        "continuity without locking any exact "
+                                        "frame; for pixel-exact continuity use "
+                                        "ti2v_prev_last or flf2v_bridge."})
         if has_kf and "multi_i2v" in caps and hasattr(video_gen,
                                                       "multi_image_to_video"):
             menu.append({"name": "multi_image_fusion",
@@ -327,17 +333,23 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
 
     if strategy == "ti2v_prev_plus_keyframe":
         # 用户 4.(2.1)(1) 字面版:上镜尾帧 + 本镜 keyframe,一次调用两张图。
-        # 尾帧 = 首帧锚(像素级续接);keyframe = reference_images[0],prompt 里
-        # 按 seedance-2.0 文档用 @Image1 提及引导目标画面。
+        # 走【t2v + reference_images】通道(官方 schema 只在 t2v 端点验证过
+        # refs;i2v 端点 schema 无此字段——不按未验证 schema 硬编码,见
+        # docs/research/wavespeed_multi_image_2026_07.md §4)。语义是【软锚】:
+        # @Image1 = 续接起点的画面状态,@Image2 = 目标构图/外观——构图级
+        # 连续,不保证首帧像素级一致(要像素级用 ti2v_prev_last / flf2v_bridge)。
         last = _last_frame(Path(prev.video_path),
                            cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
         if last is not None and kf is not None:
-            cond.update(first_frame=str(last), reference_images=[str(kf)])
-            prompt2 = (spec.prompt + ". Match the composition and look of "
-                       "@Image1 (this shot's target keyframe).")
+            cond.update(reference_images=[str(last), str(kf)],
+                        anchoring="soft_t2v_refs")
+            prompt2 = (spec.prompt + ". Open on the exact scene state shown in "
+                       "@Image1 (the previous moment) and move toward the "
+                       "composition and look of @Image2 (this shot's target "
+                       "keyframe).")
             return Path(video_gen.generate(
                 prompt=prompt2, duration=spec.duration, out_path=out, fps=fps,
-                first_frame=last, reference_images=[kf], seed=seed)), cond
+                reference_images=[last, kf], seed=seed)), cond
         # 尾帧抽不出来 → 还有 keyframe 可锚(门控保证 kf 存在)
         strategy = "i2v_keyframe" if kf is not None else "t2v"
         cond = {"strategy": strategy,

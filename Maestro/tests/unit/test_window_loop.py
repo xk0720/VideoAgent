@@ -40,8 +40,10 @@ class _WindowVideoGen(MockVideoGenClient):
 
     def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
                  reference_images=None, seed=0, reference_video=None):
-        self.calls.append({"kind": "generate",
+        self.calls.append({"kind": "generate", "prompt": prompt,
                            "first_frame": str(first_frame) if first_frame else None,
+                           "reference_images": [str(p) for p in reference_images]
+                           if reference_images else None,
                            "reference_video": str(reference_video)
                            if reference_video else None})
         return super().generate(prompt, duration, out_path, fps=fps,
@@ -316,7 +318,8 @@ def test_multi_image_strategies_gated_and_executed(tmp_path, monkeypatch):
     assert "ti2v_prev_plus_keyframe" not in no_kf_names
     assert "multi_image_fusion" not in no_kf_names
 
-    # 执行 ti2v_prev_plus_keyframe:尾帧当首帧 + keyframe 进 reference_images
+    # 执行 ti2v_prev_plus_keyframe:走 t2v+refs 软锚(refs 只在 t2v 端点验证
+    # 过)——[尾帧, keyframe] 都进 reference_images,无 first_frame
     import maestro.pipeline.window_loop as wl
     prev_last = tmp_path / "prev_last.png"; prev_last.write_bytes(b"\x89PNG")
     monkeypatch.setattr(wl, "_last_frame", lambda v, o: prev_last)
@@ -325,10 +328,12 @@ def test_multi_image_strategies_gated_and_executed(tmp_path, monkeypatch):
         "ti2v_prev_plus_keyframe", e1, e0, spec, vg, tmp_path / "g",
         seed=0, fps=8, window_tail_s=2.0)
     assert cond["strategy"] == "ti2v_prev_plus_keyframe"
-    assert cond["first_frame"].endswith("prev_last.png")
-    assert cond["reference_images"] == [str(kf)]
+    assert cond["anchoring"] == "soft_t2v_refs"
+    assert cond["reference_images"] == [str(prev_last), str(kf)]
     call = vg.calls[-1]
-    assert call["first_frame"].endswith("prev_last.png")
+    assert call["first_frame"] is None                 # t2v 路线,无首帧
+    assert call["reference_images"] == [str(prev_last), str(kf)]
+    assert "@Image1" in call["prompt"] and "@Image2" in call["prompt"]
 
     # 执行 multi_image_fusion:[尾帧, keyframe] 进 images 数组
     _, cond2 = _generate_with_condition(

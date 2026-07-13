@@ -51,8 +51,8 @@ multi_image_fusion(多图融合:[尾帧, keyframe] 进 images 数组,无指定�
 | i2v | generate(first_frame=) | …/image-to-video(id 自动推导) | image 走上传 URL |
 | flf2v | frame_to_frame() | seedance-2.0 i2v(image+last_image)\| wavespeed-ai/wan-flf2v | 旧模型 duration∈{5,10}, size "832*480" |
 | ref_video | generate(reference_video=) | seedance-2.0 reference_videos 通道 | ≤3 视频、共 15s;legacy 模型无此通道(loud) |
-| ref_images | generate(reference_images=) | seedance-2.0 reference_images 通道 | ≤9 图;@Image 提及语法;与 reference_videos 可同用(12 文件总限) |
-| multi_i2v | multi_image_to_video() | kwaivgi/kling-v1.6-multi-i2v-standard | images 数组 ≤4;duration 5\|10;aspect 1:1\|16:9\|9:16 |
+| ref_images | generate(reference_images=) | seedance-2.0 **t2v** reference_images 通道 | ≤9 图;@ImageN 提及;i2v 端点无此字段(refs 被丢弃+告警);与 reference_videos 可同用(12 文件总限) |
+| multi_i2v | multi_image_to_video() | kwaivgi/**kling-video-o1**/reference-to-video(默认)\| kling-v1.6-multi-i2v(legacy) | images ≤7(带 video 参考时 ≤4,官方规则);duration 5\|10 |
 | edit | edit_video() | seedance-2.0/video-edit \| runwayml/gen4-aleph \| wan-2.1-14b-vace | gen4-aleph 只收 URL(base64→400);输入≤15s |
 | depth / style | depth_modify() / style_transfer() | vace task=depth / gen4-aleph | — |
 | extend | extend() | bytedance/seedance-2.0/video-extend | 整段视频条件,4-15s 增量 |
@@ -99,7 +99,9 @@ Demo:scripts/test_physics_review.py(全轨迹落盘)。
 - [x] seedance-2.0 `reference_images` 通道接线(≤9,@ImageN)— 2026-07-13 补
 - [x] kling-v1.6-multi-i2v(images≤4,multi_image_to_video)— 2026-07-13 补
 - [x] 窗口多图条件策略 ×2(ti2v_prev_plus_keyframe / multi_image_fusion)— 2026-07-13 补
+- [ ] kling-v3.0-4k i2v 双硬锚+element_list(唯一"首尾帧+身份"同 schema 路线)— 登记,待做
 - [ ] kling-elements-advanced(角色元素注册→element_list 引用)— 登记,待做
+- [ ] pixverse-c1 标签化 refs(subject/background + @ref_name,≤7 图)— 登记,待做
 - [ ] vidu reference-to-video / wan-2.7 多图 — 官方页未核验(UNVERIFIED),核验后再动
 - [ ] repaint 需分割后端(Sa2VA/SAM)— 挂起(GPU)
 - [ ] CaptioningTool 仍为确定性 mock — 挂起(非关键路径)

@@ -399,9 +399,11 @@ def test_wavespeed_reference_video_channel(tmp_path: Path, monkeypatch):
 
 
 def test_wavespeed_reference_images_channel(tmp_path: Path, monkeypatch):
-    """generate(reference_images=[...]) rides seedance-2.0 reference_images
-    (docs: ≤9 images, uploaded URLs, combinable with first frame). Over-limit
-    input caps at 9; legacy model ids raise honestly."""
+    """generate(reference_images=[...]) rides seedance-2.0 reference_images —
+    VERIFIED on the T2V endpoint only (≤9 images, @ImageN mentions). On i2v
+    (first_frame present) the refs are DROPPED with a loud warning (the i2v
+    schema exposes only image+last_image — refs there are UNVERIFIED, never
+    hardcoded). Legacy model ids raise honestly."""
     monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
     wave = build_video_gen({"name": "wavespeed"})
     calls = []
@@ -414,15 +416,17 @@ def test_wavespeed_reference_images_channel(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(wave, "_run_task", _fake_run_task)
     monkeypatch.setattr(wave, "_upload_media",
                         lambda p: f"https://fake.host/{Path(p).name}")
-    first = tmp_path / "prev_last.png"; first.write_bytes(b"\x89PNG")
+    prev_last = tmp_path / "prev_last.png"; prev_last.write_bytes(b"\x89PNG")
     kf = tmp_path / "kf.png"; kf.write_bytes(b"\x89PNG")
-    # first frame + one steering reference in ONE call (the ti2v_prev_plus_
-    # keyframe strategy's exact backend shape)
-    wave.generate("continue @Image1", 5.0, tmp_path / "o.mp4",
-                  first_frame=first, reference_images=[kf])
+
+    # T2V route: both images ride reference_images (the ti2v_prev_plus_keyframe
+    # strategy's exact backend shape)
+    wave.generate("open on @Image1, move toward @Image2", 5.0,
+                  tmp_path / "o.mp4", reference_images=[prev_last, kf])
     p0 = calls[0]["payload"]
-    assert p0["image"].endswith("prev_last.png")
-    assert p0["reference_images"] == ["https://fake.host/kf.png"]
+    assert calls[0]["model_id"] == "bytedance/seedance-2.0/text-to-video"
+    assert p0["reference_images"] == ["https://fake.host/prev_last.png",
+                                      "https://fake.host/kf.png"]
     # cap at 9
     many = []
     for i in range(11):
@@ -430,16 +434,23 @@ def test_wavespeed_reference_images_channel(tmp_path: Path, monkeypatch):
         many.append(f)
     wave.generate("x", 5.0, tmp_path / "o2.mp4", reference_images=many)
     assert len(calls[1]["payload"]["reference_images"]) == 9
-    # legacy family has no channel
+    # i2v route: refs dropped (schema-honest), first frame kept
+    wave.generate("continue", 5.0, tmp_path / "o3.mp4",
+                  first_frame=prev_last, reference_images=[kf])
+    p2 = calls[2]["payload"]
+    assert p2["image"].endswith("prev_last.png")
+    assert "reference_images" not in p2
+    # legacy family has no channel at all
     legacy = build_video_gen({"name": "wavespeed",
                               "model_id": "bytedance/seedance-v1-pro-t2v-480p"})
     with pytest.raises(RuntimeError, match="reference_images"):
-        legacy.generate("x", 5.0, tmp_path / "o3.mp4", reference_images=[kf])
+        legacy.generate("x", 5.0, tmp_path / "o4.mp4", reference_images=[kf])
 
 
 def test_wavespeed_multi_image_to_video(tmp_path: Path, monkeypatch):
-    """multi_image_to_video posts the images ARRAY to the Kling multi-i2v
-    route (docs: ≤4 images, duration {5,10} enum). Caps at 4; empty raises."""
+    """multi_image_to_video default = kling-video-o1/reference-to-video
+    (docs: ≤7 images, or ≤4 when a reference video is ALSO passed); the
+    legacy kling-v1.6 schema stays behind multi_i2v_model. Empty raises."""
     monkeypatch.setenv("WAVESPEED_API_KEY", "dummy-key")
     wave = build_video_gen({"name": "wavespeed"})
     calls = []
@@ -453,12 +464,29 @@ def test_wavespeed_multi_image_to_video(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(wave, "_upload_media",
                         lambda p: f"https://fake.host/{Path(p).name}")
     imgs = []
-    for i in range(6):
+    for i in range(9):
         f = tmp_path / f"m{i}.png"; f.write_bytes(b"\x89PNG")
         imgs.append(f)
+    # image-only → cap 7
     wave.multi_image_to_video("fuse", imgs, tmp_path / "o.mp4", duration=7)
-    assert calls[0]["model_id"] == "kwaivgi/kling-v1.6-multi-i2v-standard"
-    assert len(calls[0]["payload"]["images"]) == 4          # documented cap
+    assert calls[0]["model_id"] == "kwaivgi/kling-video-o1/reference-to-video"
+    assert len(calls[0]["payload"]["images"]) == 7
     assert calls[0]["payload"]["duration"] == 10            # {5,10} snap-up
+    assert "video" not in calls[0]["payload"]
+    # with a reference video → cap drops to 4 (documented rule)
+    vid = tmp_path / "prev_tail.mp4"; vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    wave.multi_image_to_video("fuse", imgs, tmp_path / "o2.mp4", video=vid)
+    assert len(calls[1]["payload"]["images"]) == 4
+    assert calls[1]["payload"]["video"].endswith("prev_tail.mp4")
+    # legacy schema via config
+    legacy = build_video_gen({"name": "wavespeed",
+                              "multi_i2v_model":
+                                  "kwaivgi/kling-v1.6-multi-i2v-standard"})
+    monkeypatch.setattr(legacy, "_run_task", _fake_run_task)
+    monkeypatch.setattr(legacy, "_upload_media",
+                        lambda p: f"https://fake.host/{Path(p).name}")
+    legacy.multi_image_to_video("fuse", imgs, tmp_path / "o3.mp4")
+    assert calls[2]["model_id"] == "kwaivgi/kling-v1.6-multi-i2v-standard"
+    assert len(calls[2]["payload"]["images"]) == 4
     with pytest.raises(ValueError):
-        wave.multi_image_to_video("x", [], tmp_path / "o2.mp4")
+        wave.multi_image_to_video("x", [], tmp_path / "o4.mp4")

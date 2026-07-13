@@ -32,19 +32,20 @@ shot 列表(storyboard 台账)。你的两类决策,都是从门控后的菜单�
 - `flf2v_bridge`   上镜尾帧 → 本镜 keyframe 双端锚定。首选:连续性+目标画面
                    两头都锁死(结尾也被锁死——想给模型留自由结尾时别用它)。
                    要求:上镜已生成 + 本镜有 keyframe + flf2v 能力。
-- `ti2v_prev_plus_keyframe` 两张图一次调用:上镜尾帧当【首帧】+ 本镜
-                   keyframe 进 reference_images(prompt 里用 @Image1 提及)。
-                   适合:要像素级续接上镜、又要向本镜目标画面靠拢,但【不想
-                   锁死结尾】(和 flf2v_bridge 的关键区别)。要求:上镜已生成
+- `ti2v_prev_plus_keyframe` 两张图一次调用(t2v+refs 软锚):上镜尾帧当
+                   @Image1(续接起点)+ 本镜 keyframe 当 @Image2(目标构图),
+                   都走 reference_images 通道(refs 只在 t2v 端点验证过)。
+                   适合:构图级续接 + 画面引导、且【不锁任何帧】;要像素级
+                   续接用 ti2v_prev_last 或 flf2v_bridge。要求:上镜已生成
                    + keyframe + ref_images 能力(seedance-2.0,≤9 图)。
 - `tiv2v_window`   上镜尾段视频当运动参考(+keyframe 当首帧)。适合:动作要
                    跨镜延续(生成器"看着"上镜的运动接着拍)。要求:ref_video 能力。
 - `ti2v_prev_last` 上镜尾帧当首帧 + 文本。适合:同场景顺时续接、但本镜没有
                    keyframe。
-- `multi_image_fusion` 多图融合(images 数组 ≤4,kling multi-i2v):无指定
-                   首帧,[上镜尾帧, 本镜 keyframe] 共同约束画面构成。适合:
-                   本镜要把多个元素融合成新构图、而不是从某帧像素级续接。
-                   要求:上镜已生成 + keyframe + multi_i2v 能力。
+- `multi_image_fusion` 多图融合(kling-video-o1,images ≤7;带视频参考时
+                   ≤4):无指定首帧,[上镜尾帧, 本镜 keyframe] 共同约束画面
+                   构成。适合:本镜要把多个元素融合成新构图、而不是从某帧
+                   像素级续接。要求:上镜已生成 + keyframe + multi_i2v 能力。
 - `i2v_keyframe`   本镜自己的 keyframe 当首帧。适合:换场景/硬切(不该和上镜
                    连续时,故意不用上镜的锚)。
 - `t2v`            纯文本。兜底,或刻意的全新开场。

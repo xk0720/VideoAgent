@@ -212,19 +212,35 @@ class WaveSpeedClient(BaseVideoGenClient):
                     "reference-video conditioning needs the seedance-2.0 family")
             payload["reference_videos"] = [self._upload_media(reference_video)]
         if reference_images:
-            # seedance-2.0 reference_images channel (docs-verified: ≤9 images,
-            # referenced in the prompt as @Image1…@ImageN, combinable with
-            # image/last_image and reference_videos up to 12 files total).
+            # seedance-2.0 reference_images channel. VERIFIED (2026-07, official
+            # model pages) ONLY on the TEXT-to-video endpoint: ≤9 images,
+            # @Image1…@ImageN prompt mentions, combinable with reference_videos
+            # (12 files total). The i2v endpoint's schema lists ONLY
+            # image+last_image (its README hints at refs but the schema does
+            # not expose the field — UNVERIFIED, so we do NOT hardcode it:
+            # docs/research/wavespeed_multi_image_2026_07.md §4).
             if not self._is_range_family(model_id):
                 raise RuntimeError(
                     f"model '{model_id}' has no reference_images channel — "
                     "multi-image conditioning needs the seedance-2.0 family "
-                    "(or use multi_image_to_video for the Kling multi-i2v route)")
-            refs = list(reference_images)[:9]
-            if len(reference_images) > 9:
-                log.info("reference_images capped to 9 (got %d) — seedance-2.0 "
-                         "documented limit", len(reference_images))
-            payload["reference_images"] = [self._upload_media(p) for p in refs]
+                    "(or use multi_image_to_video for the Kling route)")
+            if is_i2v:
+                # Honest degradation, loudly logged: refs are dropped rather
+                # than posted against an unverified i2v schema. Callers that
+                # NEED refs use the t2v route (no first_frame) or
+                # multi_image_to_video.
+                log.warning(
+                    "reference_images dropped: the seedance-2.0 i2v schema "
+                    "exposes only image+last_image (refs verified on t2v only)"
+                )
+            else:
+                refs = list(reference_images)[:9]
+                if len(reference_images) > 9:
+                    log.info("reference_images capped to 9 (got %d) — "
+                             "seedance-2.0 documented limit",
+                             len(reference_images))
+                payload["reference_images"] = [self._upload_media(p)
+                                               for p in refs]
         payload.update(self.config.get("extra_params") or {})
 
         return self._run_task(model_id, payload, out_path)
@@ -236,30 +252,52 @@ class WaveSpeedClient(BaseVideoGenClient):
         out_path: Path,
         duration: float = 5,
         seed: int = 0,
+        video: Optional[Path] = None,
     ) -> Path:
-        """Multi-image FUSION i2v — capability "multi_i2v". One request takes an
-        `images` ARRAY (≤4, docs-verified) and composes ONE video consistent
-        with all of them (scene composition + character consistency), e.g.
+        """Multi-image REFERENCE-to-video — capability "multi_i2v". One request
+        takes an `images` ARRAY and composes ONE video consistent with all of
+        them (identity/scene consistency; the prompt drives the motion), e.g.
         [previous shot's last frame, this shot's keyframe, identity anchor].
-        Default route kwaivgi/kling-v1.6-multi-i2v-standard (the only array-
-        input i2v verified on WaveSpeed 2026-07); configurable via
-        `multi_i2v_model`. Distinct from `reference_images` (steering refs on
-        top of a first-frame anchor): here the images ARE the condition, with
-        no designated first frame."""
+
+        Default route kwaivgi/kling-video-o1/reference-to-video (docs-verified
+        2026-07: ≤7 images, or ≤4 when a reference `video` is ALSO passed —
+        "If the input reference parameters include a video, then the number of
+        reference images … will be reduced to 4"). The legacy
+        kwaivgi/kling-v1.6-multi-i2v-standard schema (≤4 images, no video) is
+        kept behind `multi_i2v_model`. Distinct from `reference_images`
+        (steering refs on the seedance t2v route): here the images ARE the
+        condition, with no designated first frame."""
         if not images:
             raise ValueError("multi_image_to_video needs at least one image")
         model = self.config.get("multi_i2v_model",
-                                "kwaivgi/kling-v1.6-multi-i2v-standard")
-        imgs = list(images)[:4]
-        if len(images) > 4:
-            log.info("multi_image_to_video: images capped to 4 (got %d) — "
-                     "documented Kling multi-i2v limit", len(images))
+                                "kwaivgi/kling-video-o1/reference-to-video")
+        if "kling-v1.6" in model:                       # legacy schema
+            imgs = list(images)[:4]
+            if len(images) > 4:
+                log.info("multi_image_to_video: images capped to 4 (got %d) — "
+                         "kling-v1.6 documented limit", len(images))
+            payload = {
+                "prompt": prompt,
+                "images": [self._upload_media(p) for p in imgs],
+                "duration": self._snap_duration(duration, model),  # {5,10}
+                "aspect_ratio": self.config.get("aspect_ratio", "16:9"),
+            }
+            return self._run_task(model, payload, out_path)
+        cap = 4 if video is not None else 7
+        imgs = list(images)[:cap]
+        if len(images) > cap:
+            log.info("multi_image_to_video: images capped to %d (got %d) — "
+                     "kling-video-o1 documented limit%s", cap, len(images),
+                     " with a reference video" if video is not None else "")
         payload = {
             "prompt": prompt,
             "images": [self._upload_media(p) for p in imgs],
-            "duration": self._snap_duration(duration, model),   # {5,10} enum
+            "duration": self._snap_duration(duration, model),      # {5,10}
             "aspect_ratio": self.config.get("aspect_ratio", "16:9"),
+            "keep_original_sound": False,
         }
+        if video is not None:
+            payload["video"] = self._upload_media(video)
         return self._run_task(model, payload, out_path)
 
     @staticmethod
