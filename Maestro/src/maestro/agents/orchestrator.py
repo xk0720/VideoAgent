@@ -318,7 +318,11 @@ class OrchestratorAgent:
             "tools": menu,
             "history": [
                 {"tool": d.get("tool"), "args": d.get("args", {}),
-                 "outcome": outcome, "new_total": new_total}
+                 "outcome": outcome, "new_total": new_total,
+                 # 盲测评委指出的具体问题(有则给):被拒时它说明差在哪,
+                 # brain 下一步据此换打法而不是瞎试。
+                 **({"verifier_issues": d["verifier_issues"]}
+                    if d.get("verifier_issues") else {})}
                 for (d, outcome, new_total) in history
             ],
         }
@@ -645,6 +649,9 @@ class OrchestratorAgent:
         else:  # unknown tool (should be caught in decide) — treat as no-op
             return None
 
+        # 修复出的候选继承本 shot 的生成条件(评审要拿条件对照评贴合度)。
+        if getattr(cand, "conditioning", None) is None:
+            cand.conditioning = getattr(best, "conditioning", None)
         board.review(cand, spec, asset_memory, fps)
         self._log("execute",
                   {"shot_idx": spec.shot_idx, "tool": tool, "args": args},

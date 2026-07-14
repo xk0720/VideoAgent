@@ -1,10 +1,11 @@
-# Maestro Tool Library — 完整盘点(2026-07-13)
+# Maestro Tool Library — 完整盘点(2026-07-14)
 
 > 用户令:"写框架之前先把所有 tool library 准确调研、建立完整;缺什么补什么。"
 > 本文是权威清单:每个工具 = 谁调用 / 干什么 / 真实后端与端点 / 门控条件 /
-> 诚实降级行为。分五层:①修复 brain 工具盘 ②窗口 brain 策略盘 ③生成后端
-> 能力 ④确定性工具箱 ⑤物理测量链。真实端点全部经官方文档核验
-> (docs/research/wavespeed_api_reference_2026_07.md 及后续多图调研)。
+> 诚实降级行为。分六层:①修复 brain 工具盘 ②窗口 brain 策略盘 ③生成后端
+> 能力 ④确定性工具箱 ⑤物理测量链 ⑥AI 评审/裁决链(原生视频)。真实端点
+> 全部经官方文档核验(docs/research/wavespeed_api_reference_2026_07.md
+> 及后续多图调研)。
 
 ---
 
@@ -101,6 +102,21 @@ certify(可靠性门,不合格降级 VLM 层)→ laws.fit_best_law(静止/匀速
 自由重力)+ 4 异常检测器(瞬移/空中反向/能量增/加加速度尖峰)→
 PhysicsVerdict{entity, frame_range, severity, source=law_verifier}。
 Demo:scripts/test_physics_review.py(全轨迹落盘)。
+
+## ⑥ AI 评审/裁决链(原生视频,models/mllm_backends.py,2026-07-14)
+
+| 工具 | 谁调用 | 干什么 |
+|---|---|---|
+| GeminiVLM.review_shot(clip, spec, fps) | 两个 critic 共享(U6 单次上传) | 整段视频 inline_data + 生成 prompt + 全部条件件(首/尾帧图、参考图、参考视频,带角色标签)一次 generateContent;产出 checks[](逐事实/逐条件 yes-no)+ issues[](type frame/segment/global + 秒级时间片 + category + entity + severity + problem/reason/suggestion + check_ref);按 (path, mtime) 缓存 |
+| GeminiVLM.assess_semantic / assess_physics | SemanticCritic / PhysicsCritic | 切同一份 review_shot 包:非物理项→checklist(失败项经 check_ref 继承定位+fix),physics issues→PhysicsVerdict(秒→帧按 fps 换算,physics_mode 映射失败→UNEXPLAINED) |
+| GeminiVLM.verify_pair(cand, base, prompt, repair_context, seed) | VerifierAgent 主闸 | NEWTON 式盲测:随机槽位 Video 1/2 → 四维带符号分(semantic/physics/temporal/visual,-5..+5)+ 总分 + defect_present 探针 → 回映射;accept 当且仅当 总分≥+1 且 min(维度)≥-2;败方 issues 回灌 brain |
+| GeminiVLM.compare(a, b, spec) | 锦标赛初选 | 双视频原生输入 {"better":1/2/0};桩文件退回基类行为 |
+| 诚实闸 `_looks_like_video` | 以上全部 | 魔数校验:mock 文本桩→静默无裁决;真视频缺 GEMINI_API_KEY→大声 RuntimeError;>18MB→ffmpeg 转 360p(仍原生视频,永不抽帧) |
+| OpenAICompatVLM(备选) | 同上各 critic | chat/completions 无视频通道 → 抽帧路径,诚实降级(文档注明) |
+
+Verifier 闸门顺序(agents/verifier.py):verify_pair 主闸(conclusion 定
+accept/reject,verdict 挂 candidate.verifier_verdict)→ None 时大声记
+`blind_ab_unavailable` → 指标闸兜底(单调硬规则 + 边际双向 compare 确认)。
 
 ## 缺口台账(发现即登记,补齐即划掉)
 

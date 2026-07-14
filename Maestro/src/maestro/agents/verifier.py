@@ -44,11 +44,44 @@ class VerifierAgent(BaseAgent):
     def is_better(
         self, candidate: CandidateClip, best: CandidateClip | None,
         eps: float = 1e-4, spec: Optional[ShotSpec] = None,
+        repair_context: Optional[dict] = None,
     ) -> bool:
         if best is None:
             return True
         cand_total = candidate.metric_scores.get("weighted_total", 0.0)
         best_total = best.metric_scores.get("weighted_total", 0.0)
+
+        # ── PRIMARY gate (2026-07-14 ruling): NEWTON-style blind A/B when the
+        # judge reads native video (GeminiVLM.verify_pair). Accept iff the
+        # candidate is judged STRICTLY better overall (score ≥ +1) AND no
+        # dimension badly regressed (min dim ≥ -2 — the monotonic contract,
+        # now dimension-aware). The verdict (notes/score/conclusion/issues)
+        # is attached to the candidate for the ledger + the brain's next
+        # turn. verify_pair returning None (inline/transport failure) falls
+        # through to the metric gate below, loudly.
+        if (self.judge is not None and spec is not None
+                and hasattr(self.judge, "verify_pair")):
+            verdict = self.judge.verify_pair(
+                str(candidate.video_path), str(best.video_path), spec.prompt,
+                repair_context=repair_context,
+                seed=getattr(candidate, "revision", 0))
+            if verdict is not None:
+                accepted = verdict.get("conclusion") == "accept"
+                candidate.verifier_verdict = verdict
+                self._log(
+                    "verify",
+                    {"cand_total": round(cand_total, 4),
+                     "best_total": round(best_total, 4),
+                     "ab_score": verdict.get("score"),
+                     "dim_scores": verdict.get("dim_scores"),
+                     "target_fixed": verdict.get("target_fixed")},
+                    {"accepted": accepted, "via": "blind_ab",
+                     "summary": verdict.get("summary", "")},
+                )
+                return accepted
+            self._log("verify", {"cand_total": round(cand_total, 4)},
+                      {"via": "blind_ab_unavailable",
+                       "note": "verify_pair returned None — metric gate"})
         # Defect count (tie-break only): every physics verdict also has a
         # MIRRORED failed checklist item appended by the critics, so counting
         # failed items + verdicts double-counted each physics defect. Count

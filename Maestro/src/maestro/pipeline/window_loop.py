@@ -1069,6 +1069,16 @@ def generate_movie_windowed(
             clip = CandidateClip(shot_idx=spec.shot_idx,
                                  video_path=Path(video_path), revision=0)
             clip.keyframes = list(cand_keyframes)
+            # 评审上下文 = 生成条件(原生视频评审的核心):reviewer 会拿这些
+            # 条件图/参考视频和成片一起看,评"是否贴合条件"。
+            clip.conditioning = {
+                "video_prompt": brain_prompt or spec.prompt,
+                "images": [{"path": im.get("path"), "role": im.get("role")}
+                           for im in entry.images
+                           if im.get("path") and Path(im["path"]).exists()],
+                "reference_video": (cond.get("reference_video")
+                                    or cond.get("video")),
+            }
             initial.append(clip)
 
         # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain 修复

@@ -256,3 +256,108 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
 - **Q-C**:背景图的默认用法按"首镜当首帧、后续当参考/编辑底图"来?
 - **Q-D**:素材入库描述的优先级(用户描述 > VLM caption > 文件名)同意?
   VLM caption 需要消耗 QWEN key。
+
+
+---
+
+## 追加需求(2026-07-14,已裁决并实现):原生视频评审 + NEWTON 式盲测 Verifier
+
+### R-A:GeminiVLM 改为原生视频输入(废除抽帧)
+
+- A1 传输:评审调用把【整段视频】以 inline_data(video/mp4, base64)喂给
+  Gemini(NEWTON _video_part 形态:每个媒体 = 一段文本标签 + 一段
+  inline_data);删除 GeminiVLM 的抽帧路径。加 NEWTON 同款重试
+  (3 次,指数退避)。
+- A2 评审上下文 = 生成条件:prompt 部件按顺序装载 ——
+  [SHOT VIDEO 本体] + [CONDITION: first/last 关键帧图(如用)] +
+  [CONDITION: 参考图(如用)] + [CONDITION: 上镜尾段参考视频(如用)] +
+  文本指令(shot 场景描述 + 生成时的 video_prompt)。
+  语义评审的定义升级为:视频是否贴合【文本 + 全部多模态条件】——
+  条件贴合度成为显式评审维度(每个条件出一条 checklist 项)。
+  实现路径:窗口循环把 clip.conditioning = {images(role), reference_video,
+  video_prompt} 挂在候选上,评审后端读取(mock 不受影响)。
+- A3 输出契约不变(checklist 项 PASS/FAIL + fix + 定位;物理 verdict
+  mode/severity + 定位),下游 DefectReport/修复管线零改动。定位单位改为
+  【秒】(原生视频下 Gemini 报时间戳比帧号可靠),后端按 fps 换算回帧。
+- A4 compare()(锦标赛用)同步改为双视频原生输入。
+- A5 OpenAICompatVLM(gpt-4o/qwen 备选)保留抽帧路径(chat/completions
+  无视频通道),文档注明差异。
+- A6 体积护栏:inline 上限 ~18MB(NEWTON MAX_INLINE_MB)。超限视频先用
+  ffmpeg 转码压到限内(480p/低码率,仍是原生视频);ffmpeg 缺失才退回
+  抽帧,并大声记日志。【U1 待批】
+
+### R-B:Verifier 改为 NEWTON 式盲测 A/B(修改版 vs 原版)
+
+- B1 机制照搬 NEWTON verify_relative:两段视频随机顺序、只标 Video 1/2、
+  评委不知来源;输出带符号分 [-10,+10] + 各维度一句话 + 输家的 issues
+  列表 + summary;按随机分配把分数映射回 candidate-vs-baseline。
+- B2 评审维度(NEWTON 是 SA+PC 两维;按"越全面越好"扩到五维,【U5 待批】):
+  1. Semantic adherence — 是否符合场景描述的事实(数量/颜色/材质/身份/
+     场景/动作顺序);
+  2. Physical correctness — 运动物理合理性(重力/惯性/碰撞/接触;无穿模/
+     漂浮/瞬移/因果乱序);
+  3. Condition adherence — 是否贴合提供的关键帧/参考图/参考视频(我们的
+     增量维度,NEWTON 没有);
+  4. Temporal consistency — 时序一致性(无闪烁/身份漂移/背景跳变);
+  5. Visual quality — 画面质量(伪影/肢体畸变/纹理崩坏)。
+- B3 接入点(【U2 待批,推荐方案一】):
+  方案一(推荐):盲测 A/B 成为 Verifier 的【主闸门】——修复候选 vs 当前
+  最优,remapped score ≥ +1 才接受(0 = 保守拒绝,保持单调精神);
+  weighted_total 继续计算并记台账,但只作观测不再裁决。
+  方案二:保持现状(指标主闸 + 边际盲测确认),仅把确认器升级为完整
+  五维指令。
+- B4 输家 issues 回灌:评委给出的具体问题列表进 brain 下一回合的上下文
+  (与 review 简报合流),NEWTON 的 "objective results feed back" 同款。
+- B5 停止条件不变:converged 仍由 checklist 全过判定;patience 统计的
+  "被拒"改为 A/B 拒绝。【U3 确认】
+
+### 用户裁决(2026-07-14)与落地记录
+
+- **U1** 超限视频 → ffmpeg 转码压体积。实现:MAX_INLINE_MB=18,超限
+  `scale=-2:360 -crf 33 -an` 转码为 `*_inline360.mp4`(仍是原生视频,
+  永不退回抽帧;ffmpeg 缺失/失败 → 大声日志 + 本次拒评)。
+- **U2** → 方案一:盲测 A/B 是 Verifier 的【主闸门】。verify_pair 输出
+  至少含各维 notes + 总分 + conclusion(参考 NEWTON,外加创新——见下);
+  weighted_total 只观测记账。verify_pair 返回 None(传输失败/mock 桩)
+  才落回指标闸,且大声记 `blind_ab_unavailable`。
+- **U3** 确认:converged 仍由 checklist 全过判定;patience 统计 A/B 拒绝。
+- **U4** 确认:VLM 报秒,后端按探测到的 fps 换算回帧。
+- **U5** Reviewer 五维保留但定位为【参考框架】;核心交付是"有价值的问题
+  定位":issues[] 每条 = type(frame/segment/global)+ 秒级时间片 +
+  category(semantic/condition/physics/temporal/visual)+ entity +
+  severity + problem + reason +(suggestion)+ check_ref(挂回失败的
+  check)。suggestion 描述"修好后内容长什么样",永不点名工具——工具
+  选择归 brain。Verifier 用四维:semantic/physics/temporal/visual
+  (条件贴合度归 reviewer 管——单片评审才有条件可对照)。
+- **U6** → 直接合并:review_shot 一次上传服务语义+物理两个 critic
+  (多模态大模型本来就同时看得到物理),按 (path, mtime) 缓存;
+  assess_semantic / assess_physics 都切同一份包。
+
+### Verifier 创新点(在 NEWTON verify_relative 机制之上)
+
+1. 各维带符号分(-5..+5)独立输出,"修了 A 坏了 B"必须在对应维度上
+   显式为负,不许平均掉;
+2. 缺陷探针:评委逐视频回答"目标缺陷是否仍在" → target_fixed
+   (本次修复到底修没修它声称要修的东西);
+3. 维度不回退守卫:accept 当且仅当 总分 ≥ +1 且 min(维度分) ≥ -2
+   (单调契约的维度化);
+4. 败方 issues 回灌 brain 下一回合历史(NEWTON "objective results
+   feed back" 同款,brain 据此不重复被拒动作)。
+
+### 落地位置
+
+- `models/mllm_backends.py`:`_SHOT_REVIEW_INSTRUCTION` /
+  `_VERIFY_PAIR_INSTRUCTION` 模板;GeminiVLM.review_shot(合并缓存)、
+  verify_pair(盲测随机槽位 + 回映射)、compare(双视频原生)、
+  `_looks_like_video` 诚实闸(mock 文本桩静默、真视频缺 key 则
+  RuntimeError)。
+- `agents/verifier.py`:verify_pair 主闸 + 指标闸兜底;verdict 挂
+  candidate.verifier_verdict。
+- `pipeline/window_loop.py`:clip.conditioning = {video_prompt,
+  images(role), reference_video} 挂到每个候选,评审调用据此装配
+  条件对照 parts。
+- `pipeline/generate_loop.py` / `agents/orchestrator.py`:repair_context
+  传给闸门;verdict 的 issues/score 进 brain 历史。
+- 测试:`tests/unit/test_native_video_review.py`(单次上传断言、
+  checks/issues→checklist/verdict 映射、秒→帧、盲测回映射与接受规则、
+  A/B 主闸与指标兜底)。

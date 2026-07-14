@@ -54,14 +54,15 @@ def test_gemini_vlm_dispatch_and_loud_without_key(tmp_path, monkeypatch):
 
     clip = CandidateClip(shot_idx=0, video_path=tmp_path / "x.mp4")
     spec = ShotSpec(shot_idx=0, duration=1.0, prompt="a ball falls")
-    # 无帧(桩文件)→ 诚实沉默,不需要 key
+    # 文本桩(魔数嗅探不过)→ 诚实沉默,不需要 key,不碰网络
     (tmp_path / "x.mp4").write_text("MOCK VIDEO")
     assert vlm.assess_semantic(clip, spec) == []
-    # 有帧 + 无 key → loud(经 monkeypatch 伪造采样帧命中 key 检查)
-    monkeypatch.setattr(vlm, "_sample_frames",
-                        lambda c, k=None: [np.zeros((4, 4, 3), dtype="uint8")])
+    # 真视频魔数 + 无 key → loud(原生视频路径命中 key 检查)
+    real = tmp_path / "real.mp4"
+    real.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+    clip2 = CandidateClip(shot_idx=0, video_path=real)
     with pytest.raises(RuntimeError, match="API key"):
-        vlm.assess_semantic(clip, spec)
+        vlm.assess_semantic(clip2, spec)
     # caption:非图片/缺文件 → ""(诚实),不碰网络
     assert vlm.caption_image(tmp_path / "nope.png") == ""
 

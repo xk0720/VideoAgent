@@ -37,12 +37,19 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Optional
 
 from ..logging_utils import get_logger
 from ..physics.failure_modes import suggest_intervention
 from ..physics.track_extractor_backends import _decode_frames
-from ..types import CandidateClip, PhysFailureMode, PhysicsVerdict, ShotSpec
+from ..types import (
+    CandidateClip,
+    ChecklistItem,
+    PhysFailureMode,
+    PhysicsVerdict,
+    ShotSpec,
+)
 from .mllm import BaseMLLMClient
 
 log = get_logger(__name__)
@@ -413,24 +420,152 @@ class OpenAICompatVLM(BaseMLLMClient):
 
 
 # name (or its provider prefix) → backend class
+
+# ─────────────────────────────────────────────────────────────────────────
+# REVIEWER instruction (merged single-call shot review, native video).
+# Design goal (user ruling 2026-07-14): the output must be PROBLEM
+# LOCALIZATIONS an automated repair Brain can consume — a wrong FRAME, a
+# wrong SEGMENT, or a global problem; each with WHERE + reason +
+# (suggestion). The five dimensions are the checklist the reviewer works
+# through; the LOCALIZED ISSUES are the product.
+# ─────────────────────────────────────────────────────────────────────────
+_SHOT_REVIEW_INSTRUCTION = """You are the shot REVIEWER of an automated \
+video-generation system. Above you were shown THE SHOT VIDEO under review \
+and, when provided, the CONDITIONS it was generated from (first/last-frame \
+images, reference images, a reference video whose motion it continues). \
+The shot is meant to depict:
+"{shot_prompt}"{gen_prompt_block}
+{conditions_block}
+
+Work through FIVE dimensions:
+1. Semantic adherence — does the video show the described facts (objects, \
+counts, colors, identities, setting, the action and its ORDER)?
+2. Condition adherence — is it consistent with EACH provided condition \
+(same subject as the reference images; opens on the first-frame image; \
+continues the reference video's motion seamlessly)?
+3. Physical correctness — is all motion physically plausible (gravity, \
+inertia, momentum, collisions, contact) with no interpenetration, floating, \
+teleporting, objects vanishing/appearing, or broken cause-effect order?
+4. Temporal consistency — no flicker, no identity/appearance drift, no \
+background jumps within the clip.
+5. Visual quality — no artifacts, deformed anatomy, smeared textures, \
+broken geometry.
+
+Your product is the LOCALIZED ISSUE LIST — it drives an automated repair \
+agent, so vague comments are useless. Every issue must say:
+- "type": "frame" (one instant is wrong) | "segment" (a span is wrong) | \
+"global" (the whole clip);
+- "time_start_s"/"time_end_s": WHERE, in seconds from clip start (for \
+"frame" use a tight ~0.2 s window; for "global" span the whole clip);
+- "category": "semantic" | "condition" | "physics" | "temporal" | "visual";
+- "physics_mode" (ONLY when category="physics"): "gravity_inertia" | \
+"collision" | "conservation" | "object_permanence" | "penetration" | \
+"fluid" | "unexplained";
+- "entity": the object/subject concerned ("the glass"; "" if none);
+- "severity": 0.0-1.0 — how badly it breaks the shot;
+- "problem": ONE concrete sentence — what exactly is wrong THERE;
+- "reason": WHY it is wrong — which stated fact, provided condition, or \
+physical law it violates;
+- "suggestion": what CORRECT looks like there (strongly encouraged);
+- "check_ref": the index into `checks` of the failed check this issue \
+explains, or -1 if none.
+
+Also return "checks": the concrete yes/no checks you performed — one per \
+stated fact of the description and one per provided condition — each \
+{{"question": str, "passed": true|false}}. EVERY failed check MUST have a \
+matching issue (via check_ref) that localizes it.
+
+Judge ONLY from observable evidence; do not invent requirements; if the \
+video is flawless return an empty issues list. You are ONLY a reviewer: \
+describe problems — do NOT recommend repair tools or next steps; that \
+decision belongs to another agent.
+
+Reply with ONLY a JSON object, no markdown fence:
+{{"checks": [{{"question": str, "passed": bool}}],
+ "issues": [{{"type": str, "time_start_s": float, "time_end_s": float,
+ "category": str, "physics_mode": str, "entity": str, "severity": float,
+ "problem": str, "reason": str, "suggestion": str, "check_ref": int}}],
+ "summary": "one sentence overall"}}"""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# VERIFIER instruction (blind A/B, repaired vs original). Fundamentally a
+# DIFFERENT question from the reviewer's: not "what is wrong with this
+# video" but "did the repair make it BETTER without breaking anything".
+# NEWTON mechanics (blind slots, signed score, conservative 0) + our
+# additions: per-dimension signed scores and a defect-presence probe.
+# ─────────────────────────────────────────────────────────────────────────
+_VERIFY_PAIR_INSTRUCTION = """You are an impartial judge in a BLIND A/B \
+test of a video REPAIR. One of the two videos above is a repaired revision \
+of the other — you are NOT told which; judge purely from what you observe. \
+Both attempt the same shot:
+"{shot_prompt}"
+{target_block}
+
+Score FOUR dimensions, each a signed integer in [-10, +10] = how much \
+BETTER Video 2 is than Video 1 on that dimension (0 = no clear difference; \
+negative = Video 2 is worse):
+- "semantic": which better matches the shot's stated facts (objects, \
+counts, identities, setting, action and its order)?
+- "physics": which moves more plausibly (gravity, inertia, collisions, \
+contact; no interpenetration / floating / teleporting / vanishing)?
+- "temporal": which is more internally consistent (no flicker, identity \
+drift, background jumps)?
+- "visual": which looks cleaner (no artifacts, deformations, smearing)?
+
+Also output the overall "score" in [-10, +10] (same convention), and — if \
+a target defect was stated above — "defect_present": whether EACH video \
+exhibits that defect.
+
+Be conservative: use 0 when there is no clear difference. A repair that \
+fixes one thing but clearly breaks another dimension must show that as a \
+negative score on the broken dimension — do not average it away. Judge \
+only observable evidence. You are ONLY a judge: score and describe; do NOT \
+recommend tools or next steps.
+
+Reply with ONLY a JSON object, no markdown fence:
+{{"dim_scores": {{"semantic": int, "physics": int, "temporal": int, \
+"visual": int}},
+ "notes": {{"semantic": "one sentence", "physics": "one sentence", \
+"temporal": "one sentence", "visual": "one sentence"}},
+ "score": int,
+ "defect_present": {{"video1": bool, "video2": bool}},
+ "issues": ["short concrete strings — what the WORSE video still gets wrong"],
+ "summary": "one sentence overall"}}"""
+
+
 class GeminiVLM(OpenAICompatVLM):
-    """Gemini as the review VLM (any video-reading multimodal model works —
-    user's pick: gemini-3.5-flash). Reuses EVERY prompt/parse/honesty rule of
-    OpenAICompatVLM and overrides only the TRANSPORT: Google's native
-    `generateContent` API instead of OpenAI-style /chat/completions
-    (`POST {base}/v1beta/models/{model}:generateContent`, frames as
-    inline_data JPEG parts — the shape NEWTON's verifier uses).
+    """Gemini as the review VLM over NATIVE VIDEO input (2026-07-14 ruling:
+    frame sampling is FORBIDDEN here — gemini-3.5-flash reads video directly).
+
+    Transport = Google generateContent (`POST {base}/v1beta/models/{model}:
+    generateContent`), media as labeled text + inline_data parts — exactly
+    NEWTON's shape (arXiv:2605.18396 GeminiVerifierCore). Three jobs:
+
+      • review_shot   — ONE merged call per clip (U6 ruling: one upload):
+                        the SHOT VIDEO + its generation CONDITIONS (key
+                        images / reference video) + the shot text → localized
+                        issues (frame/segment/global + reason + suggestion,
+                        Brain-consumable) + the yes/no checks performed.
+                        assess_semantic / assess_physics SLICE this cached
+                        result — the critics' contracts are unchanged.
+      • verify_pair   — NEWTON-style BLIND A/B for the Verifier: repaired vs
+                        original, randomized slots, 4 dimensions with
+                        per-dimension signed scores (our innovation over
+                        NEWTON's single score) + a defect-presence probe.
+      • compare       — light pairwise pick for the tournament (bidirectional
+                        de-biasing happens in the caller).
 
     config (models.mllm):
       name: "gemini"
       model: "gemini-3.5-flash"     # or $GEMINI_MODEL
       api_key: ...                  # or $GEMINI_API_KEY
       base_url: ...                 # or $GEMINI_BASE_URL (official default)
-      n_frames: 4
+    """
 
-    Auth: both `x-goog-api-key` (official Google API) and `Authorization:
-    Bearer` (Gemini-compatible proxy gateways) are sent — whichever the
-    endpoint expects, it finds it."""
+    # NEWTON's inline budget: request bodies above this get rejected. Videos
+    # over the limit are TRANSCODED down (still native video, never frames).
+    MAX_INLINE_MB = 18.0
 
     def __init__(self, name: str = "gemini", config: Optional[dict] = None):
         self.name = name
@@ -443,7 +578,10 @@ class GeminiVLM(OpenAICompatVLM):
                       or "gemini-3.5-flash")
         self.api_key = self.config.get("api_key") or os.getenv("GEMINI_API_KEY")
         self.max_tokens = int(self.config.get("max_tokens", 1024))
-        self.n_frames = int(self.config.get("n_frames", 4))
+        self.max_retries = int(self.config.get("max_retries", 3))
+        # merged-review cache: (path, mtime_ns) → parsed review package.
+        # One upload serves BOTH critics (semantic + physics) per clip.
+        self._review_cache: dict = {}
 
     def _require_key(self) -> str:
         if not self.api_key:
@@ -456,69 +594,409 @@ class GeminiVLM(OpenAICompatVLM):
 
     def _headers(self) -> dict:
         key = self._require_key()
-        # return {"Content-Type": "application/json",
-        #         "x-goog-api-key": key,               # official Google API
-        #         "Authorization": f"Bearer {key}"}    # proxy gateways
         return {
-            "x-goog-api-key": key, # official Google API
+            "x-goog-api-key": key,  # official Google API
             "Content-Type": "application/json",
         }
 
     def _generate(self, parts: list) -> Optional[str]:
-        """One generateContent call → reply text, or None (caller degrades)."""
+        """One generateContent call with NEWTON-style retries (backoff) →
+        reply text, or None (caller degrades to no-verdict)."""
+        import time as _time
+
         import requests  # lazy
 
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
         payload = {"contents": [{"role": "user", "parts": parts}],
                    "generationConfig": {"temperature": 0}}
-        try:
-            resp = requests.post(url, json=payload, headers=self._headers(),
-                                 timeout=float(self.config.get("timeout", 120)))
-            if resp.status_code >= 400:
-                log.warning("GeminiVLM(%s model=%s) HTTP %d: %s — no verdict "
-                            "emitted", self.name, self.model,
-                            resp.status_code, resp.text[:500])
+        headers = self._headers()   # 缺 key = 配置错误,必须响亮 —— 在重试
+        # 循环【之外】检查,不许被 except 吞成"无判定"静默降级。
+        last = ""
+        for attempt in range(max(1, self.max_retries)):
+            try:
+                resp = requests.post(
+                    url, json=payload, headers=headers,
+                    timeout=float(self.config.get("timeout", 180)))
+                if resp.status_code >= 400:
+                    last = f"HTTP {resp.status_code}: {resp.text[:500]}"
+                else:
+                    cands = resp.json().get("candidates") or []
+                    for part in reversed(
+                        (cands[0].get("content") or {}).get("parts", [])
+                        if cands else []
+                    ):
+                        if part.get("text"):
+                            return str(part["text"])
+                    last = "no text part in response"
+            except Exception as exc:
+                last = repr(exc)
+            if attempt + 1 < self.max_retries:
+                _time.sleep(min(10, 1 + 2 * attempt))
+        log.warning("GeminiVLM(%s model=%s) failed after %d attempt(s): %s — "
+                    "no verdict emitted", self.name, self.model,
+                    self.max_retries, last)
+        return None
+
+    # ── media parts (NEWTON _video_part shape: label text + inline_data) ──
+    def _fit_video_for_inline(self, path) -> Optional[str]:
+        """Path of an inline-able video: the original when under the budget,
+        else an ffmpeg 360p transcode written NEXT TO it (still native video —
+        frames are forbidden). None when nothing fits (caller skips the part
+        with a loud log; review degrades to no-verdict, never to frames)."""
+        import shutil
+        import subprocess
+        from pathlib import Path as _P
+
+        p = _P(str(path))
+        if not p.is_file():
+            return None
+        if p.stat().st_size / 1e6 <= self.MAX_INLINE_MB:
+            return str(p)
+        if not shutil.which("ffmpeg"):
+            log.warning("GeminiVLM: %s is %.1f MB over the %.0f MB inline "
+                        "limit and ffmpeg is missing — cannot review natively",
+                        p.name, p.stat().st_size / 1e6, self.MAX_INLINE_MB)
+            return None
+        out = p.with_name(p.stem + "_inline360.mp4")
+        if not out.exists() or out.stat().st_mtime < p.stat().st_mtime:
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(p), "-vf", "scale=-2:360",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "33",
+                 "-an", str(out)], capture_output=True, timeout=600)
+            if r.returncode != 0 or not out.exists():
+                log.warning("GeminiVLM: transcode of %s failed", p.name)
                 return None
-            cands = resp.json().get("candidates") or []
-            for part in reversed((cands[0].get("content") or {}).get("parts", [])
-                                 if cands else []):
-                if part.get("text"):
-                    return str(part["text"])
-            log.warning("GeminiVLM(%s): no text part in response", self.name)
+        if out.stat().st_size / 1e6 > self.MAX_INLINE_MB:
+            log.warning("GeminiVLM: %s still over the inline limit after "
+                        "transcode — cannot review natively", p.name)
             return None
-        except Exception as exc:            # transport error → no verdict
-            log.warning("GeminiVLM(%s) inference failed: %r — no verdict "
-                        "emitted", self.name, exc)
-            return None
+        return str(out)
 
-    def _chat(self, frames, text: str) -> Optional[str]:
-        self._require_key()                  # loud misconfig check first
-        parts: list[dict] = []
-        for fr in frames:
-            b64 = _encode_jpeg_b64(fr)
-            if b64 is not None:
-                parts.append({"inline_data": {"mime_type": "image/jpeg",
-                                              "data": b64}})
-        parts.append({"text": text})
-        return self._generate(parts)
-
-    def caption_image(self, image_path) -> str:
+    def _video_part(self, label: str, path) -> list:
+        """[label text, inline video] — or [] with a loud log when the file
+        cannot be inlined (missing / oversize with no ffmpeg)."""
         import base64 as _b64
         from pathlib import Path as _P
 
-        p = _P(str(image_path))
-        if not p.exists() or p.suffix.lower() not in (
+        fit = self._fit_video_for_inline(path)
+        if fit is None:
+            return []
+        data = _b64.b64encode(_P(fit).read_bytes()).decode("ascii")
+        return [{"text": f"=== {label} ==="},
+                {"inline_data": {"mime_type": "video/mp4", "data": data}}]
+
+    @staticmethod
+    def _image_part(label: str, path) -> list:
+        import base64 as _b64
+        from pathlib import Path as _P
+
+        p = _P(str(path))
+        if not p.is_file() or p.suffix.lower() not in (
             ".png", ".jpg", ".jpeg", ".webp", ".bmp"
         ):
-            return ""
-        try:
-            b64 = _b64.b64encode(p.read_bytes()).decode()
-        except OSError:
-            return ""
+            return []
         mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+        try:
+            data = _b64.b64encode(p.read_bytes()).decode("ascii")
+        except OSError:
+            return []
+        return [{"text": f"=== {label} ==="},
+                {"inline_data": {"mime_type": mime, "data": data}}]
+
+    # ── the merged shot review (ONE upload; both critics slice it) ──
+    def _conditioning_parts(self, clip: CandidateClip) -> tuple[list, list[str]]:
+        """Inline every generation CONDITION attached to the clip
+        (clip.conditioning, set by the window loop) with role-labeled headers.
+        Returns (parts, human labels) — labels feed the instruction so the
+        reviewer knows what each condition was FOR."""
+        cond = getattr(clip, "conditioning", None) or {}
+        parts: list = []
+        labels: list[str] = []
+        role_names = {"first_frame": "FIRST-FRAME image (the shot must open on it)",
+                      "first": "FIRST-FRAME image (the shot must open on it)",
+                      "last": "LAST-FRAME image (the shot must end on it)",
+                      "reference": "REFERENCE image (subject/scene to stay consistent with)"}
+        for i, im in enumerate(cond.get("images") or []):
+            label = (f"CONDITION {len(labels) + 1}: "
+                     + role_names.get(im.get("role", ""), "REFERENCE image"))
+            got = self._image_part(label, im.get("path", ""))
+            if got:
+                parts += got
+                labels.append(label)
+        rv = cond.get("reference_video")
+        if rv:
+            label = (f"CONDITION {len(labels) + 1}: REFERENCE VIDEO (the "
+                     "motion this shot continues from)")
+            got = self._video_part(label, rv)
+            if got:
+                parts += got
+                labels.append(label)
+        return parts, labels
+
+    def review_shot(self, clip: CandidateClip, spec: ShotSpec,
+                    fps: int = 24) -> Optional[dict]:
+        """ONE native-video review call → {"items": [ChecklistItem...],
+        "verdicts": [PhysicsVerdict...], "summary": str}. Cached per
+        (path, mtime) so semantic+physics critics share a single upload.
+        None ⇒ nothing reviewable (no verdict is ever fabricated)."""
+        from pathlib import Path as _P
+
+        from ..physics.track_extractor_backends import _looks_like_video
+
+        p = _P(str(clip.video_path))
+        # HONESTY gate(接替旧的"无帧不判"规则):mock 文本桩顶着 .mp4 名字,
+        # 魔数嗅探不过 → 无证据、无判定、也【不需要 key】;绝不把垃圾字节
+        # 当视频喂给 API。
+        if not p.is_file() or not _looks_like_video(p):
+            return None
+        key = (str(p.resolve()), p.stat().st_mtime_ns)
+        if key in self._review_cache:
+            return self._review_cache[key]
+
+        video = self._video_part("THE SHOT VIDEO (under review)", p)
+        if not video:
+            return None                     # not inline-able → honest silence
+        cond_parts, cond_labels = self._conditioning_parts(clip)
+        cond = getattr(clip, "conditioning", None) or {}
+        gen_prompt = str(cond.get("video_prompt") or "").strip()
+
+        # duration/fps for the seconds→frames conversion of localizations
+        real_fps = 0.0
+        try:
+            from ..pipeline.timeline import _probe_fps
+
+            real_fps = _probe_fps(p)
+        except Exception:
+            real_fps = 0.0
+        fps_eff = real_fps if real_fps > 0 else float(fps or 24)
+
+        instruction = _SHOT_REVIEW_INSTRUCTION.format(
+            shot_prompt=spec.prompt,
+            gen_prompt_block=(f'\nThe exact generation prompt was:\n"{gen_prompt}"'
+                              if gen_prompt and gen_prompt != spec.prompt else ""),
+            conditions_block=("Conditions provided above: "
+                              + "; ".join(cond_labels) if cond_labels
+                              else "No visual conditions were provided — judge "
+                                   "against the text alone."),
+        )
+        reply = self._generate(video + cond_parts + [{"text": instruction}])
+        data = _extract_json(reply) if reply else None
+        if not isinstance(data, dict):
+            if reply is not None:
+                log.warning("GeminiVLM review_shot: unparseable reply — no "
+                            "verdict (reply=%.160r)", reply)
+            return None
+        pkg = self._package_review(data, fps_eff)
+        self._review_cache[key] = pkg
+        return pkg
+
+    @staticmethod
+    def _package_review(data: dict, fps: float) -> dict:
+        """Parsed reviewer JSON → pipeline objects. Every failed check /
+        localized issue becomes a ChecklistItem or PhysicsVerdict with the
+        seconds→frames conversion applied — the DefectReport/repair machinery
+        downstream is unchanged."""
+        issues = [i for i in (data.get("issues") or []) if isinstance(i, dict)]
+        checks = [c for c in (data.get("checks") or []) if isinstance(c, dict)]
+
+        def _range(issue) -> tuple[int, int]:
+            try:
+                lo = max(0.0, float(issue.get("time_start_s", 0.0)))
+                hi = max(lo, float(issue.get("time_end_s", lo)))
+            except (TypeError, ValueError):
+                lo, hi = 0.0, 0.0
+            return (int(round(lo * fps)), max(int(round(lo * fps)) + 1,
+                                              int(round(hi * fps))))
+
+        mode_map = {m.value: m for m in PhysFailureMode}
+        items: list[ChecklistItem] = []
+        verdicts: list[PhysicsVerdict] = []
+        used_issue_idx: set[int] = set()
+
+        for ci, c in enumerate(checks):
+            q = str(c.get("question", "")).strip() or f"check #{ci}"
+            passed = bool(c.get("passed", False))
+            fr = None
+            fix = ""
+            if not passed:
+                # the issue explaining this failed check (exact link via
+                # check_ref; the prompt requires it for every failure)
+                match = next(
+                    (k for k, it in enumerate(issues)
+                     if int(it.get("check_ref", -1)) == ci), None)
+                if match is not None:
+                    used_issue_idx.add(match)
+                    it = issues[match]
+                    fr = _range(it)
+                    fix = str(it.get("suggestion") or it.get("problem") or "")
+            items.append(ChecklistItem(question=q, kind="semantic",
+                                       passed=passed, fix_instruction=fix,
+                                       frame_range=fr))
+
+        for k, it in enumerate(issues):
+            cat = str(it.get("category", "")).lower()
+            try:
+                sev = min(1.0, max(0.0, float(it.get("severity", 0.5))))
+            except (TypeError, ValueError):
+                sev = 0.5
+            hint = str(it.get("suggestion") or it.get("problem") or "")
+            if cat == "physics":
+                mode = mode_map.get(str(it.get("physics_mode", "")).lower(),
+                                    PhysFailureMode.UNEXPLAINED)
+                verdicts.append(PhysicsVerdict(
+                    mode=mode, frame_range=_range(it), severity=sev,
+                    suggested_intervention=hint, source="vlm",
+                    entity=str(it.get("entity", "") or "")))
+            elif k not in used_issue_idx:
+                # localized non-physics issue with no matching check —
+                # still surfaced (never dropped) as a failed item
+                items.append(ChecklistItem(
+                    question=str(it.get("problem", "issue"))[:120],
+                    kind="semantic", passed=False, fix_instruction=hint,
+                    frame_range=_range(it)))
+        return {"items": items, "verdicts": verdicts,
+                "summary": str(data.get("summary", "")).strip()}
+
+    # ── critic contracts: slice the ONE cached review ──
+    def assess_semantic(self, clip: CandidateClip, spec: ShotSpec) -> list[tuple]:
+        pkg = self.review_shot(clip, spec)
+        if pkg is None:
+            return []
+        out = []
+        for it in pkg["items"]:
+            if it.frame_range is not None:
+                out.append((it.question, it.passed, it.fix_instruction,
+                            it.frame_range))
+            else:
+                out.append((it.question, it.passed, it.fix_instruction))
+        return out
+
+    def assess_physics(self, clip: CandidateClip, spec: ShotSpec,
+                       fps: int) -> list[PhysicsVerdict]:
+        pkg = self.review_shot(clip, spec, fps=fps)
+        return list(pkg["verdicts"]) if pkg else []
+
+    # ── tournament pick (bidirectional de-biasing is the CALLER's job) ──
+    def compare(self, a: CandidateClip, b: CandidateClip, spec: ShotSpec) -> int:
+        from ..physics.track_extractor_backends import _looks_like_video
+
+        if not (_looks_like_video(Path(str(a.video_path)))
+                and _looks_like_video(Path(str(b.video_path)))):
+            return BaseMLLMClient.compare(self, a, b, spec)   # 桩→指标回退
+        va = self._video_part("Video 1", a.video_path)
+        vb = self._video_part("Video 2", b.video_path)
+        if not va or not vb:
+            return super(OpenAICompatVLM, self).compare(a, b, spec)                 if False else BaseMLLMClient.compare(self, a, b, spec)
+        reply = self._generate(va + vb + [{"text": (
+            "Both videos attempt the same shot:\n"
+            f'"{spec.prompt}"\n\n'
+            "Which matches the shot better overall (semantics, physics, "
+            "temporal consistency, visual quality)? Reply with ONLY a JSON "
+            'object: {"better": 1 | 2 | 0} — 0 means no clear difference. '
+            "Be conservative."
+        )}])
+        data = _extract_json(reply) if reply else None
+        try:
+            pick = int((data or {}).get("better", 0))
+        except (TypeError, ValueError):
+            pick = 0
+        return 1 if pick == 1 else -1 if pick == 2 else 0
+
+    # ── the Verifier's blind A/B (NEWTON verify_relative + our additions) ──
+    def verify_pair(self, candidate_path, baseline_path, shot_prompt: str,
+                    repair_context: Optional[dict] = None,
+                    seed: Optional[int] = None) -> Optional[dict]:
+        """Blind A/B: REPAIRED candidate vs the CURRENT BEST (original).
+
+        NEWTON mechanics kept 1:1 — randomized slots labeled only Video 1/2,
+        judge never told which is repaired, signed score is how much better
+        Video 2 is, remapped to candidate-vs-baseline afterwards.
+
+        Our additions over NEWTON:
+          • FOUR per-dimension signed scores (semantic / physics / temporal /
+            visual — user ruling: dims 1,2,4,5; condition adherence belongs
+            to the REVIEWER stage, not the pair judge) instead of one blob —
+            enables the dimension NON-REGRESSION guard in VerifierAgent
+            ("fixed one thing, badly broke another" is auto-reject);
+          • a defect-presence probe: the judge is told WHAT the repair tried
+            to fix and reports whether each video exhibits that defect →
+            target_fixed for the candidate, independent of the overall score.
+        Returns the remapped verdict dict, or None (transport/inline failure —
+        the caller falls back to the metric gate, loudly)."""
+        import random
+
+        from ..physics.track_extractor_backends import _looks_like_video
+
+        if not (_looks_like_video(Path(str(candidate_path)))
+                and _looks_like_video(Path(str(baseline_path)))):
+            return None                     # 桩视频 → 指标闸兜底(诚实)
+        rng = random.Random(seed)
+        candidate_is_v2 = rng.random() < 0.5
+        v1, v2 = ((baseline_path, candidate_path) if candidate_is_v2
+                  else (candidate_path, baseline_path))
+        p1 = self._video_part("Video 1", v1)
+        p2 = self._video_part("Video 2", v2)
+        if not p1 or not p2:
+            return None
+        ctx = repair_context or {}
+        target = ""
+        td = ctx.get("target_defect") or {}
+        if td:
+            target = (f'The repair attempted to fix this defect: '
+                      f'"{td.get("note", "")} — {td.get("fix_hint", "")}" '
+                      f'(around {td.get("time_range_s", "?")} s, entity: '
+                      f'"{td.get("entity", "")}").')
+        reply = self._generate(p1 + p2 + [{"text":
+            _VERIFY_PAIR_INSTRUCTION.format(shot_prompt=shot_prompt,
+                                            target_block=target)}])
+        data = _extract_json(reply) if reply else None
+        if not isinstance(data, dict):
+            return None
+
+        def _i(v, lo=-10, hi=10):
+            try:
+                return max(lo, min(hi, int(round(float(v)))))
+            except (TypeError, ValueError):
+                return 0
+
+        sign = 1 if candidate_is_v2 else -1
+        raw = _i(data.get("score", 0))
+        dims_raw = data.get("dim_scores") or {}
+        dims = {k: sign * _i(dims_raw.get(k, 0))
+                for k in ("semantic", "physics", "temporal", "visual")}
+        present = data.get("defect_present") or {}
+        cand_slot = "video2" if candidate_is_v2 else "video1"
+        base_slot = "video1" if candidate_is_v2 else "video2"
+        score = sign * raw
+        # accept = strictly better overall AND no dimension badly regressed
+        # (the monotonic contract, now dimension-aware).
+        conclusion = ("accept" if score >= 1 and min(dims.values()) >= -2
+                      else "reject")
+        issues = data.get("issues") or []
+        if not isinstance(issues, list):
+            issues = [str(issues)]
+        return {
+            "score": score,
+            "dim_scores": dims,
+            "notes": {k: str((data.get("notes") or {}).get(k, "")).strip()
+                      for k in ("semantic", "physics", "temporal", "visual")},
+            "target_fixed": (bool(present.get(base_slot, False))
+                             and not bool(present.get(cand_slot, False))
+                             if td else None),
+            "issues": [str(x) for x in issues] if score < 0 else [],
+            "summary": str(data.get("summary", "")).strip(),
+            "conclusion": conclusion,
+            "_order": {"video1": "baseline" if candidate_is_v2 else "candidate",
+                       "video2": "candidate" if candidate_is_v2 else "baseline",
+                       "raw_v2_minus_v1": raw},
+        }
+
+    def caption_image(self, image_path) -> str:
+        got = self._image_part("IMAGE", image_path)
+        if not got:
+            return ""
         self._require_key()
-        reply = self._generate([
-            {"inline_data": {"mime_type": mime, "data": b64}},
+        reply = self._generate([got[1],
             {"text": "Describe this image in ONE short sentence for "
                      "retrieval: what/who it shows and the setting. Start "
                      "with one category word from [background, character, "

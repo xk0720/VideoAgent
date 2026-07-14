@@ -705,7 +705,8 @@ def test_execute_simulate_reference_invalid_spec_noops(tmp_path):
 class _AlwaysRejectVerifier(VerifierAgent):
     """Every candidate is judged not-strictly-better — drives the patience stop."""
 
-    def is_better(self, candidate, best, eps=1e-4, spec=None):
+    def is_better(self, candidate, best, eps=1e-4, spec=None,
+                  repair_context=None):
         return best is None
 
 

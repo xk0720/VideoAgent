@@ -1,44 +1,65 @@
 ---
 name: semantic_critic
 agent: SemanticCritic (VLM reviewer)
-description: MLLM checklist review of semantics — objects, counts, attributes, character identity, setting, action — each item PASS/FAIL with a concrete fix instruction.
+description: Native-video MLLM review of semantics AND condition adherence — the shot video plus every conditioning input (key images, reference video) in ONE call; verdicts are localized issues the brain can act on.
 ---
 
-# Semantic Review (VLM) — dimensions, tool, output contract
+# Semantic Review (native video) — evidence, dimensions, output contract
 
-Role: decompose the shot prompt into a VERIFIABLE visual checklist and judge
-each item from sampled frames. This reviewer is OPINION (a VLM watching
-frames) — tagged kind="semantic"; the summarizer weighs it below measured
-physics evidence when they conflict on the same entity/span.
+Role: judge whether the generated shot delivers (a) the scene text and (b) the
+multimodal conditions it was generated FROM. This reviewer is OPINION (an MLLM
+watching the actual video) — tagged kind="semantic"; the summarizer weighs it
+below measured physics evidence when they conflict on the same entity/span.
 
-## Dimensions to check (one checklist item each)
+## Evidence the model sees (one upload, shared with physics_critic)
 
-- OBJECTS + COUNTS   — every named object present, in the stated number
-- ATTRIBUTES         — color / material / size stated in the prompt
-- CHARACTER identity — the same character(s), consistent appearance
-- SETTING            — location / time-of-day / weather as described
-- ACTION / SEQUENCE  — the described event actually happens, in order
-- TEXT / SIGNAGE     — any literal text the prompt requires
+`mllm.review_shot(clip, spec)` (`models/mllm_backends.py`) sends ONE
+generateContent call containing, as labeled parts:
 
-## Tool it calls
+- THE SHOT VIDEO — the WHOLE clip as native video (`inline_data`, video/mp4).
+  NEVER sampled frames on the Gemini path: temporal defects (flicker, motion
+  breaks, event order) are invisible to frame stills. Clips over the inline
+  budget are transcoded down (360p) — still whole video, never frames.
+- The GENERATION PROMPT the video model actually received.
+- Every CONDITIONING input with its role spelled out: "FIRST-FRAME image (the
+  shot must open on it)", "LAST-FRAME image (the shot must end on it)",
+  "REFERENCE image N (identity/style anchor)", "REFERENCE VIDEO (motion /
+  continuity source)". Condition adherence is judged against THESE pixels,
+  not against the reviewer's imagination.
 
-`mllm.assess_semantic(clip, spec)` (`models/mllm_backends.py`): samples
-`n_frames` frames from the clip, sends them with the prompt-derived
-instruction, parses a STRICT-JSON item list. Undecodable clip → NO verdict
-(stay silent; never judge pixels that were never seen).
+The merged package is cached per (path, mtime): semantic and physics critics
+both read the SAME single call — one upload per review round (U6).
 
-## Output contract
+Fallback path (OpenAI-compatible VLMs without a video channel): sampled frames,
+honestly degraded. Undecodable clip or a non-video stub → NO verdict; never
+judge pixels that were never seen.
 
-For each dimension: ChecklistItem{question, kind="semantic", passed,
-fix_instruction}. On FAIL the fix_instruction must be CONCRETE and actionable
-("add a second dog entering from the left"), because it becomes:
-- a content Defect in DefectReport (whole-clip span — semantics has no frame
-  localization), and
-- the brain's keyframe_edit / regenerate hint text.
+## Dimensions to cover (reference frame, not a straitjacket)
+
+1. SEMANTIC — objects/counts/attributes/setting/action-order from the prompt
+2. CONDITION ADHERENCE — does the first frame match the first-frame image; do
+   subjects match reference images; does motion continue the reference video
+3. TEXT/SIGNAGE — literal text the prompt requires
+(physics/temporal/visual belong to the sibling critics but arrive in the same
+merged call — route by `category`.)
+
+## Output contract (what the brain must be able to act on)
+
+- `checks[]` — one yes/no per verifiable fact AND per conditioning input.
+- `issues[]` — the core deliverable: every real problem LOCALIZED:
+  `type` frame|segment|global, `time_start_s`/`time_end_s`, `category`,
+  `entity`, `severity` 0-1, `problem` (what is wrong), `reason` (why it is
+  wrong — which fact/condition it violates), optional `suggestion` (what the
+  CONTENT should look like when fixed — never a tool name), `check_ref`
+  linking the issue to the check it fails.
+- Seconds are converted to frames at the probed fps downstream; failed checks
+  inherit frame_range + fix text from their linked issue.
 
 ## Rules
 
-- Judge ONLY observable evidence; do not invent requirements not in the prompt.
-- One item per fact; compound questions hide which part failed.
-- Never recommend a TOOL — describing what is wrong is the whole job; tool
-  choice belongs to the brain (judge/planner separation).
+- Judge ONLY observable evidence; do not invent requirements not in the
+  prompt or conditions.
+- Every FAILED check needs a linked issue saying where and why; an issue that
+  cannot be localized is honestly `type=global`, never a made-up span.
+- Never recommend a TOOL — describing what is wrong (and what fixed content
+  looks like) is the whole job; tool choice belongs to the brain.

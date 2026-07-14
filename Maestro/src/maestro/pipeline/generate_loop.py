@@ -915,7 +915,11 @@ def generate_shot_orchestrated(
                     fps=fps, retrieval=retrieval,
                 )
                 gen_calls += 1
-                if cand is not None and verifier.is_better(cand, best, spec=spec):
+                _worst = defect_report.worst()
+                _rctx = {"tool": "regenerate_hint",
+                         "target_defect": _worst.to_dict() if _worst else None}
+                if cand is not None and verifier.is_better(
+                        cand, best, spec=spec, repair_context=_rctx):
                     best = cand
                     new_total = best.metric_scores.get("weighted_total", 0.0)
                     outcome = "accepted"
@@ -975,7 +979,11 @@ def generate_shot_orchestrated(
             )
             gen_calls += 1
 
-        if cand is not None and verifier.is_better(cand, best, spec=spec):
+        _worst = defect_report.worst()
+        _rctx = {"tool": decision.get("tool"),
+                 "target_defect": _worst.to_dict() if _worst else None}
+        if cand is not None and verifier.is_better(
+                cand, best, spec=spec, repair_context=_rctx):
             best = cand
             new_total = best.metric_scores.get("weighted_total", 0.0)
             outcome = "accepted"
@@ -993,6 +1001,11 @@ def generate_shot_orchestrated(
                          if cand is not None else history_scores[-1])
             outcome = "rejected"
 
+        # 盲测评委的裁决证据回灌:一份进台账(actions),一份塞进 decision
+        # 让 brain 下回合在 history 里看见"为什么被拒/差在哪个维度"。
+        _verdict = getattr(cand, "verifier_verdict", None) if cand is not None else None
+        if _verdict is not None:
+            decision["verifier_issues"] = _verdict.get("issues", [])
         brain_history.append((decision, outcome, round(new_total, 4)))
         history_scores.append(best.metric_scores.get("weighted_total", 0.0))
         actions.append({
@@ -1001,6 +1014,12 @@ def generate_shot_orchestrated(
             "outcome": outcome, "new_total": round(new_total, 4),
             "defects": defect_report.to_brain_json(),
             "brief_headline": review_brief.get("headline", ""),
+            **({"verifier": {"score": _verdict.get("score"),
+                             "dim_scores": _verdict.get("dim_scores"),
+                             "target_fixed": _verdict.get("target_fixed"),
+                             "summary": _verdict.get("summary", ""),
+                             "issues": _verdict.get("issues", [])}}
+               if _verdict is not None else {}),
         })
         log.info("shot %d turn%d via=%s tool=%s → %s (total=%.4f)",
                  spec.shot_idx, turn, via, decision.get("tool"), outcome, new_total)

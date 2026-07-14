@@ -291,6 +291,11 @@ class CandidateClip:
     accepted: bool = False
     revision: int = 0
     skipped_items: list[str] = field(default_factory=list)  # escape-hatched
+    # The MULTIMODAL CONDITIONS this clip was generated from — the reviewer
+    # judges adherence AGAINST them (native-video review, 2026-07-14 ruling):
+    # {"video_prompt": str, "images": [{"path","role"}], "reference_video":
+    # str|None}. None = unconditioned / unknown (review skips condition parts).
+    conditioning: Optional[dict] = None
 
     @property
     def aggregate_score(self) -> float:

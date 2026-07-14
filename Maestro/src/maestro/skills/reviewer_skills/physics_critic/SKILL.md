@@ -23,9 +23,15 @@ merges them (cross-type confirmation) and the MEASURED severity wins conflicts.
 
 ## Tool it calls
 
-`mllm.assess_physics(clip, spec)` (`models/mllm_backends.py`): sampled frames +
-the annotation's expected modes → STRICT-JSON verdicts
-{mode, severity 0-1, frame_range}. Undecodable clip → NO verdict.
+`mllm.assess_physics(clip, spec, fps)` (`models/mllm_backends.py`). On the
+Gemini path this reads the MERGED native-video review (`review_shot`): the
+WHOLE clip as native video plus the generation prompt and all conditioning
+inputs, ONE upload shared with semantic_critic (U6 — a multimodal model
+judging the full context also judges physics; no second call). Issues with
+`category=physics` become verdicts here; `time_start_s/time_end_s` are
+converted to frame ranges at the probed fps. Fallback path (VLMs without a
+video channel): sampled frames + expected modes. Undecodable clip or a
+non-video stub → NO verdict.
 
 ## Output contract
 
