@@ -22,7 +22,7 @@ reliable use of an MLLM judge; absolute scores are noise:
    prompt + the repair context (which defect the repair targeted, its time
    span, entity, fix hint). Condition adherence is NOT re-judged here — that
    is the reviewer's job on the single shot.
-3. DIMENSIONS (signed, -5..+5, + toward Video 2): semantic, physics,
+3. DIMENSIONS (signed, -10..+10, + toward Video 2): semantic, physics,
    temporal, visual — each with a one-line note, then one overall score.
    A repair that fixes one thing but breaks another dimension must show the
    damage as a negative dimension score — never averaged away.

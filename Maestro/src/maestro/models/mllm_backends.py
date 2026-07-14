@@ -886,7 +886,7 @@ class GeminiVLM(OpenAICompatVLM):
         va = self._video_part("Video 1", a.video_path)
         vb = self._video_part("Video 2", b.video_path)
         if not va or not vb:
-            return super(OpenAICompatVLM, self).compare(a, b, spec)                 if False else BaseMLLMClient.compare(self, a, b, spec)
+            return BaseMLLMClient.compare(self, a, b, spec)
         reply = self._generate(va + vb + [{"text": (
             "Both videos attempt the same shot:\n"
             f'"{spec.prompt}"\n\n'

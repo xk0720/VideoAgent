@@ -335,7 +335,7 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
 
 ### Verifier 创新点(在 NEWTON verify_relative 机制之上)
 
-1. 各维带符号分(-5..+5)独立输出,"修了 A 坏了 B"必须在对应维度上
+1. 各维带符号分(-10..+10)独立输出,"修了 A 坏了 B"必须在对应维度上
    显式为负,不许平均掉;
 2. 缺陷探针:评委逐视频回答"目标缺陷是否仍在" → target_fixed
    (本次修复到底修没修它声称要修的东西);
