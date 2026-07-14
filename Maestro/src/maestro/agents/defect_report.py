@@ -129,7 +129,7 @@ def build_defect_report(
     left to the existing metric machinery — they are not per-segment repairable,
     so surfacing them as localized defects would mislead the brain.
     """
-    n_frames = max(1, int(round(spec.duration * fps)))
+    n_frames = max(1, int(round((spec.duration or 5.0) * fps)))
     defects: list[Defect] = []
 
     for v in clip.physics_verdicts:

@@ -25,8 +25,9 @@ strategy, review, repair) hangs off these entries.
 3. Shot count: YOURS to decide from the story's beats (one beat = one shot;
    a beat that must flow continuously stays inside one shot). Past similar
    tasks' shapes (episode_guidance) are experience, max_shots is only a cost
-   ceiling. Fewer, longer shots beat fragments — each shot runs 4-15 seconds
-   (the generation model's duration domain).
+   ceiling. Fewer, longer shots beat fragments — each shot runs 4-10 seconds
+   (the fixed planning range; the executor maps it onto each generation
+   model's own duration domain).
 4. Time order IS generation order: the window loop walks the list strictly in
    order, and cross-shot continuity (previous shot's last frame / tail as the
    anchor) only holds between ADJACENT shots — put actions that must flow
@@ -41,15 +42,19 @@ strategy, review, repair) hangs off these entries.
 ## Output format (STRICT JSON — output this and nothing else)
 
 {"shots": [{"description": "Shot 1: <detailed filmable description>",
-            "duration_s": <int 4-15>},
+            "duration_s": <int 4-10>},
            {"description": "Shot 2: <detailed filmable description>",
-            "duration_s": <int 4-15>}, ...]}
+            "duration_s": <int 4-10>}, ...]}
 
 - Each description is 15-40 words: subject + action + setting + camera /
   lighting where useful. One sentence that a video model can shoot.
-- `duration_s` is YOUR call per shot (integer seconds, 4-15 — the generation
-  model's domain): a quick impact beat wants 4-5s, a slow establishing pan or
-  a multi-step action wants 8-12s. It is never preset by config.
+- `duration_s` is YOUR call per shot (integer seconds, 4-10 — the fixed
+  planning range): a quick impact beat wants 4-5s, a slow establishing pan
+  or a multi-step action wants 8-10s. Judge from how long the described
+  action NEEDS. It is never preset by config; the executor maps your
+  seconds onto each generation model's own duration domain. If you omit
+  duration_s the executor sends NO duration and the model's own default
+  applies — so always state it.
 - YOU decide the shot count — it is never preset. Read it off the story's
   beats, informed by `episode_guidance.past_task_shapes` (how many shots
   similar past tasks used and whether they succeeded). `max_shots` is ONLY a

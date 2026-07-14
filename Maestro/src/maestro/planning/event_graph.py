@@ -78,7 +78,8 @@ def build_event_graph(spec: ShotSpec) -> EventGraph:
         )
     else:
         n = len(actions)
-        seg = spec.duration / n if n else spec.duration
+        dur = spec.duration or 5.0  # None(brain 未规划)→ 本地估算用 5s,不回传 API
+        seg = dur / n if n else dur
         for i, act in enumerate(actions):
             nodes.append(
                 EventNode(

@@ -99,7 +99,7 @@ class MockMLLMClient(BaseMLLMClient):
         )
         n_applied = len(applied_fixes(clip))
         verdicts: list[PhysicsVerdict] = []
-        n_frames = max(1, int(round(spec.duration * fps)))
+        n_frames = max(1, int(round((spec.duration or 5.0) * fps)))
         for j, mode in enumerate(expected):
             # severity decays with APPLIED fixes -> loop converges only when
             # the repairs really landed in the artifact; resolved when < 0.3

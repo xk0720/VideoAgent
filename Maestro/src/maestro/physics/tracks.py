@@ -93,7 +93,7 @@ class MockTrackExtractor(BaseTrackExtractor):
         except Exception:
             return None
         repaired = _has_physics_repair(clip)
-        n = max(8, int(round(spec.duration * fps)))
+        n = max(8, int(round((spec.duration or 5.0) * fps)))
         observed: dict[str, Track] = {}
         for i, ent in enumerate(entities):
             x0 = (i + 1) / (len(entities) + 1)

@@ -20,6 +20,7 @@ Backends:
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -174,7 +175,7 @@ class WaveSpeedClient(BaseVideoGenClient):
     def generate(
         self,
         prompt: str,
-        duration: float,
+        duration: Optional[float],
         out_path: Path,
         fps: int = 8,
         first_frame: Optional[Path] = None,
@@ -186,6 +187,19 @@ class WaveSpeedClient(BaseVideoGenClient):
         channel — an independent MOTION condition (e.g. a physics-sim reference
         clip, NEWTON-style) that combines with the text prompt. Only offered to
         callers via the "ref_video" capability; a legacy model id raises."""
+        # 映射表铁律(docs/CONDITION_MODEL_MAP.md §1):reference_videos 只存在
+        # 于 text-to-video 端点;first_frame 会把调用切到 image-to-video(其
+        # schema 只有 image+last_image)。这个组合没有已验证的调用方式,丢掉
+        # 视频条件又等于偷换策略 —— 所以在任何上传发生之前直接拒绝,调用方
+        # 应改用 t2v + reference_images(软锚)或放弃视频条件。
+        if reference_video is not None and first_frame is not None:
+            raise RuntimeError(
+                "generate(): first_frame + reference_video is not a verified "
+                "WaveSpeed schema (reference_videos exists on text-to-video "
+                "only; image-to-video takes image+last_image). Pass the image "
+                "via reference_images on the t2v route instead "
+                "(docs/CONDITION_MODEL_MAP.md §1)."
+            )
         model_id = self.model_id
         is_i2v = first_frame is not None and (
             str(first_frame).startswith(("http://", "https://"))
@@ -193,8 +207,11 @@ class WaveSpeedClient(BaseVideoGenClient):
         if is_i2v:
             model_id = self._i2v_variant(model_id)
 
-        payload: dict = {"prompt": prompt,
-                         "duration": self._snap_duration(duration, model_id)}
+        # duration=None = brain 没规划 → 不传字段,API 用模型自然默认
+        # (2026-07-14 裁决);有值(brain 规划的 [4,10])→ snap 进模型时长域。
+        payload: dict = {"prompt": prompt}
+        if duration is not None:
+            payload["duration"] = self._snap_duration(duration, model_id)
         if self._is_range_family(model_id):
             payload["resolution"] = self.resolution
             payload["generate_audio"] = self.generate_audio
@@ -250,7 +267,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         prompt: str,
         images: list,
         out_path: Path,
-        duration: float = 5,
+        duration: Optional[float] = None,
         seed: int = 0,
         video: Optional[Path] = None,
     ) -> Path:
@@ -279,9 +296,10 @@ class WaveSpeedClient(BaseVideoGenClient):
             payload = {
                 "prompt": prompt,
                 "images": [self._upload_media(p) for p in imgs],
-                "duration": self._snap_duration(duration, model),  # {5,10}
                 "aspect_ratio": self.config.get("aspect_ratio", "16:9"),
             }
+            if duration is not None:                    # None → API 默认
+                payload["duration"] = self._snap_duration(duration, model)
             return self._run_task(model, payload, out_path)
         cap = 4 if video is not None else 7
         imgs = list(images)[:cap]
@@ -292,10 +310,11 @@ class WaveSpeedClient(BaseVideoGenClient):
         payload = {
             "prompt": prompt,
             "images": [self._upload_media(p) for p in imgs],
-            "duration": self._snap_duration(duration, model),      # {5,10}
             "aspect_ratio": self.config.get("aspect_ratio", "16:9"),
             "keep_original_sound": False,
         }
+        if duration is not None:                        # {5,10} 枚举,向上 snap
+            payload["duration"] = self._snap_duration(duration, model)
         if video is not None:
             payload["video"] = self._upload_media(video)
         return self._run_task(model, payload, out_path)
@@ -303,19 +322,55 @@ class WaveSpeedClient(BaseVideoGenClient):
     @staticmethod
     def _summarize_payload(payload: dict) -> dict:
         """Payload with base64 blobs shortened — safe to put in an error message."""
-        return {k: (f"<{len(v)} chars>" if isinstance(v, str) and len(v) > 200
-                    else v)
-                for k, v in payload.items()}
+        def _one(v):
+            if isinstance(v, str) and len(v) > 200:
+                return f"<{len(v)} chars>"
+            if isinstance(v, list):
+                return [_one(x) for x in v]
+            return v
+        return {k: _one(v) for k, v in payload.items()}
+
+    def _log_call(self, record: dict) -> None:
+        """任务 0(2026-07-14):每次 WaveSpeed 调用可核对——模型名 + 参数打到
+        终端 INFO,并逐行追加到 config `call_log` 指定的 JSONL(测试脚本默认
+        接到 <out_dir>/wavespeed_calls.jsonl)。日志失败绝不影响调用本身。"""
+        try:
+            log.info("wavespeed %s → %s %s", record.get("event"),
+                     record.get("model"),
+                     json.dumps({k: v for k, v in record.items()
+                                 if k not in ("event", "model", "ts")},
+                                ensure_ascii=False, default=str)[:1500])
+        except Exception:
+            pass
+        path = self.config.get("call_log")
+        if not path:
+            return
+        try:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str)
+                        + "\n")
+        except OSError as exc:
+            log.warning("call_log write failed (%s): %s", path, exc)
 
     # ── shared submit → poll predictions/{id}/result → download (UniVA protocol) ──
     def _run_task(self, model_id: str, payload: dict, out_path: Path) -> Path:
         import requests  # std in our [all] extras; loud ImportError otherwise
 
+        t0 = time.time()
+        self._log_call({"ts": t0, "event": "submit", "model": model_id,
+                        "payload": self._summarize_payload(payload),
+                        "out": str(out_path)})
         resp = requests.post(
             f"{self.BASE}/{model_id}", json=payload, headers=self._headers(),
             timeout=60,
         )
         if resp.status_code >= 400:
+            self._log_call({"ts": time.time(), "event": "failed",
+                            "model": model_id,
+                            "error": f"HTTP {resp.status_code}: "
+                                     f"{resp.text[:500]}"})
             # Surface the API's own explanation — raise_for_status() drops the
             # response body, which is where WaveSpeed says WHICH field is wrong.
             raise RuntimeError(
@@ -348,11 +403,22 @@ class WaveSpeedClient(BaseVideoGenClient):
                 video = requests.get(url, timeout=120)
                 video.raise_for_status()
                 out_path.write_bytes(video.content)
+                self._log_call({"ts": time.time(), "event": "completed",
+                                "model": model_id, "task_id": task_id,
+                                "elapsed_s": round(time.time() - t0, 1),
+                                "out": str(out_path)})
                 return out_path
             if status == "failed":
+                self._log_call({"ts": time.time(), "event": "failed",
+                                "model": model_id, "task_id": task_id,
+                                "error": str(data.get("error",
+                                                      "unknown error"))[:500]})
                 raise RuntimeError(f"WaveSpeed task {task_id} failed: "
                                    f"{data.get('error', 'unknown error')}")
             time.sleep(self.poll_interval)
+        self._log_call({"ts": time.time(), "event": "failed",
+                        "model": model_id, "task_id": task_id,
+                        "error": f"timeout after {self.timeout}s"})
         raise TimeoutError(f"WaveSpeed task {task_id} did not finish within "
                            f"{self.timeout}s")
 
@@ -385,7 +451,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         first_frame: Path,
         last_frame: Path,
         out_path: Path,
-        duration: float = 5,
+        duration: Optional[float] = None,
         seed: int = 0,
     ) -> Path:
         """First+last-frame video. Capability "flf2v" (optional; see
@@ -399,7 +465,6 @@ class WaveSpeedClient(BaseVideoGenClient):
         last_url = self._upload_media(last_frame)
         if "wan-flf2v" in model:
             payload = {
-                "duration": self._snap_duration(duration, model),
                 "enable_safety_checker": True,
                 "first_image": first_url,
                 "guidance_scale": 5,
@@ -415,10 +480,11 @@ class WaveSpeedClient(BaseVideoGenClient):
                 "prompt": prompt,
                 "image": first_url,
                 "last_image": last_url,
-                "duration": self._snap_duration(duration, model),
                 "resolution": self.resolution,
                 "generate_audio": self.generate_audio,
             }
+        if duration is not None:                        # None → API 默认
+            payload["duration"] = self._snap_duration(duration, model)
         return self._run_task(model, payload, out_path)
 
     def edit_video(
@@ -517,7 +583,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         prompt: str,
         video_path: Path,
         out_path: Path,
-        duration: float = 5,
+        duration: Optional[float] = None,
         seed: int = 0,
     ) -> Path:
         """Continue an existing clip beyond its last frame. Capability "extend"
@@ -529,10 +595,12 @@ class WaveSpeedClient(BaseVideoGenClient):
         payload = {
             "prompt": prompt,
             "video": self._upload_media(video_path),   # loud key check inside
-            "duration": self._snap_duration(duration, self.extend_model),
             "resolution": self.resolution,
             "generate_audio": self.generate_audio,
         }
+        if duration is not None:                        # None → API 默认
+            payload["duration"] = self._snap_duration(duration,
+                                                      self.extend_model)
         return self._run_task(self.extend_model, payload, out_path)
 
     def supported_conditions(self) -> set[str]:

@@ -609,8 +609,8 @@ def test_llm_playwriting_replaces_clause_cycling(tmp_path):
     assert len(outline) == 3
     assert len({o.lower() for o in outline}) == 3       # 绝无重复分镜
     assert all(len(o.split()) >= 10 for o in outline)   # 描述带细节
-    # 时长是 brain 定的;越界(30)夹回生成模型的域 [4,15]
-    assert durs == [5, 4, 15]
+    # 时长是 brain 定的;越界(30)夹回规划域 [4,10](2026-07-14 裁决)
+    assert durs == [5, 4, 10]
 
 
 def test_llm_playwriting_validation_and_fallback(tmp_path):
@@ -631,7 +631,8 @@ def test_llm_playwriting_validation_and_fallback(tmp_path):
         _Dupes(), "p", [], episode_guidance={}, max_shots=3,
         fallback_fn=lambda: ["fb"])
     assert via == "llm"
-    assert durs == [5, 5]                   # 纯字符串形态 → 每镜 API 默认 5s
+    assert durs == [None, None]             # 纯字符串形态(brain 没输出时长)
+    #                                          → None = 不传 duration,API 用默认
     assert len(outline) == 2                # 硬顶 3 截断后再去重(1 条重复被丢)
     assert len(set(outline)) == len(outline)
 
@@ -643,7 +644,8 @@ def test_llm_playwriting_validation_and_fallback(tmp_path):
         _Garbage(), "p", [], episode_guidance={}, max_shots=6,
         fallback_fn=lambda: ["Shot 1: fallback split"])
     assert via2 == "fallback" and outline2 == ["Shot 1: fallback split"]
-    assert durs2 == [5]                     # 兜底 = API 自然默认,绝非 config 预设
+    assert durs2 == [None]                  # 兜底 = 不传 duration(API 默认),
+    #                                          绝非 config 预设
 
 
 def test_guidance_carries_past_task_shapes(tmp_path):

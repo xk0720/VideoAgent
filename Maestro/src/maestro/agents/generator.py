@@ -59,7 +59,8 @@ class GeneratorAgent(BaseAgent):
                 first_frame=Path(gen_params["first_frame"]),
                 last_frame=Path(gen_params["last_frame"]),
                 out_path=out_path,
-                duration=max(1, int(round(spec.duration))),
+                duration=(None if spec.duration is None
+                          else max(1, int(round(spec.duration)))),
                 seed=seed,
             )
         elif (capability == "edit"

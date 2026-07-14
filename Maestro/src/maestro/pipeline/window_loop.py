@@ -67,7 +67,7 @@ from typing import Optional
 
 from ..agents.director import DirectorAgent
 from ..agents.screenwriter import ScreenwriterAgent
-from ..logging_utils import get_logger
+from ..logging_utils import brain_log, get_logger
 from ..memory.episode_memory import EpisodeMemory
 from ..memory.storyboard import StoryboardMemory
 from ..models.mllm_backends import _extract_json
@@ -85,7 +85,7 @@ log = get_logger(__name__)
 #   multi_image_fusion — [上镜尾帧, 本镜 keyframe(, 身份锚)] 作 images 数组
 #     一次融合生成(kling multi-i2v):无指定首帧,画面按全部图片融合。
 #   排序依据:硬锚(像素级续接)优先于软锚 —— flf2v_bridge(双端硬锚)>
-#   tiv2v_window(尾段运动参考+可选首帧)> ti2v_prev_last(首帧硬锚)>
+#   tiv2v_window(尾段运动参考+可选软图,全走 t2v)> ti2v_prev_last(首帧硬锚)>
 #   ti2v_prev_plus_keyframe(t2v+refs 软锚)> multi_image_fusion(融合)。
 _CONDITION_PRIORITY = ["flf2v_own_pair", "flf2v_bridge", "tiv2v_window",
                        "ti2v_prev_last", "ti2v_prev_plus_keyframe",
@@ -292,14 +292,27 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
           '"reason": "<one short sentence>", ... optional semantic fields '
           "per the skill above (images / video_prompt / use_prev_tail_video)}"
     )
+    raw = ""
     try:
-        data = _extract_json(llm.complete(prompt))
-    except Exception:
-        return {}
-    if not isinstance(data, dict):
+        raw = llm.complete(prompt)
+        data = _extract_json(raw)
+    except Exception as exc:
+        brain_log(f"window/{kind}", {
+            "label": context.get("shot", {}).get("label")
+            if isinstance(context.get("shot"), dict) else None,
+            "menu": sorted(m["name"] for m in menu),
+            "raw": raw or f"<complete() raised: {exc}>", "parsed": None,
+            "usable": False})
         return {}
     valid = {m["name"] for m in menu}
-    if str(data.get("strategy", "")) not in valid:
+    usable = isinstance(data, dict) and str((data or {}).get("strategy", "")) in valid
+    if not usable:
+        brain_log(f"window/{kind}", {
+            "label": context.get("shot", {}).get("label")
+            if isinstance(context.get("shot"), dict) else None,
+            "menu": sorted(valid), "raw": raw,
+            "parsed": data if isinstance(data, dict) else None,
+            "usable": False})
         return {}
     out = {"strategy": str(data["strategy"]),
            "reason": str(data.get("reason", ""))}
@@ -316,6 +329,13 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
         out["video_prompt"] = data["video_prompt"].strip()
     if isinstance(data.get("use_prev_tail_video"), bool):
         out["use_prev_tail_video"] = data["use_prev_tail_video"]
+    # debug 日志(2026-07-14 用户令):brain 的原始输出 + 校验后决策全量落盘,
+    # 拿它对照 docs/CONDITION_MODEL_MAP.md §1 就能核对"该策略调了哪个模型"。
+    brain_log(f"window/{kind}", {
+        "label": context.get("shot", {}).get("label")
+        if isinstance(context.get("shot"), dict) else None,
+        "menu": sorted(valid), "raw": raw, "parsed": dict(out),
+        "usable": True})
     return out
 
 
@@ -347,18 +367,25 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                           "max_shots_hard_cost_cap": max_shots},
                          ensure_ascii=False)
             + '\n\nSTRICT JSON only: {"shots": [{"description": "Shot 1: '
-              '<detailed filmable description>", "duration_s": <int 4-15>}, '
+              '<detailed filmable description>", "duration_s": <int 4-10>}, '
               "...]} — each description 15-40 words (subject + action + "
               "setting + camera), scene N stated when the location changes. "
-              "YOU decide the shot count AND each shot's duration_s from the "
-              "story itself (use past_task_shapes as experience from similar "
+              "YOU decide the shot count AND each shot's duration_s (4-10 "
+              "seconds, from how long the action NEEDS) from the story "
+              "itself (use past_task_shapes as experience from similar "
               f"past tasks); max_shots ({max_shots}) is only a COST ceiling, "
               "never a target — never pad by repeating a shot."
         )
+        raw = ""
         try:
-            data = _extract_json(llm.complete(prompt))
+            raw = llm.complete(prompt)
+            data = _extract_json(raw)
         except Exception:
             data = None
+        brain_log("window/scene_write", {
+            "raw": raw, "parsed": data if isinstance(data, dict) else None,
+            "usable": bool(isinstance(data, dict)
+                           and isinstance(data.get("shots"), list))})
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
             shots, durs, seen = [], [], set()
             for s_ in data["shots"][:max_shots]:
@@ -374,18 +401,19 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                 if len(text) >= 12 and key not in seen:
                     seen.add(key)
                     shots.append(text)
-                    # 时长是 brain 的决定;缺失/非法 → API 自然默认 5s
-                    # (用户裁决:绝不用 config 预设的任意数)。夹在生成模型
-                    # 的时长域 [4,15] 内。
+                    # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
+                    # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
+                    # 用模型自然默认(用户裁决:绝不 feed 任何预设值)。
                     try:
-                        durs.append(max(4, min(15, int(dur))))
+                        durs.append(max(4, min(10, int(dur))))
                     except (TypeError, ValueError):
-                        durs.append(5)
+                        durs.append(None)
             if shots:
                 return shots, durs, "llm"
     fb = list(fallback_fn())
-    # 兜底层没有 brain → 一律 API 自然默认 5s(不是 config 的 shot_duration)
-    return fb, [5] * len(fb), "fallback"
+    # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
+    # (不是 config 的 shot_duration,也不是我们编的数)
+    return fb, [None] * len(fb), "fallback"
 
 
 def _skill_body_named(name: str) -> str:
@@ -409,16 +437,24 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
     2) brain LLM 严格 JSON → via="llm";
     3) 确定性优先级兜底 → via="fallback"(菜单非空必有解,循环永不卡死)。"""
     names = {m["name"] for m in menu}
+    label = (context.get("shot", {}).get("label")
+             if isinstance(context.get("shot"), dict) else None)
     if replay_hint and replay_hint in names:
-        return {"strategy": replay_hint, "via": "episode",
-                "reason": f"replaying a verified strategy from a similar past episode"}
+        d = {"strategy": replay_hint, "via": "episode",
+             "reason": "replaying a verified strategy from a similar past episode"}
+        brain_log(f"window/{kind}", {"label": label, "parsed": dict(d),
+                                     "via": "episode", "usable": True})
+        return d
     picked = _brain_pick(llm, kind, menu, context)
     if picked:
         return {**picked, "via": "llm"}
     for name in priority:
         if name in names:
-            return {"strategy": name, "via": "fallback",
-                    "reason": "deterministic priority (brain reply unusable)"}
+            d = {"strategy": name, "via": "fallback",
+                 "reason": "deterministic priority (brain reply unusable)"}
+            brain_log(f"window/{kind}", {"label": label, "parsed": dict(d),
+                                         "via": "fallback", "usable": True})
+            return d
     return {"strategy": "t2v", "via": "fallback", "reason": "empty menu guard"}
 
 
@@ -689,10 +725,11 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
         if "ref_video" in caps:
             menu.append({"name": "tiv2v_window",
                          "description": "Previous shot's TAIL video segment as "
-                                        "a motion reference (+ own first-frame "
-                                        "image as the first frame if planned) "
-                                        "+ text — the generator SEES the "
-                                        "ongoing motion."})
+                                        "@Video1 (motion reference — the "
+                                        "generator SEES the ongoing motion); a "
+                                        "planned own image rides along as "
+                                        "@Image1, a SOFT look reference (NOT a "
+                                        "locked first frame)."})
         if (has_kf or refs) and "ref_images" in caps:
             menu.append({"name": "ti2v_prev_plus_keyframe",
                          "description": "t2v reference channel with the "
@@ -862,16 +899,30 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         cond = {"strategy": strategy, "degraded_from": "multi_image_fusion"}
 
     if strategy == "tiv2v_window":
+        # 映射表铁律(docs/CONDITION_MODEL_MAP.md §1 #8):tiv2v_window 永远走
+        # text-to-video 端点 —— 尾段视频走 reference_videos(@Video1),本镜图
+        # (如有)走 reference_images(@Image1,软锚)。旧实现把图当 first_frame
+        # 会切到 image-to-video 端点,而 i2v schema 没有 reference_videos(未
+        # 验证组合,后端现已直接拒绝)。要硬锁开场帧选 ti2v_prev_last /
+        # flf2v_bridge,不选本策略。
         tail = _cut_tail(Path(prev.video_path), window_tail_s,
                          cache_dir / f"shot{spec.shot_idx:03d}_prev_tail.mp4")
         ref = tail if tail is not None else Path(prev.video_path)
+        own_imgs = [kf] if kf is not None else list(refs or [])
         cond.update(reference_video=str(ref),
                     tail_seconds=(window_tail_s if tail else None),
-                    first_frame=str(kf) if kf else None)
+                    reference_images=([str(p) for p in own_imgs] or None),
+                    anchoring="soft_t2v_video_refs")
+        fallback_prompt = (
+            spec.prompt + ". @Video1 is the immediately preceding moment of "
+            "this scene — continue its motion and camera seamlessly."
+            + "".join(f" @Image{i + 1} shows this shot's planned look — "
+                      "stay consistent with it."
+                      for i in range(len(own_imgs))))
         return Path(video_gen.generate(
-            prompt=brain_prompt or spec.prompt, duration=spec.duration,
-            out_path=out, fps=fps,
-            first_frame=kf, seed=seed, reference_video=ref)), cond
+            prompt=brain_prompt or fallback_prompt, duration=spec.duration,
+            out_path=out, fps=fps, seed=seed, reference_video=ref,
+            reference_images=(own_imgs or None))), cond
 
     if strategy == "ti2v_prev_last":
         last = _last_frame(Path(prev.video_path),
@@ -974,10 +1025,11 @@ def generate_movie_windowed(
                                 if outline_via == "llm"
                                 else "deterministic clause split (fallback)"})
     specs = director.run(outline, asset_memory, lesson_library)
-    # 时长是 brain 的决定(或兜底 5s)—— 覆盖 director 从 config 带来的预设
+    # 时长是 brain 的决定([4,10]),没决定就是 None(= 生成调用不传
+    # duration 字段,API 用默认)—— 一律覆盖 director 从 config 带来的预设
     # (用户裁决:千万不能自己随意指定时长)。
     for spec_, dur_ in zip(specs, shot_durations):
-        spec_.duration = float(dur_)
+        spec_.duration = (float(dur_) if dur_ is not None else None)
     storyboard = StoryboardMemory.from_outline(
         outline, path=cache_dir / "storyboard.json")
     log.info("window: playwriting done via=%s — %s",

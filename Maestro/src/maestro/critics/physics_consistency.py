@@ -70,7 +70,7 @@ class PhysicsConsistencyCritic(BaseCritic):
             spec.physics_annotation.strictness if spec.physics_annotation else 1.0
         )
         threshold = self.threshold / max(strictness, 1e-6)
-        n_frames = max(1, int(round(spec.duration * fps)))
+        n_frames = max(1, int(round((spec.duration or 5.0) * fps)))
 
         for report in result.measured_reports:
             if report.violation < threshold:

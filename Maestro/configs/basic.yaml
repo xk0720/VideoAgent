@@ -39,6 +39,8 @@ models:
     # extend_model: "bytedance/seedance-2.0/video-extend"
     poll_interval: 2.0
     timeout: 600
+    # call_log: "outputs/wavespeed_calls.jsonl"  # 每次调用(模型+参数)落盘;
+    #   test_window_movie.py 未配置时自动设为 <out_dir>/wavespeed_calls.jsonl
 
   # 以下先全部 mock —— 先把主链路跑通，之后再按需开启。
   track_extractor:

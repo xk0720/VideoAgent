@@ -343,7 +343,7 @@ class OpenAICompatVLM(BaseMLLMClient):
             else []
         )
         allowed = [m.value for m in expected] if expected else [m.value for m in PhysFailureMode]
-        n_frames = max(1, int(round(spec.duration * fps)))
+        n_frames = max(1, int(round((spec.duration or 5.0) * fps)))
         prompt = (
             "You are a physics-plausibility judge for a generated video clip. "
             "The frames below are sampled in time order. Report physical-law "

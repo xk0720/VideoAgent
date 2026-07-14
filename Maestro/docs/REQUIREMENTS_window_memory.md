@@ -361,3 +361,25 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
 - 测试:`tests/unit/test_native_video_review.py`(单次上传断言、
   checks/issues→checklist/verdict 映射、秒→帧、盲测回映射与接受规则、
   A/B 主闸与指标兜底)。
+
+---
+
+## 追加需求(2026-07-14 第二轮,已裁决并实现):模型映射确定化 + 调用日志 + 时长
+
+- **任务 0(模型映射 + debug 可见性)**:"所有可能的情况与调用模型名称的
+  对应关系肯定都是确定的 —— 先调研、写文档、再按文档改代码。"
+  → 权威映射表 `docs/CONDITION_MODEL_MAP.md`(9 条件策略 + 12 修复工具 →
+  模型 id + payload 字段 + 时长规则,全部官方 schema 核验);
+  → 每次 WaveSpeed 调用(模型名 + 参数)打终端 INFO + 落
+  `<out_dir>/wavespeed_calls.jsonl`(WaveSpeedClient._run_task 唯一出口);
+  → 路由修正:tiv2v_window 一律走 seedance-2.0 **text-to-video**
+  (尾段 = reference_videos/@Video1;本镜图 = reference_images/@Image1
+  软锚,绝不再把图当 first_frame 切到 i2v 端点 —— i2v schema 没有
+  reference_videos,未验证组合,后端 generate() 现在任何上传前直接拒绝)。
+- **任务 1(duration)**:brain 逐镜自判时长,范围写死 **4-10s**(第一版
+  裁决 3-8s,同日改 4-10s);**brain 没输出 → None = 生成调用不传
+  duration 字段,用模型自然默认**(绝不 feed 预设值);规划值原样传进
+  每个生成调用(窗口策略 / generator / extend / propagate)。seedance
+  [4,15] ⊇ [4,10] 原样直传;kling {5,10} 向上 snap(call log 可核对)。
+- **debug 追加**:brain 的原始输出(策略/工具决策)也要落日志(见
+  window_loop/_decide 与 orchestrator 的 brain_log)。

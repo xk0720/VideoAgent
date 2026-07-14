@@ -326,7 +326,8 @@ def _tier1_replan_physics(
         out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_t1_extend.mp4"
         video_path = generator.video_gen.extend(
             prompt=action.hint, video_path=best.video_path, out_path=out,
-            duration=max(1, int(round(spec.duration))),
+            duration=(None if spec.duration is None
+                      else max(1, int(round(spec.duration)))),
         )
         cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
         gen_calls += 1
@@ -709,7 +710,8 @@ def _repair_router_fallback(
         out = cache_dir / f"shot{spec.shot_idx:03d}_r{r}_fb_extend.mp4"
         vp = generator.video_gen.extend(
             prompt=action.hint, video_path=best.video_path, out_path=out,
-            duration=max(1, int(round(spec.duration))),
+            duration=(None if spec.duration is None
+                      else max(1, int(round(spec.duration)))),
         )
         cand = CandidateClip(shot_idx=spec.shot_idx, video_path=vp, revision=r)
     elif action.action == "retrieve_replace" and retrieval is not None:

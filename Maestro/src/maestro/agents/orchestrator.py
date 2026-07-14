@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..critics.board import ReviewBoard
-from ..logging_utils import get_logger
+from ..logging_utils import brain_log, get_logger
 from ..models.image_edit import BaseImageEditClient
 from ..models.llm import BaseLLMClient, MockLLMClient
 from ..models.mllm_backends import _extract_json  # reuse the exact JSON extractor
@@ -397,6 +397,12 @@ class OrchestratorAgent:
             log.info("orchestrator REPLAY learned repair skill=%s step=%d tool=%s",
                      skill_decision["skill_id"], skill_decision["step_idx"],
                      skill_decision["tool"])
+            brain_log("repair/decide", {
+                "shot_idx": spec.shot_idx, "via": "skill",
+                "parsed": {k: skill_decision[k]
+                           for k in ("tool", "args", "skill_id", "step_idx")
+                           if k in skill_decision},
+                "usable": True})
             self._log("decide", {"shot_idx": spec.shot_idx},
                       {"valid": True, "via": "skill",
                        "skill_id": skill_decision["skill_id"],
@@ -412,6 +418,10 @@ class OrchestratorAgent:
         if not isinstance(data, dict) or str(data.get("tool", "")) not in valid_names:
             log.info("orchestrator brain reply invalid/out-of-menu → fallback "
                      "(reply=%.120r)", reply)
+            brain_log("repair/decide", {
+                "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
+                "raw": reply, "parsed": data if isinstance(data, dict) else None,
+                "usable": False})
             self._log("decide", {"shot_idx": spec.shot_idx},
                       {"valid": False, "raw": (reply or "")[:200]})
             return dict(INVALID)
@@ -424,6 +434,10 @@ class OrchestratorAgent:
         }
         log.info("orchestrator brain decided tool=%s reason=%s",
                  decision["tool"], decision["reason"])
+        # debug 日志(2026-07-14 用户令):修复 brain 的 tool call 原文全量留底
+        brain_log("repair/decide", {
+            "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
+            "raw": reply, "parsed": dict(decision), "usable": True})
         self._log("decide", {"shot_idx": spec.shot_idx},
                   {"valid": True, "via": "llm", "tool": decision["tool"],
                    "args": decision["args"], "reason": decision["reason"]})
@@ -584,7 +598,8 @@ class OrchestratorAgent:
                 "entities present on one continuous trajectory"
             video_path = self.video_gen.extend(
                 prompt=prompt, video_path=best.video_path, out_path=out,
-                duration=max(1, int(round(spec.duration))),
+                duration=(None if spec.duration is None
+                          else max(1, int(round(spec.duration)))),
             )
             cand = CandidateClip(shot_idx=spec.shot_idx, video_path=video_path, revision=r)
 

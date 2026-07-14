@@ -221,7 +221,9 @@ class EventGraph:
 @dataclass
 class ShotSpec:
     shot_idx: int
-    duration: float
+    # None = brain 没规划时长 → 生成调用不传 duration 字段(API 用自己的默认);
+    # 有值 = brain 规划的秒数([4,10] 写死),每个生成调用都必须原样传入。
+    duration: Optional[float]
     prompt: str
     cinematography: CinematographyTags = field(default_factory=CinematographyTags)
     identity_refs: list[str] = field(default_factory=list)

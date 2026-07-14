@@ -132,3 +132,11 @@ accept/reject,verdict 挂 candidate.verifier_verdict)→ None 时大声记
 - [ ] vidu reference-to-video / wan-2.7 多图 — 官方页未核验(UNVERIFIED),核验后再动
 - [ ] repaint 需分割后端(Sa2VA/SAM)— 挂起(GPU)
 - [ ] CaptioningTool 仍为确定性 mock — 挂起(非关键路径)
+- [ ] regenerate_segment 命中头部段(frame_start=0)时锚帧取自缺陷片自身
+  第 0 帧,窗口镜头会丢"上镜续接"条件(2026-07-14 field run:shot1
+  修复后 "lands on the counter" 被 verifier 拒)。正确做法:头部段修复
+  重新执行该镜的原始窗口条件 — 登记,待做
+- [x] 条件策略→模型映射确定化 + 全调用日志(docs/CONDITION_MODEL_MAP.md;
+  wavespeed_calls.jsonl)— 2026-07-14 补
+- [x] tiv2v_window 误把图当 first_frame 切 i2v 端点(i2v 无 reference_videos
+  通道)→ 一律 t2v + @Video1/@Image1;后端上传前拒绝该组合 — 2026-07-14 修

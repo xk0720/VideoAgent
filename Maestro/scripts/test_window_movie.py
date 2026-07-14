@@ -114,11 +114,19 @@ def main() -> int:
 
     llm = build_llm(models_cfg.get("llm"))
     mllm = build_mllm(models_cfg.get("mllm"))
-    video_gen = build_video_gen(models_cfg.get("video_gen"))
+    # 任务 0:每次 WaveSpeed 调用(模型名+参数)落盘可核对
+    vg_cfg = dict(models_cfg.get("video_gen") or {})
+    vg_cfg.setdefault("call_log", str(run_dir / "wavespeed_calls.jsonl"))
+    video_gen = build_video_gen(vg_cfg)
+    # debug:brain 每次决策的原始输出 + 解析结果(核对策略→模型映射用)
+    from maestro.logging_utils import set_brain_log
+    set_brain_log(run_dir / "brain_calls.jsonl")
     print(f"配置: {args.config}")
     print(f"  brain LLM = {getattr(llm, 'model', '?')}  |  评审 VLM = "
           f"{getattr(mllm, 'model', '?')}  |  视频 = "
           f"{getattr(video_gen, 'model_id', '?')}")
+    print(f"  调用日志: {vg_cfg['call_log']}")
+    print(f"  brain 决策日志: {run_dir / 'brain_calls.jsonl'}")
     # ── 用户素材入库(--image/--video)→ AssetMemory ─────────────────────
     from maestro.tools.retrieval_tool import RetrievalTool
     from maestro.types import AssetMemory, Identity, Shot

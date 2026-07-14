@@ -18,7 +18,7 @@ class BaseVideoGenClient(ABC):
     def generate(
         self,
         prompt: str,
-        duration: float,
+        duration: Optional[float],
         out_path: Path,
         fps: int = 8,
         first_frame: Optional[Path] = None,
@@ -51,7 +51,7 @@ class MockVideoGenClient(BaseVideoGenClient):
     def generate(
         self,
         prompt: str,
-        duration: float,
+        duration: Optional[float],
         out_path: Path,
         fps: int = 8,
         first_frame: Optional[Path] = None,
