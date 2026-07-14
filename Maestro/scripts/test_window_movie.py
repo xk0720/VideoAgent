@@ -80,6 +80,11 @@ def main() -> int:
     ap.add_argument("--with-physics-measure", action="store_true",
                     help="启用 CoTracker+GroundingDINO 测量 critic(需 GPU)")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--image", action="append", default=[], metavar="PATH[::DESC]",
+                    help="用户提供的图片素材(可多次);'::' 后接英文描述,"
+                         "不给则由 VLM 自动打标(Q-D 链)")
+    ap.add_argument("--video", action="append", default=[], metavar="PATH[::DESC]",
+                    help="用户提供的视频素材(可多次);'::' 后接英文描述")
     args = ap.parse_args()
 
     from maestro.config import load_yaml
@@ -114,6 +119,53 @@ def main() -> int:
     print(f"  brain LLM = {getattr(llm, 'model', '?')}  |  评审 VLM = "
           f"{getattr(mllm, 'model', '?')}  |  视频 = "
           f"{getattr(video_gen, 'model_id', '?')}")
+    # ── 用户素材入库(--image/--video)→ AssetMemory ─────────────────────
+    from maestro.tools.retrieval_tool import RetrievalTool
+    from maestro.types import AssetMemory, Identity, Shot
+
+    def _split_asset(arg: str) -> tuple[str, str]:
+        path, _, desc = arg.partition("::")
+        return path.strip(), desc.strip()
+
+    asset_memory = AssetMemory()
+    for i, a in enumerate(args.image):
+        pth, desc = _split_asset(a)
+        if not Path(pth).is_file():
+            print(f"❌ 图片素材不存在: {pth}")
+            return 2
+        asset_memory.identity_anchors[f"img{i}"] = Identity(
+            identity_id=f"img{i}", name=Path(pth).stem,
+            description=desc, source=str(Path(pth).resolve()))
+    for i, a in enumerate(args.video):
+        pth, desc = _split_asset(a)
+        vp = Path(pth)
+        if not vp.is_file():
+            print(f"❌ 视频素材不存在: {pth}")
+            return 2
+        # 时长用 ffprobe 探;探不到给 5s(只影响元数据,不影响抽帧)
+        try:
+            import subprocess as _sp
+            out = _sp.run(["ffprobe", "-v", "error", "-show_entries",
+                           "format=duration", "-of",
+                           "default=noprint_wrappers=1:nokey=1", str(vp)],
+                          capture_output=True, text=True, timeout=30)
+            dur = float(out.stdout.strip())
+        except Exception:
+            dur = 5.0
+        asset_memory.video_shots[f"vid{i}"] = Shot(
+            shot_id=f"vid{i}", source_video=str(vp.resolve()),
+            start_time=0.0, end_time=dur,
+            caption=desc or vp.stem.replace("_", " "))
+    retrieval = RetrievalTool(asset_memory) if (
+        asset_memory.identity_anchors or asset_memory.video_shots) else None
+
+    # Q-D 素材打标链:用户描述 > VLM caption > 文件名(真 VLM 才回填)
+    from maestro.pipeline.window_loop import ensure_asset_descriptions
+    n_cap = ensure_asset_descriptions(asset_memory, mllm)
+    if asset_memory.identity_anchors or asset_memory.video_shots:
+        print(f"  素材库: {asset_memory.summarize()}"
+              + (f";VLM 补标 {n_cap} 条" if n_cap else ""))
+
     critics = [SemanticCritic(mllm=mllm), PhysicsCritic(mllm=mllm)]
     if args.with_physics_measure:
         from maestro.critics.physics_consistency import PhysicsConsistencyCritic
@@ -127,15 +179,11 @@ def main() -> int:
         llm=llm, generator=generator, refiner=RefinerAgent(),
         image_edit=build_image_edit({"name": "wavespeed"}),  # 真实 keyframe 编辑(seedream-v4)
         skill_library=SkillLibrary(run_dir / "skills.jsonl"),
+        retrieval=retrieval,   # 修复工具 retrieve_replace 的素材入口
         max_turns=args.max_turns)
     # 长期 episode 记忆放稳定目录(跨 run 累积 —— 这正是它存在的意义)
     episode_memory = EpisodeMemory(base / "memory" / "episodes.jsonl")
 
-    # Q-D 素材打标链:用户描述 > VLM caption > 文件名(真 VLM 才回填)
-    from maestro.pipeline.window_loop import ensure_asset_descriptions
-    n_cap = ensure_asset_descriptions(None, mllm)  # 无素材时为 0;接入素材库后生效
-    if n_cap:
-        print(f"  素材打标: VLM 补了 {n_cap} 条描述")
 
     _section("窗口式全片生成(§A 剧本 → §B' Image Plan → §C+§D 逐镜 → §E 合成 → §M 蒸馏)")
     res = generate_movie_windowed(
@@ -143,6 +191,7 @@ def main() -> int:
         board=ReviewBoard(critics=critics, metric_tool=MetricTool()),
         generator=generator, refiner=RefinerAgent(), verifier=VerifierAgent(judge=mllm),
         orchestrator=orchestrator, cache_dir=run_dir,
+        asset_memory=asset_memory, retrieval=retrieval,
         screenwriter=ScreenwriterAgent(llm=llm), director=DirectorAgent(llm=llm),
         tournament=Tournament(judge=mllm),
         skill_library=orchestrator.skill_library,
