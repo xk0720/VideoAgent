@@ -383,3 +383,22 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
   [4,15] ⊇ [4,10] 原样直传;kling {5,10} 向上 snap(call log 可核对)。
 - **debug 追加**:brain 的原始输出(策略/工具决策)也要落日志(见
   window_loop/_decide 与 orchestrator 的 brain_log)。
+
+---
+
+## 追加需求(2026-07-15,已实现):基线锚点 + Prompt Enhancer(均超参开关)
+
+- **需求 1(基线锚点)**:任务开始单独调用 brain 按用户指令一次直出视频
+  作 anchor,收尾与成片对比,目的"不扰乱原方法、量化框架增益"。
+  → `--baseline-anchor`(+ `--anchor-duration`);路线确定性:无素材 =
+  t2v;仅图 = ti2v(首图当首帧);有视频(可带图)= seedance-2.0 t2v +
+  reference_images/videos(视频裁到 ≤15s/条,≤3 条)。收尾
+  verify_pair 盲测(candidate=成片,baseline=锚点),判决进
+  MovieResult.baseline_anchor.final_vs_anchor;锚点任何失败只记日志。
+- **需求 2(Prompt Enhancer)**:可选 agent,skill 按各模型官方 prompt
+  guide 蒸馏(`skills/brain_skills/prompt_enhancer/SKILL.md`:通用结构
+  主体→动作→场景→镜头→光;seedance @ImageN/@VideoN、kling
+  "reference image N"、i2v/flf2v 只写运动不写静态、忌否定句/抽象词)。
+  输入 = shot 描述 + 执行器收集的条件事实清单(_conditions_for_prompt,
+  增强器只能利用不能发明)+ 策略→家族映射;输出 STRICT JSON,校验失败
+  保留原 prompt。`--prompt-enhancer` 开启;原始输出进 brain_calls.jsonl。

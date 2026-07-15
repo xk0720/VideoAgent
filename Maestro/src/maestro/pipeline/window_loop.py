@@ -201,6 +201,9 @@ class MovieResult:
     shot_results: list = field(default_factory=list)   # SelfImproveResult per shot
     episode_id: str = ""
     decisions: list = field(default_factory=list)      # brain 的 §B/§C 决策流水
+    # 需求 1(2026-07-15):基线锚点 {path, route, prompt, via,
+    # final_vs_anchor(盲测判决或 None)};开关没开 = None。
+    baseline_anchor: Optional[dict] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -951,6 +954,174 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         fps=fps, seed=seed)), cond
 
 
+def _conditions_for_prompt(strategy: str, entry, prev,
+                           use_prev_tail: bool) -> list[dict]:
+    """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
+    按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
+    事实,不能发明条件。逐条 {kind, role, description}。"""
+    conds: list[dict] = []
+    prev_ok = prev is not None and getattr(prev, "video_path", None)
+    if strategy in ("ti2v_prev_last", "flf2v_bridge",
+                    "ti2v_prev_plus_keyframe", "multi_image_fusion") and prev_ok:
+        conds.append({"kind": "image", "role": "previous_last_frame",
+                      "description": "the previous shot's exact last frame "
+                                     "(the moment this shot continues from)"})
+    if strategy == "tiv2v_window" and prev_ok:
+        conds.append({"kind": "video", "role": "previous_tail",
+                      "description": "the previous shot's tail segment — the "
+                                     "ongoing motion this shot continues"})
+    if strategy == "multi_image_fusion" and use_prev_tail and prev_ok:
+        conds.append({"kind": "video", "role": "previous_tail",
+                      "description": "the previous shot's tail segment "
+                                     "(rides along as a motion reference)"})
+    for im in (entry.images or []):
+        p = im.get("path")
+        if p and Path(p).exists():
+            conds.append({"kind": "image", "role": str(im.get("role", "")),
+                          "description": str(im.get("description", ""))
+                          or f"a planned {im.get('role', 'reference')} image"})
+    return conds
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 基线锚点(2026-07-15 需求 1,开关控制):任务开始时按用户指令【一次调用】
+# 直出一条视频,收尾与我们的成片盲测对比 —— 框架到底比"裸调一次模型"好
+# 多少,让 verifier 说话。路线映射是确定性的(用户设定):
+#   无素材            → seedance-2.0 text-to-video
+#   仅图片            → seedance-2.0 image-to-video(ti2v,首图当首帧)
+#   有视频(可带图)   → seedance-2.0 text-to-video + reference_images/videos
+# 全程 try/except:锚点是附加物,任何失败只记日志,绝不影响正流程。
+# ─────────────────────────────────────────────────────────────────────────
+def _head_clip(video: Path, seconds: float, out: Path) -> Optional[Path]:
+    """取视频开头 ≤seconds 秒(seedance reference_videos 单条 ≤15s 的硬限)。
+    时长本来就达标 → 原样返回;ffmpeg/ffprobe 缺失或失败 → None(调用方
+    诚实放弃该视频条件)。"""
+    import shutil
+    import subprocess
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return None
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
+            capture_output=True, text=True, timeout=30)
+        dur = float(probe.stdout.strip())
+        if dur <= seconds:
+            return video
+        out.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(video), "-t", f"{seconds:.2f}",
+             "-c", "copy", str(out)], capture_output=True, timeout=300)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return out
+    except Exception:
+        pass
+    return None
+
+
+def _asset_media(asset_memory) -> tuple[list[Path], list[Path], list[str]]:
+    """素材库 → (存在的图片, 存在的视频, 文字描述清单)。"""
+    imgs: list[Path] = []
+    vids: list[Path] = []
+    notes: list[str] = []
+    if asset_memory is None:
+        return imgs, vids, notes
+    img_ext = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+    for ident in (asset_memory.identity_anchors or {}).values():
+        p = Path(str(ident.source))
+        if ident.source and p.exists() and p.suffix.lower() in img_ext:
+            imgs.append(p)
+            notes.append(f"image: {ident.description or ident.name or p.name}")
+    for shot in (asset_memory.video_shots or {}).values():
+        p = Path(str(shot.source_video))
+        if shot.source_video and p.exists() and p not in vids:
+            vids.append(p)
+            notes.append(f"video: {shot.caption or p.name}")
+    return imgs, vids, notes
+
+
+def _generate_baseline_anchor(user_prompt: str, asset_memory, video_gen, llm,
+                              cache_dir: Path, duration=None,
+                              prompt_enhancer=None) -> Optional[dict]:
+    """一次调用直出锚点视频。返回 {path, route, prompt, via} 或 None(失败)。"""
+    try:
+        imgs, vids, notes = _asset_media(asset_memory)
+        out = Path(cache_dir) / "baseline_anchor.mp4"
+        # 锚点 prompt:brain 把用户指令浓缩成【单条】视频 prompt(整个故事
+        # 一镜到底);enhancer 开着就用它(技能里有参考语法),否则轻量内联
+        # 指令;LLM 不可用 → 用户指令原文(诚实 fallback)。
+        prompt, via = user_prompt, "fallback"
+        conds = ([{"kind": "image", "role": "reference", "description": n[7:]}
+                  for n in notes if n.startswith("image: ")]
+                 + [{"kind": "video", "role": "reference", "description": n[7:]}
+                    for n in notes if n.startswith("video: ")])
+        if prompt_enhancer is not None:
+            strategy = ("t2v_own_refs" if vids or len(imgs) > 1
+                        else "i2v_keyframe" if imgs else "t2v")
+            got = prompt_enhancer.run(
+                user_prompt, strategy=strategy, conditions=conds,
+                base_prompt=user_prompt, label="baseline_anchor")
+            if got:
+                prompt, via = got, "enhancer"
+        elif llm is not None:
+            raw = ""
+            try:
+                raw = llm.complete(
+                    "Condense the following video task into ONE video-"
+                    "generation prompt (English, 30-100 words, subject + "
+                    "action + setting + camera), covering the WHOLE story "
+                    "as a single continuous shot."
+                    + (" Mention provided references as @Image1…/@Video1 "
+                       "with their purpose. Available materials: "
+                       + "; ".join(notes) if notes else "")
+                    + f'\n\nTASK: {user_prompt}\n\nSTRICT JSON only: '
+                      '{"video_prompt": "..."}')
+                data = _extract_json(raw)
+                got = (data or {}).get("video_prompt") if isinstance(data, dict) else None
+                if isinstance(got, str) and got.strip():
+                    prompt, via = got.strip(), "llm"
+            except Exception:
+                pass
+            brain_log("window/baseline_anchor", {
+                "raw": raw, "parsed": {"video_prompt": prompt}, "via": via,
+                "usable": via != "fallback"})
+
+        # 确定性路线(用户设定的映射,docs/CONDITION_MODEL_MAP.md §5)
+        if vids:
+            route = "t2v_refs"
+            capped = []
+            for i, v in enumerate(vids[:3]):          # ≤3 条、每条 ≤15s
+                c = _head_clip(v, 15.0,
+                               Path(cache_dir) / f"anchor_ref{i}.mp4")
+                if c is not None:
+                    capped.append(c)
+            if not capped:
+                log.warning("baseline_anchor: no usable reference video "
+                            "(ffmpeg missing / cut failed) — images/t2v only")
+            video_gen.generate(
+                prompt=prompt, duration=duration, out_path=out, seed=0,
+                reference_images=(imgs[:9] or None),
+                reference_video=(capped[0] if capped else None))
+        elif imgs:
+            route = "ti2v"
+            if len(imgs) > 1:
+                log.info("baseline_anchor: %d images — first one is the "
+                         "first frame (user-ruled ti2v route)", len(imgs))
+            video_gen.generate(prompt=prompt, duration=duration,
+                               out_path=out, seed=0, first_frame=imgs[0])
+        else:
+            route = "t2v"
+            video_gen.generate(prompt=prompt, duration=duration,
+                               out_path=out, seed=0)
+        log.info("baseline_anchor: generated via %s route → %s", route, out)
+        return {"path": str(out), "route": route, "prompt": prompt,
+                "via": via}
+    except Exception as exc:
+        log.warning("baseline_anchor generation failed (%s) — the main "
+                    "pipeline continues without it", exc)
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 主入口 —— 大循环
 # ─────────────────────────────────────────────────────────────────────────
@@ -980,6 +1151,9 @@ def generate_movie_windowed(
     window_tail_s: float = 2.0,         # §C5 尾段窗口长度(秒)
     patience: int = 2,                  # 小循环:连续 N 轮被拒即止损(≤0 关闭)
     quality_bar: Optional[float] = None,  # 小循环:达标即停(None 关闭)
+    baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
+    baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
+    prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
 ) -> MovieResult:
     """窗口式全片生成:§A playwriting → §B keyframe → §C+§D 逐镜窗口循环
     → §E 合成 → §M episode 蒸馏。全程读写 StoryboardMemory(R1)。"""
@@ -989,6 +1163,16 @@ def generate_movie_windowed(
     llm = llm or getattr(orchestrator, "llm", None)
     video_gen = generator.video_gen
     decisions: list[dict] = []
+
+    # ── 需求 1:基线锚点(开关控制;失败绝不影响正流程)──────────────────
+    anchor: Optional[dict] = None
+    if baseline_anchor:
+        anchor = _generate_baseline_anchor(
+            user_prompt, asset_memory, video_gen, llm, cache_dir,
+            duration=baseline_anchor_duration, prompt_enhancer=prompt_enhancer)
+        decisions.append({"stage": "baseline_anchor",
+                          **({k: anchor[k] for k in ("route", "via", "path")}
+                             if anchor else {"failed": True})})
 
     # §M 开工:检索长期记忆的开工简报(没有 episode_memory 就是空简报)
     guidance = (episode_memory.guidance_for(user_prompt)
@@ -1100,6 +1284,19 @@ def generate_movie_windowed(
                           and Path(entry.keyframe_path).exists() else [])
         brain_prompt = d.get("video_prompt", "")
         use_tail = bool(d.get("use_prev_tail_video", False))
+        # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
+        # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
+        if prompt_enhancer is not None:
+            enhanced = prompt_enhancer.run(
+                entry.description, strategy=d["strategy"],
+                conditions=_conditions_for_prompt(d["strategy"], entry, prev,
+                                                  use_tail),
+                base_prompt=brain_prompt or spec.prompt, label=entry.label)
+            if enhanced:
+                brain_prompt = enhanced
+                decisions.append({"stage": "prompt_enhance",
+                                  "label": entry.label,
+                                  "strategy": d["strategy"], "via": "llm"})
         for s in range(max(1, n_candidates)):
             try:
                 video_path, cond = _generate_with_condition(
@@ -1215,6 +1412,33 @@ def generate_movie_windowed(
         except Exception as exc:          # ffmpeg 缺失等 → 不合成,单镜可用
             log.info("window: merge degraded (%s) — per-shot clips remain", exc)
 
+    # ── 需求 1 收尾:成片 vs 锚点盲测(verifier 的 verify_pair,同一评委)。
+    # 判不了(mock/无 key/合成失败)→ 如实记 None,绝不编分。
+    if anchor is not None and final is not None:
+        judge = getattr(verifier, "judge", None)
+        verdict = None
+        if judge is not None and hasattr(judge, "verify_pair"):
+            try:
+                verdict = judge.verify_pair(
+                    str(final), str(anchor["path"]), user_prompt,
+                    repair_context={"note": "framework final movie "
+                                            "(candidate) vs one-call "
+                                            "baseline anchor (baseline)"},
+                    seed=0)
+            except Exception as exc:
+                log.warning("baseline_anchor compare failed: %s", exc)
+        anchor["final_vs_anchor"] = verdict
+        decisions.append({"stage": "baseline_anchor_compare",
+                          "verdict": verdict})
+        if verdict is not None:
+            log.info("window: final movie vs baseline anchor → %s "
+                     "(score=%+d, dims=%s)", verdict.get("conclusion"),
+                     verdict.get("score", 0), verdict.get("dim_scores"))
+        else:
+            log.info("window: final-vs-anchor comparison unavailable "
+                     "(no native-video judge) — anchor kept at %s",
+                     anchor["path"])
+
     # ── §M 收工:蒸馏 episode(good/bad 由客观收敛状态判定)────────────────
     episode_id = ""
     if episode_memory is not None:
@@ -1227,4 +1451,4 @@ def generate_movie_windowed(
 
     return MovieResult(final_video=final, storyboard=storyboard,
                        shot_results=shot_results, episode_id=episode_id,
-                       decisions=decisions)
+                       decisions=decisions, baseline_anchor=anchor)

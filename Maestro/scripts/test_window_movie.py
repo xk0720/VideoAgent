@@ -79,6 +79,14 @@ def main() -> int:
                     help="小循环总分达标线(≥即提前收工;默认关闭)")
     ap.add_argument("--with-physics-measure", action="store_true",
                     help="启用 CoTracker+GroundingDINO 测量 critic(需 GPU)")
+    ap.add_argument("--baseline-anchor", action="store_true",
+                    help="开工先按用户指令一次直出锚点视频,收尾与成片盲测"
+                         "对比(附加物,不影响正流程)")
+    ap.add_argument("--anchor-duration", type=int, default=None,
+                    help="锚点视频时长秒数(默认不传 = API 默认)")
+    ap.add_argument("--prompt-enhancer", action="store_true",
+                    help="启用 prompt 润色 agent(官方 prompt 技巧技能,"
+                         "按条件事实重写每镜 video prompt)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--image", action="append", default=[], metavar="PATH[::DESC]",
                     help="用户提供的图片素材(可多次);'::' 后接英文描述,"
@@ -194,6 +202,10 @@ def main() -> int:
 
 
     _section("窗口式全片生成(§A 剧本 → §B' Image Plan → §C+§D 逐镜 → §E 合成 → §M 蒸馏)")
+    prompt_enhancer = None
+    if args.prompt_enhancer:
+        from maestro.agents.prompt_enhancer import PromptEnhancerAgent
+        prompt_enhancer = PromptEnhancerAgent(llm=llm)
     res = generate_movie_windowed(
         args.prompt,
         board=ReviewBoard(critics=critics, metric_tool=MetricTool()),
@@ -206,12 +218,16 @@ def main() -> int:
         episode_memory=episode_memory, llm=llm,
         n_candidates=args.n_candidates, max_turns=args.max_turns,
         window_tail_s=args.tail_seconds,
-        patience=args.patience, quality_bar=args.quality_bar)
+        patience=args.patience, quality_bar=args.quality_bar,
+        baseline_anchor=args.baseline_anchor,
+        baseline_anchor_duration=args.anchor_duration,
+        prompt_enhancer=prompt_enhancer)
 
     _section("brain 决策流水(§B keyframe + §C 条件;via=episode/llm/fallback)")
     for d in res.decisions:
-        print(f"  [{d['stage']:9s}] {d['label']:<18s} → {d['strategy']:16s} "
-              f"via={d['via']:8s} {d.get('reason', '')[:70]}")
+        print(f"  [{d['stage']:9s}] {d.get('label', '—'):<18s} → "
+              f"{str(d.get('strategy', d.get('route', '—'))):16s} "
+              f"via={d.get('via', '—'):8s} {str(d.get('reason', ''))[:70]}")
 
     _section("台账终态(StoryboardMemory)")
     for e in res.storyboard.entries:
@@ -222,6 +238,16 @@ def main() -> int:
 
     _section("结果")
     print(f"  成片: {res.final_video or '(合成降级 — 单镜产物保留在台账里)'}")
+    if res.baseline_anchor:
+        a = res.baseline_anchor
+        print(f"  基线锚点: {a['path']}(route={a['route']}, via={a['via']})")
+        v = a.get("final_vs_anchor")
+        if v:
+            print(f"  成片 vs 锚点(盲测): {v.get('conclusion')} "
+                  f"score={v.get('score'):+d} dims={v.get('dim_scores')}")
+            print(f"    → {v.get('summary', '')}")
+        else:
+            print("  成片 vs 锚点: 判决不可用(无原生视频评委/合成降级)")
     print(f"  episode: {res.episode_id}(长期记忆 {episode_memory.path}) ")
     print(f"  台账: {run_dir / 'storyboard.json'}")
     print(f"\n📂 本次所有产物在: {run_dir.resolve()}")

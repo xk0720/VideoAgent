@@ -99,6 +99,34 @@
    不能变形);窗口整镜不做回贴——宁可镜头略长,不做 setpts 变速伤运动
    自然度。
 
+## 3b. 基线锚点(2026-07-15 需求 1,`--baseline-anchor` 开关)
+
+任务开始时按用户指令【一次调用】直出锚点视频,收尾用 verifier 的
+verify_pair(盲测,candidate=成片)与最终成片对比 —— 框架 vs 裸调一次
+模型,让评委说话。路线确定性(用户设定):
+
+| 用户素材 | 模型 id | payload |
+|---|---|---|
+| 无 | `bytedance/seedance-2.0/text-to-video` | `prompt` |
+| 仅图片 | `bytedance/seedance-2.0/image-to-video` | `image = 第一张图`(多图时其余不用,日志留痕) |
+| 有视频(可带图) | `bytedance/seedance-2.0/text-to-video` | `reference_videos = [≤3 条,每条裁到 ≤15s]` + `reference_images = [≤9 图]` |
+
+锚点 prompt:brain(或开了 enhancer 时由 enhancer)把整个故事浓缩成一条
+30-100 词的单镜 prompt;LLM 不可用 → 用户指令原文(via=fallback 留痕)。
+锚点是附加物:生成/对比任何失败只记日志,绝不影响正流程。产物
+`<out_dir>/baseline_anchor.mp4`,判决在 MovieResult.baseline_anchor。
+
+## 3c. Prompt Enhancer(2026-07-15 需求 2,`--prompt-enhancer` 开关)
+
+可选润色 agent(`agents/prompt_enhancer.py` +
+`skills/brain_skills/prompt_enhancer/SKILL.md`):输入 = shot 文字描述 +
+执行器收集的【条件事实清单】(每张图的角色/描述、参考视频)+ 策略推导的
+模型家族;先想"这镜怎么用这些条件",再按官方 prompt 技巧(seedance
+@ImageN/@VideoN、kling "reference image N"、i2v/flf2v 只写运动等,技能
+文件全量)重写 video prompt。STRICT JSON 校验失败 → 保留原 prompt
+(增强层永不破坏正流程);每次调用原文进 brain_calls.jsonl
+(stage=window/prompt_enhance)。
+
 ## 4. 调用日志(任务 0:每次调用可核对)
 
 `WaveSpeedClient._run_task` 是所有 WaveSpeed 调用的唯一出口,现在每次:
