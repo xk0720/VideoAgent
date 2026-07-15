@@ -101,9 +101,9 @@
 
 ## 3b. 基线锚点(2026-07-15 需求 1,`--baseline-anchor` 开关)
 
-任务开始时按用户指令【一次调用】直出锚点视频,收尾用 verifier 的
-verify_pair(盲测,candidate=成片)与最终成片对比 —— 框架 vs 裸调一次
-模型,让评委说话。路线确定性(用户设定):
+任务开始时按用户指令【一次调用】直出锚点视频。用户裁决(同日):
+**只生成,不做机器对比/verifier 裁决,也不接 prompt enhancer —— 用户
+自己看片对比**。路线确定性(用户设定):
 
 | 用户素材 | 模型 id | payload |
 |---|---|---|
@@ -111,10 +111,10 @@ verify_pair(盲测,candidate=成片)与最终成片对比 —— 框架 vs 裸�
 | 仅图片 | `bytedance/seedance-2.0/image-to-video` | `image = 第一张图`(多图时其余不用,日志留痕) |
 | 有视频(可带图) | `bytedance/seedance-2.0/text-to-video` | `reference_videos = [≤3 条,每条裁到 ≤15s]` + `reference_images = [≤9 图]` |
 
-锚点 prompt:brain(或开了 enhancer 时由 enhancer)把整个故事浓缩成一条
-30-100 词的单镜 prompt;LLM 不可用 → 用户指令原文(via=fallback 留痕)。
-锚点是附加物:生成/对比任何失败只记日志,绝不影响正流程。产物
-`<out_dir>/baseline_anchor.mp4`,判决在 MovieResult.baseline_anchor。
+锚点 prompt:brain LLM 把整个故事浓缩成一条 30-100 词的单镜 prompt;
+LLM 不可用 → 用户指令原文(via=fallback 留痕)。锚点是附加物:任何失败
+只记日志,绝不影响正流程。产物 `<out_dir>/baseline_anchor.mp4`,元信息
+(route/prompt/via)在 MovieResult.baseline_anchor。
 
 ## 3c. Prompt Enhancer(2026-07-15 需求 2,`--prompt-enhancer` 开关)
 

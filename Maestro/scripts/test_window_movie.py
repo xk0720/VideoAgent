@@ -240,14 +240,8 @@ def main() -> int:
     print(f"  成片: {res.final_video or '(合成降级 — 单镜产物保留在台账里)'}")
     if res.baseline_anchor:
         a = res.baseline_anchor
-        print(f"  基线锚点: {a['path']}(route={a['route']}, via={a['via']})")
-        v = a.get("final_vs_anchor")
-        if v:
-            print(f"  成片 vs 锚点(盲测): {v.get('conclusion')} "
-                  f"score={v.get('score'):+d} dims={v.get('dim_scores')}")
-            print(f"    → {v.get('summary', '')}")
-        else:
-            print("  成片 vs 锚点: 判决不可用(无原生视频评委/合成降级)")
+        print(f"  基线锚点: {a['path']}(route={a['route']}, via={a['via']}"
+              f") —— 自己看片对比,不做机器裁决")
     print(f"  episode: {res.episode_id}(长期记忆 {episode_memory.path}) ")
     print(f"  台账: {run_dir / 'storyboard.json'}")
     print(f"\n📂 本次所有产物在: {run_dir.resolve()}")

@@ -392,9 +392,9 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
   作 anchor,收尾与成片对比,目的"不扰乱原方法、量化框架增益"。
   → `--baseline-anchor`(+ `--anchor-duration`);路线确定性:无素材 =
   t2v;仅图 = ti2v(首图当首帧);有视频(可带图)= seedance-2.0 t2v +
-  reference_images/videos(视频裁到 ≤15s/条,≤3 条)。收尾
-  verify_pair 盲测(candidate=成片,baseline=锚点),判决进
-  MovieResult.baseline_anchor.final_vs_anchor;锚点任何失败只记日志。
+  reference_images/videos(视频裁到 ≤15s/条,≤3 条)。
+  **同日追加裁决:锚点只生成、不做机器对比/verifier 裁决、不接
+  enhancer —— 用户自己看片对比**;锚点任何失败只记日志。
 - **需求 2(Prompt Enhancer)**:可选 agent,skill 按各模型官方 prompt
   guide 蒸馏(`skills/brain_skills/prompt_enhancer/SKILL.md`:通用结构
   主体→动作→场景→镜头→光;seedance @ImageN/@VideoN、kling

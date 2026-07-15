@@ -201,8 +201,8 @@ class MovieResult:
     shot_results: list = field(default_factory=list)   # SelfImproveResult per shot
     episode_id: str = ""
     decisions: list = field(default_factory=list)      # brain 的 §B/§C 决策流水
-    # 需求 1(2026-07-15):基线锚点 {path, route, prompt, via,
-    # final_vs_anchor(盲测判决或 None)};开关没开 = None。
+    # 需求 1(2026-07-15):基线锚点 {path, route, prompt, via};开关没开 =
+    # None。用户裁决:只生成不比较 —— 用户自己看片对比。
     baseline_anchor: Optional[dict] = None
 
 
@@ -1041,29 +1041,18 @@ def _asset_media(asset_memory) -> tuple[list[Path], list[Path], list[str]]:
 
 
 def _generate_baseline_anchor(user_prompt: str, asset_memory, video_gen, llm,
-                              cache_dir: Path, duration=None,
-                              prompt_enhancer=None) -> Optional[dict]:
-    """一次调用直出锚点视频。返回 {path, route, prompt, via} 或 None(失败)。"""
+                              cache_dir: Path, duration=None) -> Optional[dict]:
+    """一次调用直出锚点视频。返回 {path, route, prompt, via} 或 None(失败)。
+
+    用户裁决(2026-07-15):锚点【只生成】——不做 verify_pair 对比、不接
+    prompt enhancer,用户自己看片对比。"""
     try:
         imgs, vids, notes = _asset_media(asset_memory)
         out = Path(cache_dir) / "baseline_anchor.mp4"
         # 锚点 prompt:brain 把用户指令浓缩成【单条】视频 prompt(整个故事
-        # 一镜到底);enhancer 开着就用它(技能里有参考语法),否则轻量内联
-        # 指令;LLM 不可用 → 用户指令原文(诚实 fallback)。
+        # 一镜到底);LLM 不可用 → 用户指令原文(诚实 fallback)。
         prompt, via = user_prompt, "fallback"
-        conds = ([{"kind": "image", "role": "reference", "description": n[7:]}
-                  for n in notes if n.startswith("image: ")]
-                 + [{"kind": "video", "role": "reference", "description": n[7:]}
-                    for n in notes if n.startswith("video: ")])
-        if prompt_enhancer is not None:
-            strategy = ("t2v_own_refs" if vids or len(imgs) > 1
-                        else "i2v_keyframe" if imgs else "t2v")
-            got = prompt_enhancer.run(
-                user_prompt, strategy=strategy, conditions=conds,
-                base_prompt=user_prompt, label="baseline_anchor")
-            if got:
-                prompt, via = got, "enhancer"
-        elif llm is not None:
+        if llm is not None:
             raw = ""
             try:
                 raw = llm.complete(
@@ -1164,12 +1153,13 @@ def generate_movie_windowed(
     video_gen = generator.video_gen
     decisions: list[dict] = []
 
-    # ── 需求 1:基线锚点(开关控制;失败绝不影响正流程)──────────────────
+    # ── 需求 1:基线锚点(开关控制;失败绝不影响正流程)。用户裁决:只
+    # 生成,不做机器对比 —— 用户自己看片。────────────────────────────────
     anchor: Optional[dict] = None
     if baseline_anchor:
         anchor = _generate_baseline_anchor(
             user_prompt, asset_memory, video_gen, llm, cache_dir,
-            duration=baseline_anchor_duration, prompt_enhancer=prompt_enhancer)
+            duration=baseline_anchor_duration)
         decisions.append({"stage": "baseline_anchor",
                           **({k: anchor[k] for k in ("route", "via", "path")}
                              if anchor else {"failed": True})})
@@ -1411,33 +1401,6 @@ def generate_movie_windowed(
             final = VideoConcatTool().run(clips, cache_dir / "movie.mp4")
         except Exception as exc:          # ffmpeg 缺失等 → 不合成,单镜可用
             log.info("window: merge degraded (%s) — per-shot clips remain", exc)
-
-    # ── 需求 1 收尾:成片 vs 锚点盲测(verifier 的 verify_pair,同一评委)。
-    # 判不了(mock/无 key/合成失败)→ 如实记 None,绝不编分。
-    if anchor is not None and final is not None:
-        judge = getattr(verifier, "judge", None)
-        verdict = None
-        if judge is not None and hasattr(judge, "verify_pair"):
-            try:
-                verdict = judge.verify_pair(
-                    str(final), str(anchor["path"]), user_prompt,
-                    repair_context={"note": "framework final movie "
-                                            "(candidate) vs one-call "
-                                            "baseline anchor (baseline)"},
-                    seed=0)
-            except Exception as exc:
-                log.warning("baseline_anchor compare failed: %s", exc)
-        anchor["final_vs_anchor"] = verdict
-        decisions.append({"stage": "baseline_anchor_compare",
-                          "verdict": verdict})
-        if verdict is not None:
-            log.info("window: final movie vs baseline anchor → %s "
-                     "(score=%+d, dims=%s)", verdict.get("conclusion"),
-                     verdict.get("score", 0), verdict.get("dim_scores"))
-        else:
-            log.info("window: final-vs-anchor comparison unavailable "
-                     "(no native-video judge) — anchor kept at %s",
-                     anchor["path"])
 
     # ── §M 收工:蒸馏 episode(good/bad 由客观收敛状态判定)────────────────
     episode_id = ""
