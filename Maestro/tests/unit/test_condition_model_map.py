@@ -207,6 +207,10 @@ def test_brain_log_records_raw_output(tmp_path, monkeypatch):
         assert "tiv2v_window" in ok["raw"]              # 原始输出全量保留
         assert ok["parsed"]["strategy"] == "tiv2v_window"
         assert "tiv2v_window" in ok["menu"]
+        # 装载证据(2026-07-15 用户令):每次 brain 调用必须自证技能进了
+        # prompt —— window_generation 技能真实存在,chars 必须大于 1000。
+        assert ok["skill"] == "window_generation"
+        assert ok["skill_loaded"] is True and ok["skill_chars"] > 1000
         bad, fb = lines[1], lines[2]
         assert bad["usable"] is False and "maybe" in bad["raw"]
         assert fb["parsed"]["via"] == "fallback"

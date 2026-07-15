@@ -299,10 +299,17 @@ class OrchestratorAgent:
 
         skill = load_skill("orchestrator")
         if skill and skill["body"].strip():
+            log.info("brain skill LOADED: orchestrator (%d chars) → goes "
+                     "into every repair decide prompt", len(skill["body"]))
             return skill["body"]
         # legacy location, then the terse inline fallback
         path = Path(__file__).resolve().parent.parent / "prompts" / "orchestrator.txt"
-        return load_prompt(path) or self._INLINE_SKILL
+        legacy = load_prompt(path)
+        log.warning("orchestrator SKILL.md missing/empty — repair brain falls "
+                    "back to %s",
+                    f"prompts/orchestrator.txt ({len(legacy)} chars)"
+                    if legacy else "the terse INLINE instruction")
+        return legacy or self._INLINE_SKILL
 
     def _build_prompt(self, clip, spec, menu, history, defect_report=None,
                       review_brief=None) -> str:
@@ -421,7 +428,8 @@ class OrchestratorAgent:
             brain_log("repair/decide", {
                 "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
                 "raw": reply, "parsed": data if isinstance(data, dict) else None,
-                "usable": False})
+                "usable": False, "skill": "orchestrator",
+                "skill_chars": len(self._skill_prompt)})
             self._log("decide", {"shot_idx": spec.shot_idx},
                       {"valid": False, "raw": (reply or "")[:200]})
             return dict(INVALID)
@@ -437,7 +445,8 @@ class OrchestratorAgent:
         # debug 日志(2026-07-14 用户令):修复 brain 的 tool call 原文全量留底
         brain_log("repair/decide", {
             "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
-            "raw": reply, "parsed": dict(decision), "usable": True})
+            "raw": reply, "parsed": dict(decision), "usable": True,
+            "skill": "orchestrator", "skill_chars": len(self._skill_prompt)})
         self._log("decide", {"shot_idx": spec.shot_idx},
                   {"valid": True, "via": "llm", "tool": decision["tool"],
                    "args": decision["args"], "reason": decision["reason"]})

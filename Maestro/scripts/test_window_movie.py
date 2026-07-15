@@ -135,6 +135,29 @@ def main() -> int:
           f"{getattr(video_gen, 'model_id', '?')}")
     print(f"  调用日志: {vg_cfg['call_log']}")
     print(f"  brain 决策日志: {run_dir / 'brain_calls.jsonl'}")
+
+    # ── skill 自检(百分之百确定技能文件装载;每次 brain 调用另在
+    # brain_calls.jsonl 记 skill_chars 作逐次证据)────────────────────────
+    _section("skill 自检(进 brain prompt 的技能文件)")
+    from maestro.skills.loader import load_skill
+    _needed = ["scene_write", "image_plan", "window_generation", "orchestrator"]
+    if args.prompt_enhancer:
+        _needed.append("prompt_enhancer")
+    _missing = []
+    for _n in _needed:
+        try:
+            _sk = load_skill(_n)
+        except Exception:
+            _sk = None
+        _ok = bool(_sk and _sk["body"].strip())
+        print(f"  {'✓' if _ok else '✗'} {_n:20s} "
+              f"{len(_sk['body']) if _ok else 0:6d} chars"
+              + ("" if _ok else "   ← 缺失!该 brain 只有内联短指令"))
+        if not _ok:
+            _missing.append(_n)
+    if _missing:
+        print(f"  ⚠⚠⚠ {len(_missing)} 个技能没装载: {_missing} — 决策质量会差,"
+              "先修再跑!")
     # ── 用户素材入库(--image/--video)→ AssetMemory ─────────────────────
     from maestro.tools.retrieval_tool import RetrievalTool
     from maestro.types import AssetMemory, Identity, Shot

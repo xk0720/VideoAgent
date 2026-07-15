@@ -42,15 +42,27 @@ class PromptEnhancerAgent(BaseAgent):
         super().__init__(*args, **kwargs)
         self.llm = llm
 
-    @staticmethod
-    def _skill_body() -> str:
-        try:
-            from ..skills.loader import load_skill
+    _SKILL_CACHE: dict = {}
 
-            sk = load_skill("prompt_enhancer")
-            return sk["body"] if sk and sk["body"].strip() else ""
-        except Exception:
-            return ""
+    @classmethod
+    def _skill_body(cls) -> str:
+        if "prompt_enhancer" not in cls._SKILL_CACHE:
+            try:
+                from ..skills.loader import load_skill
+
+                sk = load_skill("prompt_enhancer")
+                cls._SKILL_CACHE["prompt_enhancer"] = (
+                    sk["body"] if sk and sk["body"].strip() else "")
+            except Exception:
+                cls._SKILL_CACHE["prompt_enhancer"] = ""
+            body = cls._SKILL_CACHE["prompt_enhancer"]
+            if body:
+                log.info("brain skill LOADED: prompt_enhancer (%d chars)",
+                         len(body))
+            else:
+                log.warning("brain skill MISSING/EMPTY: prompt_enhancer — "
+                            "enhancement prompts carry NO technique text")
+        return cls._SKILL_CACHE["prompt_enhancer"]
 
     def run(
         self,
@@ -67,8 +79,11 @@ class PromptEnhancerAgent(BaseAgent):
         if self.llm is None:
             return None
         family = _STRATEGY_FAMILY.get(strategy, "seedance_t2v")
+        skill_text = self._skill_body()
+        proof = {"skill": "prompt_enhancer", "skill_chars": len(skill_text),
+                 "skill_loaded": bool(skill_text)}
         prompt = (
-            self._skill_body()
+            skill_text
             + "\n\nTHIS TURN (JSON):\n"
             + json.dumps({
                 "shot_description": shot_description,
@@ -88,14 +103,14 @@ class PromptEnhancerAgent(BaseAgent):
             brain_log("window/prompt_enhance", {
                 "label": label, "strategy": strategy, "family": family,
                 "raw": raw or f"<complete() raised: {exc}>",
-                "parsed": None, "usable": False})
+                "parsed": None, "usable": False, **proof})
             return None
         out = (data or {}).get("video_prompt") if isinstance(data, dict) else None
         usable = isinstance(out, str) and 10 <= len(out.strip()) <= 2000
         brain_log("window/prompt_enhance", {
             "label": label, "strategy": strategy, "family": family,
             "raw": raw, "parsed": ({"video_prompt": out} if usable else None),
-            "usable": bool(usable)})
+            "usable": bool(usable), **proof})
         if not usable:
             return None
         self._log("enhance", {"label": label, "strategy": strategy},

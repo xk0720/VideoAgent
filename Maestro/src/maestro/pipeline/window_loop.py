@@ -252,7 +252,10 @@ _KIND_TO_SKILL = {"image-plan": "image_plan",
 
 
 def _skill_body(kind: str) -> str:
-    """载入该决策类型的技能全文(缓存);没有就返回内联短指令。"""
+    """载入该决策类型的技能全文(缓存);没有就返回内联短指令。
+    装载结果必须响亮可见(2026-07-15 用户令:百分之百确定技能进了 prompt
+    —— 首载打 INFO/WARNING,每次 brain 调用另在 brain_calls.jsonl 记
+    skill_chars 作逐次证据)。"""
     name = _KIND_TO_SKILL.get(kind, "")
     if name and name not in _SKILL_CACHE:
         try:
@@ -262,6 +265,13 @@ def _skill_body(kind: str) -> str:
             _SKILL_CACHE[name] = sk["body"] if sk and sk["body"].strip() else ""
         except Exception:
             _SKILL_CACHE[name] = ""
+        if _SKILL_CACHE[name]:
+            log.info("brain skill LOADED: %s (%d chars) → goes into every "
+                     "'%s' prompt", name, len(_SKILL_CACHE[name]), kind)
+        else:
+            log.warning("brain skill MISSING/EMPTY: %s — the '%s' brain gets "
+                        "only a terse inline instruction (decision quality "
+                        "will suffer)", name, kind)
     body = _SKILL_CACHE.get(name, "")
     if body:
         return body
@@ -287,8 +297,14 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
     不伪造"brain 决策"。"""
     if llm is None:
         return {}
+    skill_name = _KIND_TO_SKILL.get(kind, "")
+    skill_text = _skill_body(kind)
+    # skill_chars = 进入本次 prompt 的技能全文长度;skill_loaded=False 表示
+    # 用的是内联短指令(技能文件缺失)—— 逐次可审计的装载证据。
+    skill_proof = {"skill": skill_name, "skill_chars": len(skill_text),
+                   "skill_loaded": bool(_SKILL_CACHE.get(skill_name))}
     prompt = (
-        _skill_body(kind)
+        skill_text
         + "\n\nTHIS TURN (JSON):\n"
         + json.dumps({"menu": menu, **context}, ensure_ascii=False)
         + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
@@ -305,7 +321,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
             if isinstance(context.get("shot"), dict) else None,
             "menu": sorted(m["name"] for m in menu),
             "raw": raw or f"<complete() raised: {exc}>", "parsed": None,
-            "usable": False})
+            "usable": False, **skill_proof})
         return {}
     valid = {m["name"] for m in menu}
     usable = isinstance(data, dict) and str((data or {}).get("strategy", "")) in valid
@@ -315,7 +331,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
             if isinstance(context.get("shot"), dict) else None,
             "menu": sorted(valid), "raw": raw,
             "parsed": data if isinstance(data, dict) else None,
-            "usable": False})
+            "usable": False, **skill_proof})
         return {}
     out = {"strategy": str(data["strategy"]),
            "reason": str(data.get("reason", ""))}
@@ -338,7 +354,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
         "label": context.get("shot", {}).get("label")
         if isinstance(context.get("shot"), dict) else None,
         "menu": sorted(valid), "raw": raw, "parsed": dict(out),
-        "usable": True})
+        "usable": True, **skill_proof})
     return out
 
 
@@ -358,8 +374,9 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
     必然产出重复分镜(实测翻车:2 子句 3 镜,第 3 镜重复第 1 镜)。真剧本
     必须由 LLM 写,拆条只配当兜底。"""
     if llm is not None:
+        skill_text = _skill_body_named("scene_write")
         prompt = (
-            _skill_body_named("scene_write")
+            skill_text
             + "\n\nTHIS TASK (JSON):\n"
             + json.dumps({"user_prompt": user_prompt,
                           "asset_catalog": asset_catalog,
@@ -388,7 +405,9 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
         brain_log("window/scene_write", {
             "raw": raw, "parsed": data if isinstance(data, dict) else None,
             "usable": bool(isinstance(data, dict)
-                           and isinstance(data.get("shots"), list))})
+                           and isinstance(data.get("shots"), list)),
+            "skill": "scene_write", "skill_chars": len(skill_text),
+            "skill_loaded": bool(skill_text)})
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
             shots, durs, seen = [], [], set()
             for s_ in data["shots"][:max_shots]:
@@ -420,7 +439,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
 
 
 def _skill_body_named(name: str) -> str:
-    """按名载入技能全文(缓存;缺文件返回 "")。"""
+    """按名载入技能全文(缓存;缺文件返回 "")。首载响亮打日志。"""
     if name not in _SKILL_CACHE:
         try:
             from ..skills.loader import load_skill
@@ -429,6 +448,12 @@ def _skill_body_named(name: str) -> str:
             _SKILL_CACHE[name] = sk["body"] if sk and sk["body"].strip() else ""
         except Exception:
             _SKILL_CACHE[name] = ""
+        if _SKILL_CACHE[name]:
+            log.info("brain skill LOADED: %s (%d chars)", name,
+                     len(_SKILL_CACHE[name]))
+        else:
+            log.warning("brain skill MISSING/EMPTY: %s — prompt will carry "
+                        "NO skill text for this stage", name)
     return _SKILL_CACHE.get(name, "")
 
 
