@@ -81,7 +81,12 @@ class PromptEnhancerAgent(BaseAgent):
         family = _STRATEGY_FAMILY.get(strategy, "seedance_t2v")
         skill_text = self._skill_body()
         proof = {"skill": "prompt_enhancer", "skill_chars": len(skill_text),
-                 "skill_loaded": bool(skill_text)}
+                 "skill_loaded": bool(skill_text),
+                 # 裁决 1.3:输入可审计(shot 描述 + 条件事实 + 原 prompt)
+                 "context": {"shot_description": shot_description,
+                             "strategy": strategy, "model_family": family,
+                             "conditions": conditions,
+                             "current_prompt": base_prompt or shot_description}}
         prompt = (
             skill_text
             + "\n\nTHIS TURN (JSON):\n"

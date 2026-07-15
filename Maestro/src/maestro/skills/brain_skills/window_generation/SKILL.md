@@ -27,6 +27,12 @@ condition strategy from the gated `menu` and write the video prompt for it.
                        `avoid` = strategies from UNCONVERGED past shots, each
                        with the recorded failure `reason` — a weighted warning
                        to reason about, NOT an automatic ban (see rule 2).
+- `junction`         — the CUT HANDOFF facts:
+                       `prev_last_frame_actual` = what a VLM actually SAW in
+                       the previous shot's final frame (ground truth pixels);
+                       `prev_end_state_script` = what the script SAID that
+                       shot should end as; `required_end_state` = the state
+                       THIS shot must end in. See the junction rules below.
 
 ## Condition strategies
 
@@ -98,6 +104,12 @@ by the executor — do NOT output them.
   the PREVIOUS shot's last frame; your own images start at number 2.
 - First/last-frame routes (`flf2v_own_pair`, `flf2v_bridge`): no reference
   syntax — describe the motion from the opening frame to the closing frame.
+- REFERENCES MUST CARRY CONTENT: the context gives every planned image's
+  actual content in its `description` (what the picture really shows — the
+  user's asset label or the generation prompt). Every `@ImageN` /
+  "reference image N" mention must state what that image depicts and what
+  it does in THIS shot, e.g. "@Image2, the user's orange tabby cat, jumps
+  onto the windowsill". A bare "@Image2" steers nothing — never write one.
 
 ## Decision rules
 1. Adopt a `replay_hints` strategy for the same shot label unless the ledger
@@ -126,6 +138,20 @@ by the executor — do NOT output them.
 5. Only pick names present in the menu; output strict JSON, nothing else.
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
+7. JUNCTION RULES (motion continuity across the cut — the #1 cause of
+   broken movies):
+   - When `junction.prev_last_frame_actual` exists, your `video_prompt`
+     must OPEN FROM THAT ACTUAL STATE — the real pixels, not the script's
+     imagination. If it contradicts `prev_end_state_script` (script says
+     rolling, the frame shows it at rest), write from the ACTUAL state and
+     say so in `reason`; physics does not negotiate: an object at rest
+     cannot resume moving without a new force — give the prompt that new
+     event, or keep it at rest.
+   - ANTI-SETTLE: when `junction.required_end_state` says something is
+     still MOVING at this shot's cut, the prompt must END with an explicit
+     instruction like "the apple is still rolling as the shot ends — it
+     does not slow down or settle". Video models kill motion at clip end
+     unless told not to; an unwanted settle breaks the NEXT shot's opening.
 
 ### Example 1 — scene continues, both anchors exist
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}

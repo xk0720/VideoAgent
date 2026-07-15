@@ -55,6 +55,10 @@ class ShotEntry:
     scene_idx: int                      # 场号
     label: str                          # "scene 1 shot 2"(人读的键)
     description: str                    # 文本描述(playwriting 产物)
+    # 交接棒(2026-07-15 需求 ②-①):brain 写剧本时逐镜声明"结束瞬间谁在哪、
+    # 是动是停、朝什么方向"。下一镜的开头必须从这里继续;评审拿它当镜尾
+    # 验收标准。brain 没输出 = 空串,不编造。
+    end_state: str = ""
     # keyframe:路径 + 来源(t2i 生成 | 素材库图片 | 素材视频抽帧 | 无)。
     # Image Plan 升级后仍保留:= images 里第一张 first/first_frame 角色图
     # (老策略 i2v_keyframe / flf2v_bridge 读它,兼容不破)。
@@ -93,15 +97,19 @@ class ShotEntry:
         return out
 
     def to_brain_line(self) -> dict:
-        """喂给 brain prompt 的单行紧凑视图(不带大对象)。"""
+        """喂给 brain prompt 的单行紧凑视图(不带大对象)。
+
+        图片 description 全文保留(2026-07-15 裁决 1.1:80 字截断让 brain
+        只看到半截话,引用素材内容时必然写偏)。"""
         last_review = self.reviews[-1] if self.reviews else None
         return {
             "label": self.label,
             "description": self.description,
+            "end_state": self.end_state,
             "status": self.status,
             "image_plan": self.image_plan,
             "images": [{"role": im.get("role"), "source": im.get("source"),
-                        "description": im.get("description", "")[:80]}
+                        "description": im.get("description", "")}
                        for im in self.images],
             "keyframe": self.keyframe_path or "",
             "keyframe_source": self.keyframe_source,

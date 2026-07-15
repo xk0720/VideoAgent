@@ -311,9 +311,11 @@ class OrchestratorAgent:
                     if legacy else "the terse INLINE instruction")
         return legacy or self._INLINE_SKILL
 
-    def _build_prompt(self, clip, spec, menu, history, defect_report=None,
-                      review_brief=None) -> str:
-        user = {
+    def _build_user(self, clip, spec, menu, history, defect_report=None,
+                    review_brief=None) -> dict:
+        """THIS TURN 的完整输入上下文(裁决 1.3:decide 把它原样落
+        brain_calls.jsonl,输入输出都可审计)。"""
+        return {
             "shot_prompt": spec.prompt,
             # A consolidated, prioritized brief produced by the review-summarizer
             # (when wired); empty until then — the brain still has the raw review
@@ -333,6 +335,11 @@ class OrchestratorAgent:
                 for (d, outcome, new_total) in history
             ],
         }
+
+    def _build_prompt(self, clip, spec, menu, history, defect_report=None,
+                      review_brief=None) -> str:
+        user = self._build_user(clip, spec, menu, history, defect_report,
+                                review_brief=review_brief)
         return (
             self._skill_prompt
             + "\n\nTHIS TURN (JSON):\n"
@@ -416,8 +423,16 @@ class OrchestratorAgent:
                        "tool": skill_decision["tool"]})
             return skill_decision
 
-        prompt = self._build_prompt(clip, spec, menu, history, defect_report,
+        user_ctx = self._build_user(clip, spec, menu, history, defect_report,
                                     review_brief=review_brief)
+        prompt = (
+            self._skill_prompt
+            + "\n\nTHIS TURN (JSON):\n"
+            + json.dumps(user_ctx, ensure_ascii=False, indent=2)
+            + '\n\nRespond with STRICT JSON only: {"tool": ..., "args": {...}, "reason": ...}'
+        )
+        # 落日志的 context 去掉 tools(菜单描述是静态长文,名单另记 menu)
+        log_ctx = {k: v for k, v in user_ctx.items() if k != "tools"}
         reply = self.llm.complete(prompt)
         data = _extract_json(reply)
 
@@ -429,7 +444,7 @@ class OrchestratorAgent:
                 "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
                 "raw": reply, "parsed": data if isinstance(data, dict) else None,
                 "usable": False, "skill": "orchestrator",
-                "skill_chars": len(self._skill_prompt)})
+                "skill_chars": len(self._skill_prompt), "context": log_ctx})
             self._log("decide", {"shot_idx": spec.shot_idx},
                       {"valid": False, "raw": (reply or "")[:200]})
             return dict(INVALID)
@@ -446,7 +461,8 @@ class OrchestratorAgent:
         brain_log("repair/decide", {
             "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
             "raw": reply, "parsed": dict(decision), "usable": True,
-            "skill": "orchestrator", "skill_chars": len(self._skill_prompt)})
+            "skill": "orchestrator", "skill_chars": len(self._skill_prompt),
+            "context": log_ctx})
         self._log("decide", {"shot_idx": spec.shot_idx},
                   {"valid": True, "via": "llm", "tool": decision["tool"],
                    "args": decision["args"], "reason": decision["reason"]})

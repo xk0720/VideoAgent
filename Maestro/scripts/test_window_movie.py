@@ -244,7 +244,8 @@ def main() -> int:
         patience=args.patience, quality_bar=args.quality_bar,
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
-        prompt_enhancer=prompt_enhancer)
+        prompt_enhancer=prompt_enhancer,
+        mllm=mllm)   # 需求 ②:接点实况 VLM(gemini API / qwen-local 本地)
 
     _section("brain 决策流水(§B keyframe + §C 条件;via=episode/llm/fallback)")
     for d in res.decisions:

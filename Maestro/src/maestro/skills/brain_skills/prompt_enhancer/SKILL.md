@@ -18,9 +18,19 @@ never change WHAT happens in the shot.
 - `shot_description` — the screenwriter's shot text (the ground truth of
   what must happen; never contradict it).
 - `strategy` + `model_family` — which route will run (fixes the syntax).
-- `conditions` — list of {kind: image|video, role, description}. These are
-  FACTS about what the generator will actually receive. Use ALL of them;
-  invent NONE.
+- `conditions` — list of {kind: image|video|state, role, description}. These
+  are FACTS about what the generator will actually receive (images/video)
+  and about the CUT HANDOFF (state). Use ALL of them; invent NONE.
+  State roles:
+  - `opening_state_actual` — what a VLM actually saw in the previous shot's
+    final frame. The prompt must OPEN from this exact state.
+  - `previous_end_state_script` — what the script intended that cut to be
+    (when it contradicts the actual, trust the ACTUAL).
+  - `required_end_state` — the state THIS shot must end in. If it says the
+    subject is still MOVING, the prompt must END with an explicit
+    anti-settle clause ("still rolling as the shot ends — it does not slow
+    down or settle"); video models kill motion at clip end unless told not
+    to.
 - `current_prompt` — the draft written by the planner (may be empty).
 
 ## Universal technique (all families — distilled from official guides)

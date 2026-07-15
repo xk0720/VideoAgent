@@ -435,7 +435,7 @@ and, when provided, the CONDITIONS it was generated from (first/last-frame \
 images, reference images, a reference video whose motion it continues). \
 The shot is meant to depict:
 "{shot_prompt}"{gen_prompt_block}
-{conditions_block}
+{conditions_block}{junction_block}
 
 Work through FIVE dimensions:
 1. Semantic adherence — does the video show the described facts (objects, \
@@ -770,6 +770,22 @@ class GeminiVLM(OpenAICompatVLM):
             real_fps = 0.0
         fps_eff = real_fps if real_fps > 0 else float(fps or 24)
 
+        # 需求 ④(2026-07-15):镜间衔接进评审 —— 开头必须延续上一镜的
+        # 真实结束状态,结尾必须落在剧本 end_state;各出一条 check,不符
+        # 就是可定位缺陷(头段/尾段 → regenerate_segment 可修)。
+        junction_lines = []
+        prev_actual = str(cond.get("junction_prev_actual") or "").strip()
+        end_state = str(cond.get("end_state") or "").strip()
+        if prev_actual:
+            junction_lines.append(
+                f'The previous shot ACTUALLY ended in this state: '
+                f'"{prev_actual}". This shot must OPEN by continuing that '
+                f'exact state (position AND motion) — add one check for it.')
+        if end_state:
+            junction_lines.append(
+                f'The script requires this shot to END in this state: '
+                f'"{end_state}". Judge the FINAL moment against it (moving '
+                f'vs at rest matters) — add one check for it.')
         instruction = _SHOT_REVIEW_INSTRUCTION.format(
             shot_prompt=spec.prompt,
             gen_prompt_block=(f'\nThe exact generation prompt was:\n"{gen_prompt}"'
@@ -778,6 +794,8 @@ class GeminiVLM(OpenAICompatVLM):
                               + "; ".join(cond_labels) if cond_labels
                               else "No visual conditions were provided — judge "
                                    "against the text alone."),
+            junction_block=("\n" + "\n".join(junction_lines)
+                            if junction_lines else ""),
         )
         reply = self._generate(video + cond_parts + [{"text": instruction}])
         data = _extract_json(reply) if reply else None
@@ -1006,6 +1024,134 @@ class GeminiVLM(OpenAICompatVLM):
         ])
         return (reply or "").strip()
 
+    def describe_junction(self, image_path) -> str:
+        """接点实况(2026-07-15 需求 ②):看上一镜的【真实尾帧】,一句话
+        说清续接状态 —— 每个关键主体在哪、看起来是动是停、朝什么方向。
+        失败返回 ""(调用方诚实跳过,绝不编)。"""
+        got = self._image_part("FINAL FRAME", image_path)
+        if not got:
+            return ""
+        self._require_key()
+        reply = self._generate([got[1], {"text": _JUNCTION_INSTRUCTION}])
+        return (reply or "").strip()
+
+
+# 接点实况的共用指令(GeminiVLM 与 LocalQwenVLM 同一份 —— 两种模式同语义)
+_JUNCTION_INSTRUCTION = (
+    "This is the FINAL frame of a video shot. Describe its state for "
+    "continuity into the next shot in ONE factual sentence: each key "
+    "subject's position in the frame, whether it appears to be MOVING or "
+    "AT REST (judge from motion blur and posture), and its direction of "
+    "motion if any. Only what is visible — no speculation. No other text."
+)
+
+
+class LocalQwenVLM(BaseMLLMClient):
+    """本地加载的 Qwen2.5-VL(transformers)——用户裁决(2026-07-15 需求
+    ②):接点实况/素材打标的第二种 VLM 模式(第一种 = GeminiVLM API)。
+    `models.mllm.name: "qwen-local"` 即切换。
+
+    职责范围(诚实):图片级 —— caption_image(素材打标)与
+    describe_junction(接点实况)。整镜评审需要原生视频输入,仍归
+    GeminiVLM;本类的 assess_* 返回 [] 并警告一次,绝不冒充评审员。
+
+    config(models.mllm):
+      name: "qwen-local"
+      model: "Qwen/Qwen2.5-VL-7B-Instruct"   # 或本地权重路径
+      device: "cuda"
+      max_new_tokens: 96
+    """
+
+    def __init__(self, name: str = "qwen-local", config: Optional[dict] = None):
+        self.name = name
+        self.config = config or {}
+        self.model_id = self.config.get("model",
+                                        "Qwen/Qwen2.5-VL-7B-Instruct")
+        self.device = self.config.get("device", "cuda")
+        self.max_new_tokens = int(self.config.get("max_new_tokens", 96))
+        self._model = None
+        self._processor = None
+        self._warned_review = False
+
+    def _ensure(self) -> None:
+        """惰性加载(构造零开销);缺 torch/transformers → 响亮 RuntimeError,
+        绝不静默装死。"""
+        if self._model is not None:
+            return
+        try:
+            import torch  # noqa: F401
+            from transformers import AutoProcessor
+            try:
+                from transformers import Qwen2_5_VLForConditionalGeneration \
+                    as _QwenVL
+            except ImportError:          # 老/新 transformers 的命名差异
+                from transformers import AutoModelForVision2Seq as _QwenVL
+        except ImportError as exc:
+            raise RuntimeError(
+                f"LocalQwenVLM('{self.name}') needs torch+transformers for "
+                f"local {self.model_id}: pip install 'torch' 'transformers' "
+                f"'qwen-vl-utils' — or switch models.mllm.name to 'gemini' "
+                f"(API mode). Import failed: {exc}"
+            ) from exc
+        log.info("LocalQwenVLM loading %s on %s …", self.model_id, self.device)
+        self._processor = AutoProcessor.from_pretrained(self.model_id)
+        self._model = _QwenVL.from_pretrained(
+            self.model_id, torch_dtype="auto", device_map=self.device)
+
+    def _chat_image(self, image_path, instruction: str) -> str:
+        """一图一指令 → 一句回复;文件不可读返回 ""(诚实跳过)。"""
+        p = Path(str(image_path))
+        if not p.is_file() or p.suffix.lower() not in (
+            ".png", ".jpg", ".jpeg", ".webp", ".bmp"
+        ):
+            return ""
+        self._ensure()
+        try:
+            from PIL import Image
+            img = Image.open(p).convert("RGB")
+            messages = [{"role": "user", "content": [
+                {"type": "image", "image": img},
+                {"type": "text", "text": instruction}]}]
+            text = self._processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True)
+            inputs = self._processor(text=[text], images=[img],
+                                     return_tensors="pt").to(self._model.device)
+            out = self._model.generate(**inputs,
+                                       max_new_tokens=self.max_new_tokens)
+            reply = self._processor.batch_decode(
+                out[:, inputs["input_ids"].shape[1]:],
+                skip_special_tokens=True)[0]
+            return (reply or "").strip()
+        except Exception as exc:
+            log.warning("LocalQwenVLM inference failed (%s): %s", p.name, exc)
+            return ""
+
+    def caption_image(self, image_path) -> str:
+        return self._chat_image(image_path, (
+            "Describe this image in ONE short sentence for retrieval: "
+            "what/who it shows and the setting. Start with one category "
+            "word from [background, character, object, style] and a colon. "
+            "No other text."))
+
+    def describe_junction(self, image_path) -> str:
+        return self._chat_image(image_path, _JUNCTION_INSTRUCTION)
+
+    # 评审职责不归本类 —— 诚实沉默(警告一次),绝不伪造判定。
+    def _warn_review(self) -> None:
+        if not self._warned_review:
+            self._warned_review = True
+            log.warning("LocalQwenVLM supports captioning/junction only — "
+                        "shot review needs the native-video judge "
+                        "(models.mllm.name: 'gemini'); emitting no verdicts")
+
+    def assess_semantic(self, clip, spec):
+        self._warn_review()
+        return []
+
+    def assess_physics(self, clip, spec, fps):
+        self._warn_review()
+        return []
+
 
 _REGISTRY = {
     "gpt-4o": OpenAICompatVLM,
@@ -1014,6 +1160,8 @@ _REGISTRY = {
     "qwen-vl": OpenAICompatVLM,
     "qwen": OpenAICompatVLM,
     "gemini": GeminiVLM,
+    "qwen-local": LocalQwenVLM,
+    "local-qwen": LocalQwenVLM,
 }
 
 

@@ -42,9 +42,12 @@ strategy, review, repair) hangs off these entries.
 ## Output format (STRICT JSON — output this and nothing else)
 
 {"shots": [{"description": "Shot 1: <detailed filmable description>",
-            "duration_s": <int 4-10>},
+            "duration_s": <int 4-10>,
+            "end_state": "<one sentence: at the cut, who/what is where,
+                          moving or still, in which direction>"},
            {"description": "Shot 2: <detailed filmable description>",
-            "duration_s": <int 4-10>}, ...]}
+            "duration_s": <int 4-10>,
+            "end_state": "..."}, ...]}
 
 - Each description is 15-40 words: subject + action + setting + camera /
   lighting where useful. One sentence that a video model can shoot.
@@ -55,6 +58,20 @@ strategy, review, repair) hangs off these entries.
   seconds onto each generation model's own duration domain. If you omit
   duration_s the executor sends NO duration and the model's own default
   applies — so always state it.
+- `end_state` is the HANDOFF BATON (the window loop shoots shots in order
+  and shot N+1 is generated FROM shot N's final frame — your baton is what
+  makes that cut physically possible):
+  1. State the exact freeze-frame at the cut: every key subject's position,
+     whether it is MOVING or AT REST, and its direction.
+  2. The next shot's description must OPEN from that exact state — same
+     place, same motion. Never write an opening that contradicts the
+     previous end_state.
+  3. MOTION HANDOFF LAW: if the next shot needs the subject in motion, do
+     NOT let it come to rest at this shot's cut — keep it moving through
+     the cut (or let it exit frame moving). An object AT REST cannot start
+     moving again by itself; if the story needs that, a NEW force/event
+     (a push, a gust, a character's touch) must be written INTO the next
+     shot's description, or the story is physically wrong.
 - YOU decide the shot count — it is never preset. Read it off the story's
   beats, informed by `episode_guidance.past_task_shapes` (how many shots
   similar past tasks used and whether they succeeded). `max_shots` is ONLY a
@@ -72,10 +89,17 @@ strategy, review, repair) hangs off these entries.
 user_prompt: "a glass falls off a table; shards scatter on the floor. Then a
 boy comes and collects all shards, leaves happily"
 {"shots": [
-  {"description": "Shot 1: scene 1 — a clear drinking glass teeters on the edge of a wooden kitchen table, warm daylight, eye-level close-up, then tips over the edge", "duration_s": 5},
-  {"description": "Shot 2: scene 1 — the glass shatters on the tile floor and shards scatter outward, low camera angle at floor level, shallow depth of field", "duration_s": 4},
-  {"description": "Shot 3: scene 1 — a young boy kneels down, carefully collects the shards into his hand, then stands up and walks away smiling, medium shot", "duration_s": 8}
+  {"description": "Shot 1: scene 1 — a clear drinking glass teeters on the edge of a wooden kitchen table, warm daylight, eye-level close-up, then tips over the edge", "duration_s": 5,
+   "end_state": "the glass is in mid-air just below the table edge, falling fast toward the tile floor"},
+  {"description": "Shot 2: scene 1 — the falling glass shatters on the tile floor and shards scatter outward, low camera angle at floor level, shallow depth of field", "duration_s": 4,
+   "end_state": "shards lie scattered and at rest on the tile floor around the impact point"},
+  {"description": "Shot 3: scene 1 — a young boy kneels down beside the scattered shards, carefully collects them into his hand, then stands up and walks away smiling, medium shot", "duration_s": 8,
+   "end_state": "the boy is walking away from camera, shards in hand, floor clear"}
 ]}
+
+Note how the batons connect: shot 1 ends with the glass FALLING (not resting)
+because shot 2 needs the impact; shot 2 may end at rest because shot 3
+introduces a NEW agent (the boy) acting on the shards.
 
 ## Where the output goes
 outline (one line per shot) → DirectorAgent expands each line into a ShotSpec

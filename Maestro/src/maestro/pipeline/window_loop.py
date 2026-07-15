@@ -123,6 +123,9 @@ def _asset_catalog(asset_memory: Optional[AssetMemory]) -> list[dict]:
             out.append({"kind": "identity", "name": a.name or a.identity_id,
                         "label": _asset_label("identity", a.name or "",
                                               a.description, a.source),
+                        # desc = 干净语义(进 prompt 用;label 带 kind 前缀
+                        # 只用于检索打分)。Q-D 链:用户描述 > caption > 文件名
+                        "desc": (a.description or a.name or p.name),
                         "path": str(p)})
     for s_ in asset_memory.style_anchors:
         p = Path(getattr(s_, "source", "") or "")
@@ -132,14 +135,20 @@ def _asset_catalog(asset_memory: Optional[AssetMemory]) -> list[dict]:
                                               getattr(s_, "style_id", ""),
                                               getattr(s_, "description", ""),
                                               str(p)),
+                        "desc": (getattr(s_, "description", "")
+                                 or getattr(s_, "style_id", "") or p.name),
                         "path": str(p)})
     return out
 
 
 def _retrieve_asset_image(query: str, asset_memory: Optional[AssetMemory]
-                          ) -> Optional[Path]:
+                          ) -> Optional[tuple[Path, str]]:
     """按关键词重叠给【全部】图片素材打分,取最高分(替代旧的"拿第一张")。
     确定性、可复现;0 重叠时退回第一张存在的图(单素材场景保持旧行为)。
+
+    返回 (路径, 素材语义标签)。标签 = 用户描述 > 入库 VLM caption > 文件名
+    (Q-D 链,素材目录里已备好)—— 2026-07-15 裁决 1.2:语义必须跟着图走,
+    写 prompt 的人要知道"实际拿到了什么",不是"当时搜了什么"。
     CLIP 向量检索登记在 TOOL_LIBRARY 缺口台账,本轮不做。"""
     catalog = _asset_catalog(asset_memory)
     if not catalog:
@@ -151,7 +160,8 @@ def _retrieve_asset_image(query: str, asset_memory: Optional[AssetMemory]
         score = len(q & toks) / max(1, len(q | toks)) if q else 0.0
         if score > best_score:
             best, best_score = item, score
-    return Path(best["path"]) if best else None
+    return (Path(best["path"]),
+            str(best.get("desc") or best.get("label", ""))) if best else None
 
 
 def re_words(text: str) -> list[str]:
@@ -302,7 +312,10 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
     # skill_chars = 进入本次 prompt 的技能全文长度;skill_loaded=False 表示
     # 用的是内联短指令(技能文件缺失)—— 逐次可审计的装载证据。
     skill_proof = {"skill": skill_name, "skill_chars": len(skill_text),
-                   "skill_loaded": bool(_SKILL_CACHE.get(skill_name))}
+                   "skill_loaded": bool(_SKILL_CACHE.get(skill_name)),
+                   # 裁决 1.3:输入也要可审计 —— THIS TURN 的完整上下文
+                   # (技能全文不重复存,skill_chars 已证明其在场)
+                   "context": context}
     prompt = (
         skill_text
         + "\n\nTHIS TURN (JSON):\n"
@@ -360,7 +373,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
 
 def _write_outline(llm, user_prompt: str, asset_catalog: list,
                    episode_guidance: dict, max_shots: int,
-                   fallback_fn) -> tuple[list[str], list[int], str]:
+                   fallback_fn) -> tuple[list[str], list, list[str], str]:
     """§A 真·LLM playwriting → (outline, via)。三层纪律同 _decide:
 
     1) LLM + scene_write 技能全文 → 严格 JSON {"shots": [...]},逐条校验
@@ -387,14 +400,21 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                           "max_shots_hard_cost_cap": max_shots},
                          ensure_ascii=False)
             + '\n\nSTRICT JSON only: {"shots": [{"description": "Shot 1: '
-              '<detailed filmable description>", "duration_s": <int 4-10>}, '
+              '<detailed filmable description>", "duration_s": <int 4-10>, '
+              '"end_state": "<one sentence: at the CUT, who/what is where, '
+              'moving or still, in which direction>"}, '
               "...]} — each description 15-40 words (subject + action + "
               "setting + camera), scene N stated when the location changes. "
               "YOU decide the shot count AND each shot's duration_s (4-10 "
               "seconds, from how long the action NEEDS) from the story "
               "itself (use past_task_shapes as experience from similar "
               f"past tasks); max_shots ({max_shots}) is only a COST ceiling, "
-              "never a target — never pad by repeating a shot."
+              "never a target — never pad by repeating a shot. HANDOFF LAW: "
+              "each shot's opening must continue the PREVIOUS shot's "
+              "end_state exactly (position AND motion); to hand motion to "
+              "the next shot, do NOT let the mover stop before the cut; a "
+              "resting object may only move again if a NEW force/event acts "
+              "on it (write that event into the description)."
         )
         raw = ""
         try:
@@ -407,22 +427,30 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
             "usable": bool(isinstance(data, dict)
                            and isinstance(data.get("shots"), list)),
             "skill": "scene_write", "skill_chars": len(skill_text),
-            "skill_loaded": bool(skill_text)})
+            "skill_loaded": bool(skill_text),
+            "context": {"user_prompt": user_prompt,
+                        "asset_catalog": asset_catalog,
+                        "episode_guidance": episode_guidance,
+                        "max_shots": max_shots}})
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
-            shots, durs, seen = [], [], set()
+            shots, durs, ends, seen = [], [], [], set()
             for s_ in data["shots"][:max_shots]:
-                # 兼容两种形态:纯字符串,或 {description, duration_s}
+                # 兼容两种形态:纯字符串,或 {description, duration_s, end_state}
                 if isinstance(s_, dict):
                     text = str(s_.get("description", "")).strip()
                     dur = s_.get("duration_s")
+                    end = str(s_.get("end_state", "") or "").strip()
                 else:
                     text = str(s_).strip()
-                    dur = None
+                    dur, end = None, ""
                 key = text.lower()
                 # 完全重复 = 凑数,丢弃(重复分镜正是本函数存在的原因)
                 if len(text) >= 12 and key not in seen:
                     seen.add(key)
                     shots.append(text)
+                    # 交接棒(需求 ②-①):end_state 是 brain 的决定;没输出
+                    # = 空串,不编造(下游按"无交接信息"诚实处理)。
+                    ends.append(end)
                     # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
                     # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
                     # 用模型自然默认(用户裁决:绝不 feed 任何预设值)。
@@ -431,11 +459,11 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                     except (TypeError, ValueError):
                         durs.append(None)
             if shots:
-                return shots, durs, "llm"
+                return shots, durs, ends, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
-    # (不是 config 的 shot_duration,也不是我们编的数)
-    return fb, [None] * len(fb), "fallback"
+    # (不是 config 的 shot_duration,也不是我们编的数);end_state 同理为空。
+    return fb, [None] * len(fb), [""] * len(fb), "fallback"
 
 
 def _skill_body_named(name: str) -> str:
@@ -571,17 +599,23 @@ def _execute_image_plan(decision: dict, entry, video_gen,
         spec_i = specs[i] if i < len(specs) else {}
         src = spec_i.get("source") or _default_source(video_gen, asset_memory)
         query = spec_i.get("description") or entry.description
-        img = None
+        img, actual = None, ""
         try:
-            img = _make_keyframe(src, entry, video_gen, asset_memory,
-                                 retrieval, out_dir, seed=entry.shot_idx * 2 + i,
-                                 query=query, slot=i)
+            img, actual = _make_keyframe(
+                src, entry, video_gen, asset_memory, retrieval, out_dir,
+                seed=entry.shot_idx * 2 + i, query=query, slot=i)
         except Exception as exc:
             log.info("image plan: slot %d (%s via %s) failed: %s",
                      i, role, src, exc)
         if img is not None:
-            produced.append({"path": str(img), "role": role, "source": src,
-                             "description": query})
+            # 裁决 1.2:description = 这张图【实际是什么】(素材的真实标签/
+            # t2i prompt/源片段 caption),写 prompt 的人按它引用;检索词
+            # 另存 retrieval_query 供审计("搜的"和"拿到的"分开记)。
+            row = {"path": str(img), "role": role, "source": src,
+                   "description": actual or query}
+            if actual and actual != query:
+                row["retrieval_query"] = query
+            produced.append(row)
         else:
             log.info("image plan: slot %d (%s) produced no image — dropped",
                      i, role)
@@ -644,19 +678,25 @@ def _keyframe_menu(video_gen, asset_memory: Optional[AssetMemory]) -> list[dict]
 def _make_keyframe(strategy: str, entry, video_gen,
                    asset_memory: Optional[AssetMemory], retrieval,
                    out_dir: Path, seed: int, query: str = "",
-                   slot: int = 0) -> Optional[Path]:
-    """按来源产出一张图;产不出真图就返回 None(绝不放占位图冒充)。
-    `query`(默认分镜描述)驱动检索类来源:素材图按关键词重叠打分选
-    (_retrieve_asset_image,替代旧的"拿第一张"),源视频同理。
-    `slot` 区分同一 shot 的多张图(Image Plan 双图时文件不互撞)。"""
+                   slot: int = 0) -> tuple[Optional[Path], str]:
+    """按来源产出一张图 → (路径, 实况语义);产不出真图返回 (None, "")
+    (绝不放占位图冒充)。实况语义 = 这张图【实际是什么】:
+      t2i → 生成 prompt 本身;asset_image → 素材的真实标签(用户描述 >
+      入库 VLM caption > 文件名);video_extract → 源片段 caption。
+    裁决 1.2:语义跟着图走,后面写 prompt 的人引用的是"实际拿到的",
+    不是"当时搜的"。`slot` 区分同一 shot 的多张图。"""
     out_dir.mkdir(parents=True, exist_ok=True)
     query = query or entry.description
     if strategy == "t2i":
         out = out_dir / f"shot{entry.shot_idx:03d}_kf{slot}_t2i.png"
-        return Path(video_gen.text_to_image(query, out, seed=seed))
+        return Path(video_gen.text_to_image(query, out, seed=seed)), query
     if strategy == "asset_image":
         # 按 shot 描述/检索词给全部图片素材打分取最优(Q-D 标签链)。
-        return _retrieve_asset_image(query, asset_memory)
+        got = _retrieve_asset_image(query, asset_memory)
+        if got is None:
+            return None, ""
+        path, label = got
+        return path, label
     if strategy == "video_extract" and retrieval is not None \
             and asset_memory is not None:
         shot_ids = retrieval.retrieve_source_shots(query=query)
@@ -671,9 +711,12 @@ def _make_keyframe(strategy: str, entry, video_gen,
             # 取源片段的中间帧(比首帧更能代表片段内容)
             got = extract_frame(src, 10 ** 6, out)
             if got is not None:
-                return got
-        return None
-    return None   # "none"
+                cap = str(getattr(shot, "caption", "") or "")
+                return got, (f"a frame extracted from the user's source "
+                             f"video ({cap})" if cap else
+                             "a frame extracted from the user's source video")
+        return None, ""
+    return None, ""   # "none"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -703,6 +746,25 @@ def _entry_images(entry) -> tuple[Optional[Path], list[Path],
         first_frame = kf
         refs = [kf]
     return first_frame, refs, pair_first, pair_last
+
+
+def _desc_of(entry, path) -> str:
+    """台账里这张图的实况语义(裁决 1.2:兜底模板/条件清单按它引用内容,
+    不写空话)。查不到返回 ""。"""
+    p = str(path)
+    for im in (getattr(entry, "images", None) or []):
+        if str(im.get("path", "")) == p:
+            return str(im.get("description", "") or "")
+    return ""
+
+
+def _mention(entry, path, n: int, kind: str = "@Image") -> str:
+    """一条内容感知的引用句:'@Image2 shows: <实况语义> — keep it
+    consistent.'(语义缺失时退化为角色级措辞,绝不编内容)。"""
+    d = _desc_of(entry, path)
+    if d:
+        return f"{kind}{n} shows: {d} — keep it consistent."
+    return f"{kind}{n} is a planned image for this shot — keep it consistent."
 
 
 def _condition_menu(entry, prev, video_gen) -> list[dict]:
@@ -835,10 +897,9 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         if refs:
             cond.update(reference_images=[str(p) for p in refs],
                         anchoring="soft_t2v_refs")
+            # 裁决 1.2:引用必须带内容 —— 每个 @ImageN 说清它实际是什么
             fallback_prompt = spec.prompt + ". " + " ".join(
-                f"@Image{i + 1} is a reference for this shot's "
-                f"{'subject' if i == 0 else 'setting'} — keep it consistent."
-                for i in range(len(refs)))
+                _mention(entry, p_, i + 1) for i, p_ in enumerate(refs))
             return Path(video_gen.generate(
                 prompt=brain_prompt or fallback_prompt,
                 duration=spec.duration, out_path=out, fps=fps,
@@ -870,11 +931,12 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
             all_refs = [last] + own
             cond.update(reference_images=[str(p) for p in all_refs],
                         anchoring="soft_t2v_refs")
+            # 裁决 1.2:@Image1 = 上镜尾帧(续接点);本镜图逐张带实况语义
             fallback_prompt = (
                 spec.prompt + ". Open on the exact scene state shown in "
-                "@Image1 (the previous moment) and stay consistent with "
-                + ", ".join(f"@Image{i + 2}" for i in range(len(own)))
-                + " (this shot's planned image(s)).")
+                "@Image1 (the final moment of the previous shot). "
+                + " ".join(_mention(entry, p_, i + 2)
+                           for i, p_ in enumerate(own)))
             return Path(video_gen.generate(
                 prompt=brain_prompt or fallback_prompt,
                 duration=spec.duration, out_path=out, fps=fps,
@@ -912,10 +974,16 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         if len(imgs) >= 2 or (imgs and tail_video is not None):
             cond.update(images=[str(p) for p in imgs],
                         video=str(tail_video) if tail_video else None)
-            fallback_prompt = spec.prompt + ". " + " ".join(
-                f"Reference image {i + 1} defines "
-                f"{'the continuing scene state' if i == 0 and prev else 'a subject/setting to keep consistent'}."
-                for i in range(len(imgs)))
+            # 裁决 1.2:kling 措辞 + 实况语义(首张若是上镜尾帧则写续接点)
+            parts = []
+            for i, p_ in enumerate(imgs):
+                if i == 0 and prev is not None and not _desc_of(entry, p_):
+                    parts.append("Reference image 1 is the final moment of "
+                                 "the previous shot — continue from it.")
+                else:
+                    parts.append(_mention(entry, p_, i + 1,
+                                          kind="reference image "))
+            fallback_prompt = spec.prompt + ". " + " ".join(parts)
             return Path(video_gen.multi_image_to_video(
                 prompt=brain_prompt or fallback_prompt, images=imgs,
                 out_path=out, duration=spec.duration, seed=seed,
@@ -941,12 +1009,12 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                     tail_seconds=(window_tail_s if tail else None),
                     reference_images=([str(p) for p in own_imgs] or None),
                     anchoring="soft_t2v_video_refs")
+        # 裁决 1.2:@Video1 = 续接点;本镜图逐张带实况语义
         fallback_prompt = (
             spec.prompt + ". @Video1 is the immediately preceding moment of "
-            "this scene — continue its motion and camera seamlessly."
-            + "".join(f" @Image{i + 1} shows this shot's planned look — "
-                      "stay consistent with it."
-                      for i in range(len(own_imgs))))
+            "this scene — continue its motion and camera seamlessly. "
+            + " ".join(_mention(entry, p_, i + 1)
+                       for i, p_ in enumerate(own_imgs)))
         return Path(video_gen.generate(
             prompt=brain_prompt or fallback_prompt, duration=spec.duration,
             out_path=out, fps=fps, seed=seed, reference_video=ref,
@@ -979,8 +1047,47 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         fps=fps, seed=seed)), cond
 
 
+# 接点实况缓存:(尾帧路径, mtime) → 一句实况。一镜一次 VLM 调用。
+_JUNCTION_CACHE: dict = {}
+
+
+def _junction_state(mllm, prev, cache_dir: Path) -> str:
+    """需求 ②(2026-07-15):看上一镜的【真实尾帧】,出一句续接实况
+    ("the apple is at rest at the center of the floor")。写 prompt 的人
+    从实况起笔,不再照剧本想象。
+
+    诚实链:无上一镜 / 无 VLM / 尾帧抽不出 / VLM 失败 → ""(跳过,不编)。
+    VLM 双模式(用户裁决):describe_junction 由 GeminiVLM(API)和
+    LocalQwenVLM(本地)同名实现,models.mllm.name 切换。"""
+    if prev is None or not getattr(prev, "video_path", None) or mllm is None:
+        return ""
+    fn = getattr(mllm, "describe_junction", None)         or getattr(mllm, "caption_image", None)
+    if fn is None:
+        return ""
+    frame = _last_frame(Path(prev.video_path),
+                        Path(cache_dir) / "junction_prev_last.png")
+    if frame is None:
+        return ""
+    fp = Path(frame)
+    try:
+        key = (str(fp.resolve()), fp.stat().st_mtime_ns)
+    except OSError:
+        return ""
+    if key not in _JUNCTION_CACHE:
+        try:
+            _JUNCTION_CACHE[key] = str(fn(fp) or "").strip()
+        except Exception as exc:
+            log.warning("junction caption failed: %s — proceeding without "
+                        "the actual-state hint", exc)
+            _JUNCTION_CACHE[key] = ""
+        if _JUNCTION_CACHE[key]:
+            log.info("junction state: %s", _JUNCTION_CACHE[key][:160])
+    return _JUNCTION_CACHE[key]
+
+
 def _conditions_for_prompt(strategy: str, entry, prev,
-                           use_prev_tail: bool) -> list[dict]:
+                           use_prev_tail: bool,
+                           junction: str = "") -> list[dict]:
     """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
     按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
     事实,不能发明条件。逐条 {kind, role, description}。"""
@@ -1005,6 +1112,18 @@ def _conditions_for_prompt(strategy: str, entry, prev,
             conds.append({"kind": "image", "role": str(im.get("role", "")),
                           "description": str(im.get("description", ""))
                           or f"a planned {im.get('role', 'reference')} image"})
+    # 需求 ②:状态类条件 —— prompt 必须从真实接点起笔、以剧本 end_state 收笔
+    if junction:
+        conds.append({"kind": "state", "role": "opening_state_actual",
+                      "description": junction})
+    prev_end = str(getattr(prev, "end_state", "") or "") if prev else ""
+    if prev_end:
+        conds.append({"kind": "state", "role": "previous_end_state_script",
+                      "description": prev_end})
+    own_end = str(getattr(entry, "end_state", "") or "")
+    if own_end:
+        conds.append({"kind": "state", "role": "required_end_state",
+                      "description": own_end})
     return conds
 
 
@@ -1168,6 +1287,7 @@ def generate_movie_windowed(
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
+    mllm=None,                          # 需求 ②:接点实况 VLM(缺省用 verifier.judge)
 ) -> MovieResult:
     """窗口式全片生成:§A playwriting → §B keyframe → §C+§D 逐镜窗口循环
     → §E 合成 → §M episode 蒸馏。全程读写 StoryboardMemory(R1)。"""
@@ -1175,6 +1295,7 @@ def generate_movie_windowed(
     cache_dir.mkdir(parents=True, exist_ok=True)
     asset_memory = asset_memory or AssetMemory()
     llm = llm or getattr(orchestrator, "llm", None)
+    mllm = mllm or getattr(verifier, "judge", None)
     video_gen = generator.video_gen
     decisions: list[dict] = []
 
@@ -1212,7 +1333,7 @@ def generate_movie_windowed(
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
     asset_catalog0 = _asset_catalog(asset_memory)
-    outline, shot_durations, outline_via = _write_outline(
+    outline, shot_durations, shot_end_states, outline_via = _write_outline(
         llm, user_prompt, asset_catalog0,
         episode_guidance=guidance,
         max_shots=int(plan_cfg.get("max_shots", 6)),
@@ -1231,6 +1352,10 @@ def generate_movie_windowed(
         spec_.duration = (float(dur_) if dur_ is not None else None)
     storyboard = StoryboardMemory.from_outline(
         outline, path=cache_dir / "storyboard.json")
+    # 交接棒(需求 ②-①)进台账:brain 声明的镜尾状态,下一镜续接的依据、
+    # 评审的镜尾验收标准;空串 = brain 没说,不编造。
+    for entry_, end_ in zip(storyboard.entries, shot_end_states):
+        entry_.end_state = end_
     log.info("window: playwriting done via=%s — %s",
              outline_via, storyboard.summary())
 
@@ -1270,12 +1395,25 @@ def generate_movie_windowed(
         spec = specs[entry.shot_idx]
         prev = storyboard.prev_generated(entry.shot_idx)
 
+        # 需求 ②:接点实况 —— VLM 看上一镜真实尾帧出一句状态;和剧本
+        # 交接棒(上一镜 end_state / 本镜 end_state)一起进 brain 上下文,
+        # prompt 从实况起笔,不照剧本想象。
+        shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
+        junction_actual = _junction_state(mllm, prev, shot_dir)
+        junction_ctx = {
+            "prev_last_frame_actual": junction_actual or None,
+            "prev_end_state_script": (getattr(prev, "end_state", "") or None)
+            if prev else None,
+            "required_end_state": entry.end_state or None,
+        }
+
         # §C brain 选条件策略(episode → llm → 兜底 三层)
         menu = _condition_menu(entry, prev, video_gen)
         d = _decide(
             llm, "generation-condition", menu,
             {"shot": entry.to_brain_line(),
              "prev_shot": prev.to_brain_line() if prev else None,
+             "junction": junction_ctx,
              "storyboard": storyboard.to_brain_json(),
              "episode_guidance": guidance},
             replay_hint=replay_cond.get(entry.label),
@@ -1288,7 +1426,6 @@ def generate_movie_windowed(
         # 按条件生成首批候选(不同 seed;条件相同)。每个 seed 的实际条件
         # 单独记账(per_seed):策略在执行中降级/崩溃时,那个 seed 的记录
         # 必须如实写 degraded_from —— 台账绝不把降级伪装成 brain 的决定。
-        shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
         initial: list[CandidateClip] = []
         seed_conds: list[dict] = []
         # 子循环里 keyframe_edit 工具需要 clip.keyframes;窗口候选挂上本 shot
@@ -1305,7 +1442,8 @@ def generate_movie_windowed(
             enhanced = prompt_enhancer.run(
                 entry.description, strategy=d["strategy"],
                 conditions=_conditions_for_prompt(d["strategy"], entry, prev,
-                                                  use_tail),
+                                                  use_tail,
+                                                  junction=junction_actual),
                 base_prompt=brain_prompt or spec.prompt, label=entry.label)
             if enhanced:
                 brain_prompt = enhanced
@@ -1337,6 +1475,8 @@ def generate_movie_windowed(
             # 条件图/参考视频和成片一起看,评"是否贴合条件"。
             clip.conditioning = {
                 "video_prompt": brain_prompt or spec.prompt,
+                "end_state": entry.end_state or None,
+                "junction_prev_actual": junction_actual or None,
                 "images": [{"path": im.get("path"), "role": im.get("role")}
                            for im in entry.images
                            if im.get("path") and Path(im["path"]).exists()],
