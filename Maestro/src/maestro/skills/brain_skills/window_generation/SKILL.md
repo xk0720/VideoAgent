@@ -24,8 +24,9 @@ condition strategy from the gated `menu` and write the video prompt for it.
                        scores, open defects)
 - `episode_guidance` — long-term memory: `replay_hints` = per-shot strategies
                        that were VERIFIED on similar past tasks (prefer them);
-                       `avoid` = strategies that failed there (never pick them
-                       for a similar shot).
+                       `avoid` = strategies from UNCONVERGED past shots, each
+                       with the recorded failure `reason` — a weighted warning
+                       to reason about, NOT an automatic ban (see rule 2).
 
 ## Condition strategies
 
@@ -101,14 +102,29 @@ by the executor — do NOT output them.
 ## Decision rules
 1. Adopt a `replay_hints` strategy for the same shot label unless the ledger
    shows this run's conditions differ (e.g. no image was produced this time).
-2. The `avoid` list is a hard constraint: never pick a listed failed strategy
-   for a similar shot.
-3. Continuity first: when the scene continues from the previous shot, prefer
+2. Read each `avoid` entry's `reason` and judge WHOSE fault the failure was
+   (soft constraint — a past failure does not doom this run):
+   - Skip the strategy only when the reason implicates the CONDITIONING
+     ROUTE itself: the strategy degraded/raised (`degraded_from` set), the
+     opening/closing frame did not match its anchor, identity broke exactly
+     at the anchored boundary.
+   - CONTENT-level reasons (physics implausibility, a missing action, object
+     deformation mid-shot, "no squash on impact") are NOT the strategy's
+     fault — the same strategy MAY be picked again; fix content through the
+     prompt instead.
+   - When you do skip an avoided strategy, prefer the CLOSEST alternative
+     (another previous-shot anchor, or another consumer of the same image) —
+     not a blanket retreat to t2v.
+3. NEVER waste a planned image: if this shot's image plan produced an image,
+   pick a strategy that CONSUMES it (matching its role). Dropping to plain
+   t2v while a planned image exists is wrong even if one consumer strategy
+   is avoided — pick a different consumer instead.
+4. Continuity first: when the scene continues from the previous shot, prefer
    flf2v_bridge / tiv2v_window / ti2v_prev_last over own-image-only routes;
    when the script cuts to a new scene, prefer i2v_keyframe / flf2v_own_pair /
    t2v and deliberately skip the previous-shot anchors.
-4. Only pick names present in the menu; output strict JSON, nothing else.
-5. `video_prompt` must match the chosen strategy's reference syntax (above) —
+5. Only pick names present in the menu; output strict JSON, nothing else.
+6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
 
 ### Example 1 — scene continues, both anchors exist

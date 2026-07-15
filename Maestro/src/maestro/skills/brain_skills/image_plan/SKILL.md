@@ -63,6 +63,14 @@ decision covers three things at once:
 - `asset_catalog` entries carry kind + a description. When you pick
   asset_image, put the retrieval query into that image's `description`
   (retrieval scores by keyword overlap with asset descriptions).
+- COHERENCE with the condition stage (do not waste money): an image you plan
+  here is only useful if the NEXT stage (window_generation) will pick a
+  strategy that consumes it. Check `episode_guidance.avoid` for this shot's
+  label: if the image's natural consumer strategies all failed there for
+  ROUTE-level reasons (anchor mismatch, strategy degraded), plan **none**
+  instead of spending a t2i call on an image that will be dropped. If the
+  recorded reasons are content-level (physics, missing action), the image
+  route is fine — plan it.
 
 ## Output format (STRICT JSON — output this and nothing else)
 

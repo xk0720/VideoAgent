@@ -319,16 +319,23 @@ class WaveSpeedClient(BaseVideoGenClient):
             payload["video"] = self._upload_media(video)
         return self._run_task(model, payload, out_path)
 
-    @staticmethod
-    def _summarize_payload(payload: dict) -> dict:
-        """Payload with base64 blobs shortened — safe to put in an error message."""
-        def _one(v):
-            if isinstance(v, str) and len(v) > 200:
-                return f"<{len(v)} chars>"
+    # 语义文本字段:审计调用日志时必须全文可读(prompt 被缩写成 "<446 chars>"
+    # 的日志毫无审计价值 —— 2026-07-15 attempt_1 现场教训)。上限 4000 只防
+    # 极端脏数据;真正要缩写的是 base64/超长 URL 之类的非语义大块头。
+    _TEXT_FIELDS = ("prompt", "hint", "edit_instruction", "negative_prompt")
+
+    @classmethod
+    def _summarize_payload(cls, payload: dict) -> dict:
+        """Payload with blobs shortened — semantic text stays readable."""
+        def _one(v, keep_text=False):
+            if isinstance(v, str):
+                cap = 4000 if keep_text else 200
+                return v if len(v) <= cap else f"{v[:cap]}…<{len(v)} chars>"
             if isinstance(v, list):
                 return [_one(x) for x in v]
             return v
-        return {k: _one(v) for k, v in payload.items()}
+        return {k: _one(v, keep_text=k in cls._TEXT_FIELDS)
+                for k, v in payload.items()}
 
     def _log_call(self, record: dict) -> None:
         """任务 0(2026-07-14):每次 WaveSpeed 调用可核对——模型名 + 参数打到

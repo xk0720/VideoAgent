@@ -212,3 +212,19 @@ def test_brain_log_records_raw_output(tmp_path, monkeypatch):
         assert fb["parsed"]["via"] == "fallback"
     finally:
         set_brain_log(None)               # 全局状态复位,别污染其他测试
+
+
+def test_call_log_keeps_prompt_readable(tmp_path, monkeypatch):
+    """审计教训(attempt_1):prompt 绝不能被缩写成 '<446 chars>' —— 语义
+    文本字段全文保留(≤4000),真正缩写的是非语义长串。"""
+    sent = []
+    _fake_requests(monkeypatch, sent)
+    logf = tmp_path / "calls.jsonl"
+    ws = WaveSpeedClient(config={"api_key": "k", "call_log": str(logf)})
+    long_prompt = "a glossy red apple rolls across the counter. " * 12  # >200ch
+    ws.generate(long_prompt, 5, tmp_path / "o.mp4")
+    rec = json.loads(logf.read_text().splitlines()[0])
+    assert rec["payload"]["prompt"] == long_prompt          # 全文,无缩写
+    blob = {"prompt": "p", "image": "x" * 999}              # 非语义长串仍缩写
+    s = ws._summarize_payload(blob)
+    assert s["image"].endswith("<999 chars>") and s["prompt"] == "p"
