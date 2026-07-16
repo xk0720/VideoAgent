@@ -80,11 +80,10 @@
 | `adjust_prompt` / `retrieve_replace` / `accept` | 无生成 API 调用 | — | — |
 | (窗口关键帧阶段 t2i) | text_to_image | `wavespeed-ai/flux-kontext-pro/text-to-image` | `prompt, num_images=1, aspect_ratio` |
 
-已知局限(登记,未修):`regenerate_segment` 命中**头部段**(frame_start=0)
-时,锚帧取自当前缺陷片自身的第 0 帧——对窗口镜头(tiv2v/ti2v)这会丢失
-"上镜续接"条件(你 run 里 shot1 的 regenerate_segment 被 verifier 拒绝,
-"landed on the counter" 正是此类)。正确做法是头部段修复重新执行该镜的
-原始窗口条件;登记在 TOOL_LIBRARY 缺口台账。
+旧账清偿(2026-07-16):头部段修复不再锚定缺陷片自身第 0 帧 ——
+左锚改用该镜条件里的首帧角色图(clip.conditioning,本镜本该开在这张图上);
+没有可用首帧图 → propagate_repair 诚实返回 None,brain 改选整镜工具。
+("landed on the counter" 一类头部修复丢续接条件的问题就此关闭。)
 
 ## 3. duration 规则(任务 1 + 2026-07-14 追加裁决:4-10s,不输出就不传)
 
