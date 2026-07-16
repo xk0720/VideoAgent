@@ -199,3 +199,73 @@ def test_review_instruction_carries_junction_checks(tmp_path, monkeypatch):
     assert "at rest at the center" in text            # 上一镜实况原文在场
     assert "requires this shot to END" in text
     assert "still rolling toward the window" in text  # 剧本 end_state 在场
+
+
+def test_video_asset_captioning_chain(tmp_path, monkeypatch):
+    """2026-07-16 裁决:用户大概率只给一个路径。视频素材:VLM 看中间帧
+    补 caption(检索键 + 剧本可见语义);无 VLM → 文件名兜底 + 大声警告;
+    有用户描述 → 一个字不动。"""
+    import maestro.pipeline.window_loop as wl
+    from maestro.pipeline.window_loop import ensure_asset_descriptions
+    from maestro.types import AssetMemory, Shot
+
+    vid = tmp_path / "IMG_4032.mp4"
+    vid.write_bytes(b"\x00" * 32)
+    frame = tmp_path / "mid.png"
+    frame.write_bytes(b"\x89PNG\r\n")
+    monkeypatch.setattr(wl, "extract_frame", lambda v, i, o: frame)
+
+    class _VLM:
+        def caption_image(self, path):
+            return "character: a man walking along a wooden boardwalk"
+
+    # VLM 路径:caption 写回并标注来源
+    mem = AssetMemory(video_shots={"vid0": Shot(
+        shot_id="vid0", source_video=str(vid), start_time=0, end_time=4)})
+    n = ensure_asset_descriptions(mem, _VLM(), cache_dir=tmp_path / "labels")
+    assert n == 1
+    assert mem.video_shots["vid0"].caption == (
+        "character: a man walking along a wooden boardwalk "
+        "(from the user's video clip)")
+    # 无 VLM → 文件名兜底(caption 是检索键,不能留空)
+    mem2 = AssetMemory(video_shots={"vid0": Shot(
+        shot_id="vid0", source_video=str(vid), start_time=0, end_time=4)})
+    ensure_asset_descriptions(mem2, None, cache_dir=tmp_path / "labels")
+    assert mem2.video_shots["vid0"].caption == "IMG 4032"
+    # 用户描述在 → 不覆盖
+    mem3 = AssetMemory(video_shots={"vid0": Shot(
+        shot_id="vid0", source_video=str(vid), start_time=0, end_time=4,
+        caption="my dog running on the beach")})
+    assert ensure_asset_descriptions(mem3, _VLM(),
+                                     cache_dir=tmp_path / "labels") == 0
+    assert mem3.video_shots["vid0"].caption == "my dog running on the beach"
+
+
+def test_media_catalog_shows_videos_but_retrieval_stays_images(tmp_path):
+    """剧本/图计划的目录含视频条目(kind=video,带语义);图片检索
+    (_retrieve_asset_image)绝不返回视频文件。"""
+    from maestro.pipeline.window_loop import (
+        _media_catalog,
+        _retrieve_asset_image,
+    )
+    from maestro.types import AssetMemory, Identity, Shot
+
+    img = tmp_path / "cat.png"
+    img.write_bytes(b"\x89PNG\r\n")
+    vid = tmp_path / "walk.mp4"
+    vid.write_bytes(b"\x00" * 8)
+    mem = AssetMemory(
+        identity_anchors={"cat": Identity(
+            identity_id="cat", name="cat", source=str(img),
+            description="an orange tabby cat")},
+        video_shots={"vid0": Shot(
+            shot_id="vid0", source_video=str(vid), start_time=0, end_time=4,
+            caption="a man walking along a boardwalk")})
+    cat = _media_catalog(mem)
+    kinds = {c["kind"] for c in cat}
+    assert kinds == {"identity", "video"}
+    vrow = next(c for c in cat if c["kind"] == "video")
+    assert vrow["desc"] == "a man walking along a boardwalk"
+    # 图片检索:哪怕检索词更像视频内容,也只在图片里选
+    path, _ = _retrieve_asset_image("a man walking along a boardwalk", mem)
+    assert path == img

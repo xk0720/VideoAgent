@@ -172,11 +172,18 @@ def re_words(text: str) -> list[str]:
 
 
 def ensure_asset_descriptions(asset_memory: Optional[AssetMemory],
-                              mllm=None) -> int:
-    """Q-D 打标链的 VLM 中环:给【没有用户描述】的图片素材补一句 VLM
-    caption(写回 description 字段)。mock/无 VLM → caption_image 返回 ""
-    → 不写(诚实降级到文件名);返回补标数量。"""
-    if asset_memory is None or mllm is None:
+                              mllm=None, cache_dir=None) -> int:
+    """Q-D 打标链的 VLM 中环:给【没有用户描述】的素材补语义标签,返回
+    补标数量。用户很可能只给一个路径(2026-07-16 裁决:必须兼容)。
+
+    - 图片(identity/style):VLM 看图补 caption 写回 description;
+      mock/无 VLM → 不写(目录层有文件名末端兜底)。
+    - 视频(video_shots):抽【中间帧】→ VLM caption → 写回 Shot.caption
+      (它是 video_extract 检索的匹配键,也是剧本看到的视频语义);
+      VLM 不可用/抽帧失败 → 文件名兜底写回(caption 不能留空,否则
+      检索永远搜不到这段视频)。抽帧文件放 cache_dir(不给则跳过 VLM
+      环,直接文件名兜底 —— 绝不往用户素材目录写临时文件)。"""
+    if asset_memory is None:
         return 0
     n = 0
     targets = list(asset_memory.identity_anchors.values()) \
@@ -187,20 +194,70 @@ def ensure_asset_descriptions(asset_memory: Optional[AssetMemory],
         if desc or not src or not Path(src).exists():
             continue
         cap = ""
-        try:
-            cap = (mllm.caption_image(src) or "").strip()
-        except Exception as exc:
-            log.warning("asset caption failed for %s: %r", Path(src).name, exc)
+        if mllm is not None:
+            try:
+                cap = (mllm.caption_image(src) or "").strip()
+            except Exception as exc:
+                log.warning("asset caption failed for %s: %r",
+                            Path(src).name, exc)
         if cap:
             try:
                 a.description = cap
                 n += 1
             except AttributeError:
                 pass                      # StyleRef 若无该字段则跳过(不硬塞)
+    # 视频素材:中间帧 caption → Shot.caption(检索键 + 剧本可见语义)
+    for sid, shot in (getattr(asset_memory, "video_shots", None) or {}).items():
+        cap = (getattr(shot, "caption", "") or "").strip()
+        src = getattr(shot, "source_video", "") or ""
+        if cap or not src or not Path(src).exists():
+            continue
+        text = ""
+        if mllm is not None and cache_dir is not None:
+            out_dir = Path(cache_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            frame = extract_frame(Path(src), 10 ** 6,
+                                  out_dir / f"asset_{sid}_mid.png")
+            if frame is not None:
+                try:
+                    text = (mllm.caption_image(frame) or "").strip()
+                except Exception as exc:
+                    log.warning("asset video caption failed for %s: %r",
+                                Path(src).name, exc)
+        if text:
+            shot.caption = f"{text} (from the user's video clip)"
+            n += 1
+        else:
+            # 末端兜底:文件名。caption 是检索键,留空 = 这段视频永远
+            # 检索不到;并大声提示打标质量受限(Q-D 链的诚实降级)。
+            shot.caption = Path(src).stem.replace("_", " ")
+            log.warning("asset video %s: no VLM caption available — "
+                        "falling back to the FILENAME as its label "
+                        "(retrieval quality will suffer)", Path(src).name)
     if n:
         log.info("asset labeling: %d asset(s) captioned by the VLM "
                  "(user description > VLM caption > filename)", n)
     return n
+
+
+def _media_catalog(asset_memory: Optional[AssetMemory]) -> list[dict]:
+    """剧本/图计划看的【全媒体】素材目录 = 图片目录 + 视频条目。
+
+    2026-07-16 修复:旧目录只有图片,scene_write 根本不知道用户给了视频、
+    里面是什么 —— ASSET MENTION LAW 对视频角色没有输入,素材白给检测也
+    不覆盖视频。图片检索(_retrieve_asset_image)仍用纯图目录
+    (_asset_catalog),视频文件绝不会被当成图返回。"""
+    out = list(_asset_catalog(asset_memory))
+    if asset_memory is None:
+        return out
+    for sid, shot in (asset_memory.video_shots or {}).items():
+        src = getattr(shot, "source_video", "") or ""
+        if src and Path(src).exists():
+            cap = (getattr(shot, "caption", "") or "").strip()                 or Path(src).stem.replace("_", " ")
+            out.append({"kind": "video", "name": sid,
+                        "label": f"video: {cap}", "desc": cap,
+                        "path": str(src)})
+    return out
 
 
 @dataclass
@@ -1434,7 +1491,7 @@ def generate_movie_windowed(
     screenwriter = screenwriter or ScreenwriterAgent()
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
-    asset_catalog0 = _asset_catalog(asset_memory)
+    asset_catalog0 = _media_catalog(asset_memory)
     outline, shot_durations, shot_end_states, outline_via = _write_outline(
         llm, user_prompt, asset_catalog0,
         episode_guidance=guidance,
@@ -1467,7 +1524,7 @@ def generate_movie_windowed(
     #     看得见用户给了什么(Q-C:靠完整技能让 brain 对任意素材场景做对
     #     决策,不写死"背景图=首帧"这类规则)。──────────────────────────────
     kf_dir = cache_dir / "keyframes"
-    asset_catalog = _asset_catalog(asset_memory)
+    asset_catalog = _media_catalog(asset_memory)
     for entry, spec in zip(storyboard.entries, specs):
         menu = _image_plan_menu(video_gen, asset_memory)
         d = _decide(

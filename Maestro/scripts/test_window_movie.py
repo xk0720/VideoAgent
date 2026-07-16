@@ -191,16 +191,18 @@ def main() -> int:
             dur = float(out.stdout.strip())
         except Exception:
             dur = 5.0
+        # caption 留给 Q-D 打标链:用户描述 > VLM 看中间帧 > 文件名兜底
+        # (2026-07-16 裁决:用户大概率只给一个路径,必须兼容)
         asset_memory.video_shots[f"vid{i}"] = Shot(
             shot_id=f"vid{i}", source_video=str(vp.resolve()),
-            start_time=0.0, end_time=dur,
-            caption=desc or vp.stem.replace("_", " "))
+            start_time=0.0, end_time=dur, caption=desc)
     retrieval = RetrievalTool(asset_memory) if (
         asset_memory.identity_anchors or asset_memory.video_shots) else None
 
     # Q-D 素材打标链:用户描述 > VLM caption > 文件名(真 VLM 才回填)
     from maestro.pipeline.window_loop import ensure_asset_descriptions
-    n_cap = ensure_asset_descriptions(asset_memory, mllm)
+    n_cap = ensure_asset_descriptions(asset_memory, mllm,
+                                      cache_dir=run_dir / "asset_labels")
     if asset_memory.identity_anchors or asset_memory.video_shots:
         print(f"  素材库: {asset_memory.summarize()}"
               + (f";VLM 补标 {n_cap} 条" if n_cap else ""))
