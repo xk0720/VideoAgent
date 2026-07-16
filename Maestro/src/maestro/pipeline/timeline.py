@@ -33,6 +33,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from ..logging_utils import get_logger
+
+log = get_logger(__name__)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Lazy image IO — write/read a single frame as PNG without forcing imageio/PIL
@@ -316,6 +320,7 @@ def propagate_repair(
     cache_dir,
     sim_threshold: float = 0.92,
     max_cascade: int = 4,
+    head_anchor=None,        # head 跨度的左锚(该镜条件里的首帧图;可 None)
 ) -> Optional[Path]:
     """Repair the defect's segment, propagate the edit forward until continuity
     reconverges, then splice. Returns the spliced clip path, or None (degrade).
@@ -359,30 +364,48 @@ def propagate_repair(
     fps = timeline.fps if timeline.fps > 0 else 24.0
     dur = max(1e-3, (seg.end_frame - seg.start_frame) / fps)
 
-    # ── 2. repair S_i ────────────────────────────────────────────────────────
+    # ── 2. repair S_i(2026-07-16 重做:flf2v 双锚,边界 = 相邻段的【原始】
+    # 边界帧 —— 尾锚就是下游的原开头,下游天然连续,前向级联整条删除。
+    # 上一版每次修复 = 段修复 + 最多 4 段级联 i2v(attempt2 实测 12 笔调用);
+    # 新版 = 1 笔 flf2v。三种跨度:
+    #   interior(左右邻都在)→ flf2v(左邻尾帧, 右邻首帧),免级联;
+    #   tail(无右邻)      → i2v(左邻尾帧) 重生到尾,后面没东西,免级联;
+    #   head(无左邻)      → 左锚 = head_anchor(该镜条件里的首帧图,调用方
+    #                         传入);没有 → None(诚实降级,brain 改选整镜工具)。
+    # 传统 i2v+级联只保留为"后端无 flf2v 能力/_same_shot 否决"的兼容兜底。──
     repaired: Optional[Path] = None
     out_i = cache_dir / f"seg{i}_repaired.mp4"
-    use_flf = (modality == "motion" and "flf2v" in caps
-               and seg.first_frame_path and seg.last_frame_path
-               and hasattr(video_gen, "frame_to_frame"))
-    if use_flf:
-        first_anchor = (segs[i - 1].last_frame_path if i > 0
-                        and segs[i - 1].last_frame_path else seg.first_frame_path)
-        last_anchor = (segs[i + 1].first_frame_path if i + 1 < len(segs)
-                       and segs[i + 1].first_frame_path else seg.last_frame_path)
-        # Pre-generation condition gate (NEWTON-style): if the two anchors are
-        # not plausibly the same shot, flf2v would insert a CUT instead of
-        # blending (documented failure) — fall back to the i2v repair path.
-        if not _same_shot(first_anchor, last_anchor):
-            use_flf = False
-    if use_flf:
+    left_anchor = (segs[i - 1].last_frame_path
+                   if i > 0 and segs[i - 1].last_frame_path else
+                   (Path(head_anchor) if i == 0 and head_anchor else None))
+    right_anchor = (segs[i + 1].first_frame_path
+                    if i + 1 < len(segs) and segs[i + 1].first_frame_path
+                    else None)
+    has_flf = "flf2v" in caps and hasattr(video_gen, "frame_to_frame")
+    cascade_needed = False
+
+    if left_anchor is None and i == 0:
+        # head 跨度且无条件首帧可锚 —— 无法在不动第 0 帧的前提下双锚重生。
+        log.info("propagate_repair: head span with no usable left anchor "
+                 "(no first-frame condition image) — degrading to whole-clip "
+                 "tools")
+        return None
+    if right_anchor is not None and has_flf             and _same_shot(left_anchor, right_anchor):
+        # interior:双锚重生,右锚 = 下游原开头 ⇒ 免级联
         repaired = video_gen.frame_to_frame(
             prompt=hint or "one continuous passive trajectory",
-            first_frame=first_anchor, last_frame=last_anchor,
+            first_frame=left_anchor, last_frame=right_anchor,
             out_path=out_i, duration=dur,
         )
+    elif right_anchor is None:
+        # tail:从左锚重生到尾;后面没有内容,同样免级联
+        repaired = video_gen.generate(
+            prompt=hint or "regenerate this span faithfully",
+            duration=dur, out_path=out_i, first_frame=left_anchor,
+        )
     else:
-        anchor = seg.first_frame_path
+        # 兼容兜底(无 flf2v 能力 / 锚不同镜):i2v 段修复 + 前向级联(旧路)
+        anchor = left_anchor or seg.first_frame_path
         if image_edit is not None and anchor is not None and modality in (
             "motion", "presence", "content"
         ) and hint:
@@ -394,6 +417,7 @@ def propagate_repair(
             prompt=hint or "regenerate this span faithfully",
             duration=dur, out_path=out_i, first_frame=anchor,
         )
+        cascade_needed = True
     if repaired is None:
         return None
     # Fixed-duration APIs return ≥ the span (seedance min 5 s) — retime the
@@ -405,35 +429,34 @@ def propagate_repair(
     nl = extract_frame(repaired, 10**9, cache_dir / f"seg{i}_new_last.png")
     new_last[i] = nl or seg.last_frame_path
 
-    # ── 3. forward cascade with similarity early-stop ────────────────────────
-    cascade_depth = 0
-    end = min(len(segs) - 1, i + max_cascade)
-    for j in range(i + 1, end + 1):
-        anchor = new_last[j - 1]
-        if anchor is None:                   # lost the anchor → cannot continue
-            break
-        out_j = cache_dir / f"seg{j}_cascade.mp4"
-        dur_j = max(1e-3, (segs[j].end_frame - segs[j].start_frame) / fps)
-        regen = video_gen.generate(
-            prompt=hint or "continue the shot; keep one continuous trajectory",
-            duration=dur_j, out_path=out_j, first_frame=anchor,
-        )
-        if regen is None:
-            break
-        regen = _fit_to_seconds(Path(regen), dur_j,
-                                cache_dir / f"seg{j}_cascade_fit.mp4")
-        new_paths[j] = Path(regen)
-        cascade_depth += 1
-        new_j_last = extract_frame(
-            regen, 10**9, cache_dir / f"seg{j}_new_last.png"
-        )
-        new_last[j] = new_j_last or segs[j].last_frame_path
-        # Continuity reconverged? If the regenerated boundary already matches the
-        # OLD boundary, everything downstream of j is still valid — STOP.
-        if new_j_last is not None and segs[j].last_frame_path is not None:
-            sim = frame_similarity(new_j_last, segs[j].last_frame_path)
-            if sim >= sim_threshold:
+    # ── 3. forward cascade(仅兼容兜底路径需要;flf2v/tail 免级联)──────────
+    if cascade_needed:
+        end = min(len(segs) - 1, i + max_cascade)
+        for j in range(i + 1, end + 1):
+            anchor = new_last[j - 1]
+            if anchor is None:               # lost the anchor → cannot continue
                 break
+            out_j = cache_dir / f"seg{j}_cascade.mp4"
+            dur_j = max(1e-3, (segs[j].end_frame - segs[j].start_frame) / fps)
+            regen = video_gen.generate(
+                prompt=hint or "continue the shot; keep one continuous trajectory",
+                duration=dur_j, out_path=out_j, first_frame=anchor,
+            )
+            if regen is None:
+                break
+            regen = _fit_to_seconds(Path(regen), dur_j,
+                                    cache_dir / f"seg{j}_cascade_fit.mp4")
+            new_paths[j] = Path(regen)
+            new_j_last = extract_frame(
+                regen, 10**9, cache_dir / f"seg{j}_new_last.png"
+            )
+            new_last[j] = new_j_last or segs[j].last_frame_path
+            # Continuity reconverged? If the regenerated boundary matches the
+            # OLD boundary, everything downstream of j is still valid — STOP.
+            if new_j_last is not None and segs[j].last_frame_path is not None:
+                sim = frame_similarity(new_j_last, segs[j].last_frame_path)
+                if sim >= sim_threshold:
+                    break
 
     # ── 4. splice everything back together ───────────────────────────────────
     out = cache_dir / "spliced_repair.mp4"

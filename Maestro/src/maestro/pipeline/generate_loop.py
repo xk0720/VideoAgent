@@ -757,6 +757,7 @@ def generate_shot_orchestrated(
     initial_candidates: Optional[list[CandidateClip]] = None,
     patience: int = 2,
     quality_bar: Optional[float] = None,
+    repair_severity: float = 0.0,
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
@@ -881,6 +882,19 @@ def generate_shot_orchestrated(
                          "quality_bar %.4f and no defect ≥ %.2f severity",
                          spec.shot_idx, turn, total_now, float(quality_bar),
                          _HIGH_SEVERITY)
+                break
+        # 小毛病容忍(2026-07-16 用户问"有没有不修的机制"):最坏缺陷的
+        # severity 低于阈值 → 不进修复循环,收工留痕。默认 0.0 = 关闭
+        # (行为不变);建议 0.6 —— VLM 惯出的 0.5 级小项不再触发花钱修复。
+        # converged 如实保持 False,只是"不值得修"。
+        if repair_severity > 0:
+            worst_now = defect_report.worst()
+            if worst_now is not None and worst_now.severity < repair_severity:
+                stop_reason = "minor_defects_tolerated"
+                log.info("shot %d turn%d EARLY STOP: worst defect severity "
+                         "%.2f < repair threshold %.2f — defects tolerated, "
+                         "no repair spend", spec.shot_idx, turn,
+                         worst_now.severity, repair_severity)
                 break
         turns_used = turn
         # Consolidate ALL critiques into the prioritized review_brief (ranked

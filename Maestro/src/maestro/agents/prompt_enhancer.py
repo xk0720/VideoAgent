@@ -29,6 +29,7 @@ _STRATEGY_FAMILY = {
     "t2v_own_refs": "seedance_t2v",
     "ti2v_prev_plus_keyframe": "seedance_t2v",
     "tiv2v_window": "seedance_t2v",
+    "extend_prev": "seedance_extend",
     "i2v_keyframe": "seedance_i2v",
     "ti2v_prev_last": "seedance_i2v",
     "flf2v_own_pair": "seedance_i2v_flf",

@@ -18,6 +18,19 @@ strategy, review, repair) hangs off these entries.
    Bad: "then it falls" (whose? where?);
    Good: "Shot 2: the glass tips over the table edge and falls (kitchen,
    close-up)".
+   COMPLETE-ACTION LAW (2026-07-16): every shot contains COMPLETE action
+   units — never cut a one-off action halfway. A jump LANDS inside the
+   shot that started it; a fall IMPACTS inside its shot. Handing motion
+   across a cut is only allowed with SUSTAINABLE motion (walking,
+   trotting, rolling, a camera move) — "frozen mid-air at the cut" is
+   both unfilmable (models freeze the subject) and uncontinuable.
+   Bad:  shot 1 "...and leaps down" / end_state "mid-air below the sill"
+   Good: shot 1 "...leaps down and LANDS, already trotting" / end_state
+         "trotting across the floor toward the bowl, mid-stride".
+   LINKING NARRATION: each description (except the first) opens with how
+   it takes over from the previous end_state and closes with how it hands
+   off — a reader should see the seam ("...lands and, without pausing,
+   trots toward..."). Thin descriptions produce thin videos.
 2. Scene splits: a change of location/time = a new scene. Write "scene N"
    explicitly in the description — the ledger parses the scene number from it
    (no parse → everything is scene 1, which is correct for single-scene
@@ -40,13 +53,16 @@ strategy, review, repair) hangs off these entries.
    living-room background image is wasted on a beach script.
 7. ASSET MENTION LAW: when the user's task names a provided asset ("the cat
    from the photo appears", "use my living-room image"), the shot
-   description(s) where it appears MUST state that requirement explicitly,
-   using the SAME wording as the asset's catalog description (e.g. "the
-   orange tabby cat (from the user's photo) jumps onto the sill"). Do NOT
-   write @Image/@Video references here — reference numbering happens
-   downstream (the slot manifest); your job is only to make the requirement
-   impossible to miss. A user-named asset that no shot description mentions
-   is a script BUG (the executor warns loudly).
+   description(s) where it appears MUST state that requirement explicitly —
+   using the asset's IDENTITY WORDS from the catalog (species, coat,
+   markings, clothing: "the orange-and-white cat (from the user's photo)").
+   NEVER paste the whole catalog caption: its pose/scene words describe
+   the PHOTO, not this shot ("sleeping on a windowsill" inside a shot
+   where the cat trots on the floor is a contradiction — field bug
+   2026-07-16). One natural mention per shot is enough. Do NOT write
+   @Image/@Video references here — numbering happens downstream (the slot
+   manifest). A user-named asset that no shot description mentions is a
+   script BUG (the executor warns loudly).
 
 ## Output format (STRICT JSON — output this and nothing else)
 
@@ -81,6 +97,11 @@ strategy, review, repair) hangs off these entries.
      moving again by itself; if the story needs that, a NEW force/event
      (a push, a gust, a character's touch) must be written INTO the next
      shot's description, or the story is physically wrong.
+  4. SUSTAINABLE-MOTION-ONLY at the cut: the moving state in an end_state
+     must be sustainable (walking/trotting/rolling/camera move) — NEVER a
+     suspended one-off action ("mid-air", "mid-fall", "mid-impact").
+     Complete the jump/fall inside its own shot first (COMPLETE-ACTION
+     LAW above).
 - YOU decide the shot count — it is never preset. Read it off the story's
   beats, informed by `episode_guidance.past_task_shapes` (how many shots
   similar past tasks used and whether they succeeded). `max_shots` is ONLY a

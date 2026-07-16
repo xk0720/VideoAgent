@@ -102,6 +102,18 @@ that gap:
   continuous camera-consistent evolution ("…until the shot settles on the
   shattered glass exactly as in the closing frame"). No @-mentions.
 
+### seedance_extend (video-extend — TRUE continuation)
+- No reference syntax at all: the model continues from the input video's
+  final frame natively. Never write @Video/@Image tokens.
+- Describe ONLY what happens NEXT — never re-describe what already
+  happened in the previous shot (the model already has those pixels).
+- Always include an explicit MAINTENANCE clause naming what must carry
+  over: subject identity words (coat/markings/clothing), the setting, the
+  lighting, the camera style — e.g. "keep the same orange-and-white cat
+  with white chest, the same living room and warm sunlight".
+- If a LAST_FRAME condition row exists, end the prompt by describing the
+  arrival at that frame's content.
+
 ### kling_reference (kling-video-o1 reference-to-video)
 - Mention images as "reference image 1", "reference image 2", … (NOT
   @ImageN — kling uses plain wording), each with its purpose: "Use

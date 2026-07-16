@@ -144,13 +144,17 @@ class OrchestratorAgent:
         # exists (the timeline degrades to a whole-clip no-op when the clip has
         # no decodable frames or ffmpeg is missing — execute() guards that).
         if vg is not None and caps:
+            # 2026-07-16 裁决:keyframe_edit_propagate 已禁用(改中间帧会让
+            # 前后都变、整体失调),frame_to_frame 与新 regenerate_segment
+            # 语义重复 —— 双双从菜单摘除,段级修复只剩一个确定性工具。
             menu.append({
                 "name": "regenerate_segment",
                 "description": "THE frame-precise repair: physically CUTS the "
-                "clip at the defect's frame range, re-generates only that span "
-                "anchored on the good boundary frames, then re-anchors "
-                "downstream until continuity converges. The ONLY family of "
-                "tools that truly consumes a frame range (the cut is by frame). "
+                "clip at the defect's frame range and re-generates ONLY the "
+                "interior between the two boundary frames with a first+last-"
+                "frame model (both boundaries are the ORIGINAL frames, so "
+                "everything downstream stays continuous by construction — no "
+                "ripple). The ONLY tool that truly consumes a frame range. "
                 "PREFER this for any span-localized defect — including a "
                 "defect at the END of the clip (cut before it, regrow the "
                 "tail from the last good frame; never extend_clip there).",
@@ -160,28 +164,6 @@ class OrchestratorAgent:
                     "hint": "str — anti-defect instruction for the regenerated span",
                 },
             })
-            menu.append({
-                "name": "keyframe_edit_propagate",
-                "description": "Edit the corrected keyframe at a frame, re-generate "
-                "the segment anchored on it, then propagate forward. Use when one "
-                "frame's CONTENT is wrong and the fix should ripple downstream.",
-                "args": {
-                    "frame_idx": "int — frame whose segment to repair",
-                    "edit_instruction": "str — what to correct in that frame",
-                },
-            })
-            if "flf2v" in caps:
-                menu.append({
-                    "name": "frame_to_frame",
-                    "description": "Re-generate a segment double-anchored on its "
-                    "boundary frames (flf2v), then propagate forward. Strongest "
-                    "continuity for a MOTION defect on a specific frame range.",
-                    "args": {
-                        "frame_start": "int — defect span start frame",
-                        "frame_end": "int — defect span end frame",
-                        "hint": "str — corrected-motion instruction",
-                    },
-                })
         if "edit" in caps and self.video_gen is not None:
             menu.append({
                 "name": "edit_clip",
@@ -191,7 +173,7 @@ class OrchestratorAgent:
                 "table edge...') plus a DETAILED correction (subject, scene, "
                 "what was wrong, what correct motion looks like, what must stay "
                 "unchanged). Use for GLOBAL motion/look problems; for a "
-                "span-localized defect prefer regenerate_segment/frame_to_frame.",
+                "span-localized defect prefer regenerate_segment.",
                 "args": {
                     "prompt": "str — edit instruction describing the corrected motion",
                     "backend": "str — 'seedance' (default, best free-form) | "
@@ -526,9 +508,17 @@ class OrchestratorAgent:
             best, prop_dir, n_segments=3,
             duration_s=float(getattr(spec, "duration", 0.0) or 0.0),
         )
+        # head 跨度的左锚:该镜条件里的首帧角色图(本镜就该开在这张图上)。
+        # 没有 → propagate_repair 对 head 跨度诚实返回 None(brain 改选整镜工具)。
+        head_anchor = None
+        for im in ((getattr(best, "conditioning", None) or {}).get("images")
+                   or []):
+            if im.get("role") in ("first_frame", "first") and im.get("path")                     and Path(im["path"]).exists():
+                head_anchor = im["path"]
+                break
         spliced = propagate_repair(
             timeline, defect, video_gen=vg, image_edit=image_edit,
-            hint=hint, cache_dir=prop_dir,
+            hint=hint, cache_dir=prop_dir, head_anchor=head_anchor,
         )
         if spliced is None:
             return None

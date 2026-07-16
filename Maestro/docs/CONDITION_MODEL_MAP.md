@@ -42,7 +42,7 @@
 | 5 | `ti2v_prev_last` | 上镜尾帧 | `bytedance/seedance-2.0/image-to-video` | `image = 上镜尾帧` | 硬锁开场帧 |
 | 6 | `flf2v_bridge` | 上镜尾帧 → 本镜图 | `bytedance/seedance-2.0/image-to-video` | `image = 上镜尾帧, last_image = 本镜图` | 硬锁两端 |
 | 7 | `ti2v_prev_plus_keyframe` | 上镜尾帧 + 本镜图(软) | `bytedance/seedance-2.0/text-to-video` | `reference_images = [尾帧, 本镜图…](@Image1 续接点, @Image2… 目标构图)` | 软 |
-| 8 | `tiv2v_window` | 上镜尾段**视频**(+ 可选本镜图) | `bytedance/seedance-2.0/text-to-video` | `reference_videos = [尾段](@Video1);有图时 + reference_images = [图](@Image1)` | 软(运动续接) |
+| 8 | `extend_prev`(2026-07-16 顶替 tiv2v_window) | 上镜尾段**视频**(+ 可选 'last' 角色图) | `bytedance/seedance-2.0/video-extend` | `prompt(只写接下来 + 维持清单), video = 上镜尾段(从其末帧续画), last_image = 'last' 角色图(可选目标尾帧), duration, resolution, generate_audio=false` | **真续接**(末帧起画;输出=原片+续段拼接,执行器裁头) |
 | 9 | `multi_image_fusion` | 2..7 张图(+ 可选尾段视频) | `kwaivgi/kling-video-o1/reference-to-video` | `prompt, images[](≤7;带 video ≤4), video?, duration{5,10}, aspect_ratio, keep_original_sound` | 软(多图融合) |
 
 规则(硬编码在后端,违反即 RuntimeError,不允许静默):
@@ -52,9 +52,13 @@
   合计 ≤12 文件;@ImageN/@VideoN 提及)。image-to-video 端点 schema 只有
   `image` + `last_image` —— **i2v × refs/ref_videos 是未验证组合,后端直接
   拒绝**(refs:丢弃+告警;ref_videos:抛错,因为丢了窗口条件等于换策略)。
-- 因此 #8 tiv2v_window **无论有没有本镜图都走 text-to-video**:尾段视频走
-  `reference_videos`,本镜图(如有)走 `reference_images` 软锚。要硬锁
-  开场帧就不该选 tiv2v_window,选 #5/#6(菜单与技能文件同步此语义)。
+- #8 换代记录(2026-07-16,attempt2 实证):旧 tiv2v_window 走 t2v 的
+  `reference_videos` —— 那是【参考】通道,参考运动风格,**不从末帧续画**,
+  prompt 写 "Continuing from @Video1" 也无济于事。真续接原语 =
+  video-extend(官方语义:generation continues from last frame;
+  `last_image` 可选目标尾帧;**输出为输入+续段拼接**,计费只算新段,
+  执行器必须裁掉头部输入时长)。tiv2v_window 从菜单退役,执行分支保留
+  兼容旧 episode。
 - #9 是唯一的 kling 路线(多图融合本来就是它的能力);带 video 时图上限
   自动 7→4(官方规则)。
 
@@ -64,9 +68,9 @@
 |---|---|---|---|
 | `regenerate` | generator.run(无锚) | `bytedance/seedance-2.0/text-to-video` | `prompt(+fix hint), duration=spec.duration` |
 | `keyframe_edit` | image_edit → generator.run(first_frame=改后图) | `bytedance/seedream-v4/edit` → `…/image-to-video` | `image=改后关键帧` |
-| `regenerate_segment` | propagate_repair:段双锚 flf2v 或段首锚 i2v;级联段 i2v;`_fit_to_seconds` 回贴段长 | `bytedance/seedance-2.0/image-to-video` | `image(+last_image), duration=段长(snap 后回贴)` |
-| `keyframe_edit_propagate` | 同上(锚帧先过 seedream-v4/edit) | 同上 | 同上 |
-| `frame_to_frame` | propagate_repair 双锚路径 | `bytedance/seedance-2.0/image-to-video` | `image, last_image` |
+| `regenerate_segment`(2026-07-16 重做) | propagate_repair:interior 跨度 → **flf2v 双锚**(左邻【原始】尾帧 + 右邻【原始】首帧)一笔重生,**免级联**(尾锚=下游原开头);tail 跨度 → i2v 从左锚;head 跨度 → 左锚=条件首帧图,没有则诚实 None(brain 改选整镜工具) | `bytedance/seedance-2.0/image-to-video` | `image, last_image, duration=段长(snap 后 _fit_to_seconds 回贴)` |
+| ~~`keyframe_edit_propagate`~~ | **已禁用**(2026-07-16 裁决:改中间帧导致前后失调;菜单摘除,代码保留) | — | — |
+| ~~`frame_to_frame`~~ | **已摘除**(与新 regenerate_segment 语义重复) | — | — |
 | `edit_clip` backend=seedance | edit_video | `bytedance/seedance-2.0/video-edit` | `prompt, video(URL), resolution`(≤15s 输入) |
 | `edit_clip` backend=runway | edit_video | `runwayml/gen4-aleph` | `prompt, video, aspect_ratio`(URL-only,base64 会 400) |
 | `depth_edit` | edit_video(vace, depth) | `wavespeed-ai/wan-2.1-14b-vace` | `task=depth, video, prompt, size` |

@@ -88,7 +88,7 @@ log = get_logger(__name__)
 #   排序依据:硬锚(像素级续接)优先于软锚 —— flf2v_bridge(双端硬锚)>
 #   tiv2v_window(尾段运动参考+可选软图,全走 t2v)> ti2v_prev_last(首帧硬锚)>
 #   ti2v_prev_plus_keyframe(t2v+refs 软锚)> multi_image_fusion(融合)。
-_CONDITION_PRIORITY = ["flf2v_own_pair", "flf2v_bridge", "tiv2v_window",
+_CONDITION_PRIORITY = ["flf2v_own_pair", "flf2v_bridge", "extend_prev",
                        "ti2v_prev_last", "ti2v_prev_plus_keyframe",
                        "t2v_own_refs", "multi_image_fusion",
                        "i2v_keyframe", "t2v"]
@@ -295,6 +295,41 @@ def _cut_tail(video: Path, seconds: float, out_path: Path) -> Optional[Path]:
     if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
         return None
     return out_path
+
+
+def _trim_head(video: Path, seconds: float, out_path: Path) -> Optional[Path]:
+    """裁掉视频开头 `seconds` 秒(video-extend 的输出 = 输入片段+续段拼接,
+    官方页原文 "the original and new segment are concatenated" —— 裁头后才
+    是纯续段)。ffmpeg 缺失/失败 → None(调用方带痕降级用未裁版本)。"""
+    if not shutil.which("ffmpeg"):
+        return None
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-ss", f"{max(0.0, seconds):.2f}",
+             "-i", str(video), "-c", "copy", str(out_path)],
+            capture_output=True, timeout=120,
+        )
+    except Exception:
+        return None
+    if r.returncode != 0 or not out_path.exists()             or out_path.stat().st_size == 0:
+        return None
+    return out_path
+
+
+def _probe_seconds(video: Path) -> float:
+    """ffprobe 时长(秒);探不到 → 0.0(调用方按未知处理)。"""
+    if not shutil.which("ffprobe"):
+        return 0.0
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
+            capture_output=True, text=True, timeout=30)
+        return float(r.stdout.strip())
+    except Exception:
+        return 0.0
 
 
 def _last_frame(video: Path, out_path: Path) -> Optional[Path]:
@@ -900,6 +935,16 @@ def _slot_manifest(strategy: str, entry, prev,
         rows += [{"slot": f"@Image{i + 2}", "referenceable": True,
                   "content": _c(p, "a planned image (target look)")}
                  for i, p in enumerate(own)]
+    elif strategy == "extend_prev" and prev_ok:
+        rows = [{"slot": "CONTINUATION_SOURCE", "referenceable": False,
+                 "content": "the previous shot's tail — generation continues "
+                            "from its exact final frame; identity/scene/light "
+                            "carry over natively"}]
+        if pl is not None:
+            rows.append({"slot": "LAST_FRAME", "referenceable": False,
+                         "content": _c(pl, "this shot's planned closing "
+                                           "frame (the extension must arrive "
+                                           "at it)")})
     elif strategy == "tiv2v_window" and prev_ok:
         own = [kf] if kf is not None else list(refs or [])
         rows = [{"slot": "@Video1", "referenceable": True,
@@ -980,14 +1025,19 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
                                         "(continuity AND the shot ARRIVES at "
                                         "your image). Pick only when arriving "
                                         "at the image is the intent."})
-        if "ref_video" in caps:
-            menu.append({"name": "tiv2v_window",
-                         "description": "Previous shot's TAIL video segment as "
-                                        "@Video1 (motion reference — the "
-                                        "generator SEES the ongoing motion); a "
-                                        "planned own image rides along as "
-                                        "@Image1, a SOFT look reference (NOT a "
-                                        "locked first frame)."})
+        if "extend" in caps and hasattr(video_gen, "extend"):
+            menu.append({"name": "extend_prev",
+                         "description": "TRUE continuation: the video-extend "
+                                        "model generates onward FROM the "
+                                        "previous shot's final frame — "
+                                        "identity, scene and light carry over "
+                                        "natively (the strongest continuity "
+                                        "route). `video_prompt` must describe "
+                                        "ONLY what happens NEXT plus what to "
+                                        "maintain — never re-describe what "
+                                        "already happened. A planned "
+                                        "'last'-role image (if any) becomes "
+                                        "the target final frame."})
         if (has_kf or refs) and "ref_images" in caps:
             menu.append({"name": "ti2v_prev_plus_keyframe",
                          "description": "t2v reference channel with the "
@@ -1161,6 +1211,38 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                     else "ti2v_prev_last" if prev is not None
                     and prev.video_path else "t2v")
         cond = {"strategy": strategy, "degraded_from": "multi_image_fusion"}
+
+    if strategy == "extend_prev":
+        # 真续接(2026-07-16 裁决):video-extend 从上镜【末帧】继续生成,
+        # 身份/场景/光线原生延续 —— attempt2 实证 reference_videos 参考通道
+        # 接不上画面,prompt 无解,必须换原语。
+        # 传上镜【尾段】(不传整镜:上传小、末帧才是接点);输出 = 尾段+
+        # 续段拼接(官方语义)→ 裁掉头部尾段时长 = 本镜素材;裁不了(无
+        # ffmpeg)→ 未裁版本 + 台账留痕(不装死)。
+        tail = _cut_tail(Path(prev.video_path), window_tail_s,
+                         cache_dir / f"shot{spec.shot_idx:03d}_prev_tail.mp4")
+        src = tail if tail is not None else Path(prev.video_path)
+        head_s = _probe_seconds(Path(src))
+        raw = cache_dir / f"shot{spec.shot_idx:03d}_extend_raw_s{seed}.mp4"
+        cond.update(extended_from=str(src),
+                    tail_seconds=(window_tail_s if tail else None),
+                    last_image=(str(pl) if pl is not None else None))
+        video_gen.extend(
+            prompt=brain_prompt or (
+                spec.prompt + " — continue seamlessly from where the "
+                "previous moment ends; keep the same subject identity, "
+                "setting and lighting."),
+            video_path=src, out_path=raw, duration=spec.duration,
+            seed=seed, last_image=pl)
+        if head_s > 0:
+            trimmed = _trim_head(raw, head_s, out)
+            if trimmed is not None:
+                return Path(trimmed), cond
+        cond["untrimmed"] = True          # 头部还带着上镜尾段(诚实留痕)
+        log.warning("extend_prev: could not trim the %.1fs source head off "
+                    "the extend output (ffmpeg/ffprobe unavailable) — using "
+                    "the concatenated clip as-is", head_s)
+        return Path(raw), cond
 
     if strategy == "tiv2v_window":
         # 映射表铁律(docs/CONDITION_MODEL_MAP.md §1 #8):tiv2v_window 永远走
@@ -1443,6 +1525,7 @@ def generate_movie_windowed(
     window_tail_s: float = 2.0,         # §C5 尾段窗口长度(秒)
     patience: int = 2,                  # 小循环:连续 N 轮被拒即止损(≤0 关闭)
     quality_bar: Optional[float] = None,  # 小循环:达标即停(None 关闭)
+    repair_severity: float = 0.0,       # 最坏缺陷低于此值不修(0 关闭,荐 0.6)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -1690,6 +1773,7 @@ def generate_movie_windowed(
             max_turns=max_turns, summarizer=summarizer,
             initial_candidates=initial,
             patience=patience, quality_bar=quality_bar,
+            repair_severity=repair_severity,
         )
         shot_results.append(res)
         best = res.clip

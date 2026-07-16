@@ -77,6 +77,9 @@ def main() -> int:
                     help="小循环连续 N 轮被拒即止损(≤0 关闭)")
     ap.add_argument("--quality-bar", type=float, default=None,
                     help="小循环总分达标线(≥即提前收工;默认关闭)")
+    ap.add_argument("--repair-severity", type=float, default=0.0,
+                    help="最坏缺陷 severity 低于此值就不修(0=关闭,荐 0.6:"
+                         "VLM 惯出的 0.5 级小项不再触发花钱修复)")
     ap.add_argument("--with-physics-measure", action="store_true",
                     help="启用 CoTracker+GroundingDINO 测量 critic(需 GPU)")
     ap.add_argument("--baseline-anchor", action="store_true",
@@ -244,6 +247,7 @@ def main() -> int:
         n_candidates=args.n_candidates, max_turns=args.max_turns,
         window_tail_s=args.tail_seconds,
         patience=args.patience, quality_bar=args.quality_bar,
+        repair_severity=args.repair_severity,
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,

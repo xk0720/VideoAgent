@@ -110,9 +110,12 @@ def test_available_actions_base_menu_no_caps_no_assets():
     names = {a["name"] for a in orch.available_actions(asset_memory=None)}
     # Whole-clip + the LOCALIZED-propagated tools (offered for any backend with
     # a video capability); no edit/extend/retrieve/flf2v without those caps/assets.
+    # 2026-07-16 裁决:keyframe_edit_propagate 禁用(中间帧编辑引发前后
+    # 失调)、frame_to_frame 与新 regenerate_segment 重复 —— 双双摘除
     assert names == {"regenerate", "keyframe_edit", "accept",
-                     "regenerate_segment", "keyframe_edit_propagate"}
-    assert "frame_to_frame" not in names   # flf2v not in {t2v,i2v}
+                     "regenerate_segment"}
+    assert "keyframe_edit_propagate" not in names
+    assert "frame_to_frame" not in names
     assert "edit_clip" not in names and "extend_clip" not in names
 
 

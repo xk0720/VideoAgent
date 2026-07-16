@@ -592,19 +592,25 @@ class WaveSpeedClient(BaseVideoGenClient):
         out_path: Path,
         duration: Optional[float] = None,
         seed: int = 0,
+        last_image: Optional[Path] = None,
     ) -> Path:
         """Continue an existing clip beyond its last frame. Capability "extend"
-        (optional). WaveSpeed now hosts DEDICATED video-extend models — default
-        `bytedance/seedance-2.0/video-extend`: the whole input video (uploaded,
-        passed by URL) conditions a true continuation, replacing the old
-        decode-last-frame → i2v hack (better seam continuity: the model sees
-        the motion, not one frame). Loud RuntimeError (no key) fires first."""
+        (optional). Default `bytedance/seedance-2.0/video-extend` — schema
+        re-verified 2026-07-16(官方模型页):
+          prompt(必填,描述接下来的延续)+ video(必填 URL,从【末帧】继续)
+          + last_image(可选 URL,目标尾帧 —— 模型从输入末帧插值到这张图)
+          + duration(int 4-15,默认 5)+ resolution + generate_audio
+          (官方默认 true,这里跟随 config 默认 False 显式关闭)。
+        ⚠ 输出 = 原片 + 续段【拼接】(计费只算新段)—— 调用方要裁掉头部
+        原片时长才是纯续段(窗口策略 extend_prev 负责裁)。"""
         payload = {
             "prompt": prompt,
             "video": self._upload_media(video_path),   # loud key check inside
             "resolution": self.resolution,
             "generate_audio": self.generate_audio,
         }
+        if last_image is not None:                      # 目标尾帧(可选)
+            payload["last_image"] = self._upload_media(last_image)
         if duration is not None:                        # None → API 默认
             payload["duration"] = self._snap_duration(duration,
                                                       self.extend_model)

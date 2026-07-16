@@ -55,12 +55,17 @@ Previous-shot-anchored strategies (window continuity):
                       as the CLOSING anchor: continuity AND the shot ARRIVES at
                       your image. Pick only when arriving at the image is the
                       intent (it locks the ending).
-- `tiv2v_window`      Previous shot's TAIL video segment rides the seedance
-                      t2v reference-video channel as `@Video1` (a MOTION
-                      reference — the generator SEES the ongoing motion). Any
-                      planned own image rides along as `@Image1` — a SOFT
-                      look reference, NOT a locked first frame; for a
-                      pixel-locked opening use ti2v_prev_last / flf2v_bridge.
+- `extend_prev`       TRUE continuation (video-extend): generation continues
+                      FROM the previous shot's final frame — identity, scene
+                      and light carry over natively. The STRONGEST continuity
+                      route; prefer it whenever the scene flows on. The
+                      `video_prompt` describes ONLY what happens NEXT plus a
+                      maintenance clause (subject identity / setting / light);
+                      never re-describe what already happened. A planned
+                      'last'-role image becomes the target final frame.
+                      (Replaces the retired tiv2v_window: the t2v
+                      reference-video channel only REFERENCES motion — it
+                      does not continue the pixels; field-proven 2026-07-16.)
 - `ti2v_prev_plus_keyframe`  t2v reference channel with the previous shot's
                       last frame as @Image1 (the moment to continue from) +
                       this shot's image(s) as @Image2(…) (target look). SOFT
@@ -93,9 +98,10 @@ by the executor — do NOT output them.
 - seedance routes (`t2v_own_refs`, `ti2v_prev_plus_keyframe`): mention images
   as `@Image1`, `@Image2`, e.g. "Reference @Image1 for the man's appearance
   in @Image2's living-room setting."
-- `tiv2v_window`: mention the tail video as `@Video1` ("Continue @Video1's
-  motion and camera seamlessly…"); a planned own image is `@Image1` (images
-  and videos number separately). The image is a soft look reference here.
+- `extend_prev`: NO reference syntax (the model natively continues from
+  the previous final frame). Write only what happens NEXT + an explicit
+  maintenance clause ("keep the same orange-and-white cat, the same living
+  room and warm sunlight"). Never re-describe what already happened.
 - kling route (`multi_image_fusion`): use the wording "reference image 1/2",
   e.g. "Use reference image 1 as the female character and reference image 2
   as the male character. Blend their appearances into the same style…"

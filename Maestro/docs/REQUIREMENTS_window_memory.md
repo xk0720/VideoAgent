@@ -402,3 +402,25 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
   输入 = shot 描述 + 执行器收集的条件事实清单(_conditions_for_prompt,
   增强器只能利用不能发明)+ 策略→家族映射;输出 STRICT JSON,校验失败
   保留原 prompt。`--prompt-enhancer` 开启;原始输出进 brain_calls.jsonl。
+
+---
+
+## 追加需求(2026-07-16 第三轮,attempt2 复盘,已裁决并实现)
+
+- **(1) 完整动作法则**:每镜描述完整动作单元,一次性动作(跳/坠/撞)禁止
+  切半;切点交接只许可持续运动(小跑/行走/滚动);end_state 禁 mid-air。
+  scene_write 另加 LINKING NARRATION(描述写明如何接棒/交棒)与
+  caption 粘贴修正(只取身份词,照片姿态/场景词禁止照搬)。
+- **(2) 真续接换代**:tiv2v_window(t2v reference_videos 参考通道,实证
+  接不上画面)退役 → `extend_prev`(bytedance/seedance-2.0/video-extend,
+  schema 复核:video 必填从末帧续画、last_image 可选目标尾帧、输出=
+  输入+续段拼接须裁头);skill 写明"只写接下来 + 维持清单"。
+- **(3) Brain I/O 报告**:scripts/render_brain_log.py(任何
+  brain_calls.jsonl → markdown);attempt2 全量 I/O + 问题分析在
+  docs/analysis_attempt2_brain_io.md。
+- **(4) 修复重做**:keyframe_edit_propagate 禁用(中间帧编辑致前后失调);
+  frame_to_frame 摘除(重复);regenerate_segment = interior flf2v 双锚
+  免级联 / tail i2v / head 用条件首帧图作锚(无锚诚实降级)。
+- **(追问)不修的机制**:converged(实证 shot3 零修复)/quality_bar 原有;
+  新增 `--repair-severity`(最坏缺陷低于阈值不修,
+  stop_reason=minor_defects_tolerated,默认 0 关闭,荐 0.6)。

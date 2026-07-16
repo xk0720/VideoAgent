@@ -143,12 +143,14 @@ def test_condition_menu_gating(tmp_path):
     e1.keyframe_path = str(kf)
     e0.video_path = str(tmp_path / "v0.mp4")
     names = {m["name"] for m in _condition_menu(e1, e0, vg)}
-    assert names == {"t2v", "i2v_keyframe", "ti2v_prev_last",
-                     "flf2v_bridge", "tiv2v_window"}
+    # 2026-07-16:extend_prev 顶替 tiv2v_window(需要 extend 能力+方法,
+    # 本桩后端没有 → 不出现;tiv2v_window 已从菜单退役)
+    assert names == {"t2v", "i2v_keyframe", "ti2v_prev_last", "flf2v_bridge"}
+    assert "tiv2v_window" not in names
     # 能力收窄 → 对应策略消失
     plain = MockVideoGenClient()                        # 只有 t2v/i2v
     names2 = {m["name"] for m in _condition_menu(e1, e0, plain)}
-    assert "flf2v_bridge" not in names2 and "tiv2v_window" not in names2
+    assert "flf2v_bridge" not in names2 and "extend_prev" not in names2
 
 
 def test_keyframe_menu_gating():
