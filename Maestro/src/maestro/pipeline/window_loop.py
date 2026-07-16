@@ -68,6 +68,7 @@ from typing import Optional
 from ..agents.director import DirectorAgent
 from ..agents.screenwriter import ScreenwriterAgent
 from ..logging_utils import brain_log, get_logger
+from .ref_slots import validate_references
 from ..memory.episode_memory import EpisodeMemory
 from ..memory.storyboard import StoryboardMemory
 from ..models.mllm_backends import _extract_json
@@ -767,6 +768,88 @@ def _mention(entry, path, n: int, kind: str = "@Image") -> str:
     return f"{kind}{n} is a planned image for this shot — keep it consistent."
 
 
+def _slot_manifest(strategy: str, entry, prev,
+                   use_prev_tail: bool = False) -> list[dict]:
+    """方案 A(2026-07-16 裁决):【槽位清单】—— 执行器将要装配的引用槽位,
+    在写 prompt 之前算出来,发给写 prompt 的人(brain / enhancer)。编号
+    从"brain 要遵守的规则"变成"brain 拿到的数据",错无可猜。
+
+    行:{"slot", "content"(实况语义), "referenceable"}。
+    referenceable=False(FIRST_FRAME/LAST_FRAME/kling 的参考视频)= 该路线
+    没有 @ 引用通道,prompt 只描述运动,不许写编号。
+
+    ⚠ 单一事实源契约:每个分支的槽位顺序与 _generate_with_condition 对应
+    策略块的 payload 装配顺序【一一对应】——改装配必须同步改这里
+    (tests/unit/test_slot_manifest.py 锁行为)。"""
+    ff, refs, pf, pl = _entry_images(entry)
+    kf = ff
+    prev_ok = prev is not None and getattr(prev, "video_path", None)
+
+    def _c(path, default: str) -> str:
+        return _desc_of(entry, path) or default
+
+    rows: list[dict] = []
+    if strategy == "flf2v_own_pair" and pf is not None and pl is not None:
+        rows = [{"slot": "FIRST_FRAME", "referenceable": False,
+                 "content": _c(pf, "this shot's planned opening frame")},
+                {"slot": "LAST_FRAME", "referenceable": False,
+                 "content": _c(pl, "this shot's planned closing frame")}]
+    elif strategy == "t2v_own_refs":
+        rows = [{"slot": f"@Image{i + 1}", "referenceable": True,
+                 "content": _c(p, "a planned reference image")}
+                for i, p in enumerate(refs)]
+    elif strategy == "flf2v_bridge" and prev_ok:
+        anchor = kf or (refs[0] if refs else None)
+        rows = [{"slot": "FIRST_FRAME", "referenceable": False,
+                 "content": "the previous shot's final frame (the moment "
+                            "this shot continues from)"}]
+        if anchor is not None:
+            rows.append({"slot": "LAST_FRAME", "referenceable": False,
+                         "content": _c(anchor, "this shot's planned image "
+                                               "(the shot must arrive at it)")})
+    elif strategy == "ti2v_prev_plus_keyframe" and prev_ok:
+        own = refs if refs else ([kf] if kf is not None else [])
+        rows = [{"slot": "@Image1", "referenceable": True,
+                 "content": "the previous shot's final frame (the exact "
+                            "moment to continue from)"}]
+        rows += [{"slot": f"@Image{i + 2}", "referenceable": True,
+                  "content": _c(p, "a planned image (target look)")}
+                 for i, p in enumerate(own)]
+    elif strategy == "tiv2v_window" and prev_ok:
+        own = [kf] if kf is not None else list(refs or [])
+        rows = [{"slot": "@Video1", "referenceable": True,
+                 "content": "the previous shot's tail segment — the ongoing "
+                            "motion this shot continues"}]
+        rows += [{"slot": f"@Image{i + 1}", "referenceable": True,
+                  "content": _c(p, "a planned image (soft look reference)")}
+                 for i, p in enumerate(own)]
+    elif strategy == "multi_image_fusion":
+        own = refs if refs else ([kf] if kf is not None else [])
+        n = 1
+        if prev_ok:
+            rows.append({"slot": "reference image 1", "referenceable": True,
+                         "content": "the previous shot's final frame — the "
+                                    "continuing scene state"})
+            n = 2
+        rows += [{"slot": f"reference image {n + i}", "referenceable": True,
+                  "content": _c(p, "a planned image")}
+                 for i, p in enumerate(own)]
+        if use_prev_tail and prev_ok:
+            rows.append({"slot": "the reference video",
+                         "referenceable": False,
+                         "content": "the previous shot's tail segment "
+                                    "(motion reference; describe the motion "
+                                    "to continue in plain words)"})
+    elif strategy == "ti2v_prev_last" and prev_ok:
+        rows = [{"slot": "FIRST_FRAME", "referenceable": False,
+                 "content": "the previous shot's final frame (this shot "
+                            "opens exactly on it)"}]
+    elif strategy == "i2v_keyframe" and kf is not None:
+        rows = [{"slot": "FIRST_FRAME", "referenceable": False,
+                 "content": _c(kf, "this shot's planned opening frame")}]
+    return rows
+
+
 def _condition_menu(entry, prev, video_gen) -> list[dict]:
     """当前 shot 可用的条件策略(Image Plan 角色 + 存在性 + 能力三重门控)。"""
     caps = video_gen.capabilities() if video_gen is not None else set()
@@ -1090,28 +1173,19 @@ def _conditions_for_prompt(strategy: str, entry, prev,
                            junction: str = "") -> list[dict]:
     """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
     按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
-    事实,不能发明条件。逐条 {kind, role, description}。"""
+    事实,不能发明条件。
+
+    方案 A(2026-07-16):媒体条件直接来自槽位清单(_slot_manifest,与
+    payload 装配同源),逐条 {kind: image|video, slot, referenceable,
+    description} —— 增强器引用编号只许照抄 slot,校验闸在出口把关。
+    状态条件(kind=state)照旧。"""
     conds: list[dict] = []
-    prev_ok = prev is not None and getattr(prev, "video_path", None)
-    if strategy in ("ti2v_prev_last", "flf2v_bridge",
-                    "ti2v_prev_plus_keyframe", "multi_image_fusion") and prev_ok:
-        conds.append({"kind": "image", "role": "previous_last_frame",
-                      "description": "the previous shot's exact last frame "
-                                     "(the moment this shot continues from)"})
-    if strategy == "tiv2v_window" and prev_ok:
-        conds.append({"kind": "video", "role": "previous_tail",
-                      "description": "the previous shot's tail segment — the "
-                                     "ongoing motion this shot continues"})
-    if strategy == "multi_image_fusion" and use_prev_tail and prev_ok:
-        conds.append({"kind": "video", "role": "previous_tail",
-                      "description": "the previous shot's tail segment "
-                                     "(rides along as a motion reference)"})
-    for im in (entry.images or []):
-        p = im.get("path")
-        if p and Path(p).exists():
-            conds.append({"kind": "image", "role": str(im.get("role", "")),
-                          "description": str(im.get("description", ""))
-                          or f"a planned {im.get('role', 'reference')} image"})
+    for r in _slot_manifest(strategy, entry, prev, use_prev_tail):
+        conds.append({"kind": ("video" if "video" in r["slot"].lower()
+                               else "image"),
+                      "slot": r["slot"],
+                      "referenceable": bool(r.get("referenceable")),
+                      "description": r.get("content", "")})
     # 需求 ②:状态类条件 —— prompt 必须从真实接点起笔、以剧本 end_state 收笔
     if junction:
         conds.append({"kind": "state", "role": "opening_state_actual",
@@ -1407,13 +1481,20 @@ def generate_movie_windowed(
             "required_end_state": entry.end_state or None,
         }
 
-        # §C brain 选条件策略(episode → llm → 兜底 三层)
+        # §C brain 选条件策略(episode → llm → 兜底 三层)。
+        # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
+        # —— 它写 video_prompt 时引用编号只许照抄所选策略的清单,不许猜。
         menu = _condition_menu(entry, prev, video_gen)
+        slots_by_strategy = {
+            m["name"]: _slot_manifest(m["name"], entry, prev,
+                                      use_prev_tail=True)
+            for m in menu}
         d = _decide(
             llm, "generation-condition", menu,
             {"shot": entry.to_brain_line(),
              "prev_shot": prev.to_brain_line() if prev else None,
              "junction": junction_ctx,
+             "slots_by_strategy": slots_by_strategy,
              "storyboard": storyboard.to_brain_json(),
              "episode_guidance": guidance},
             replay_hint=replay_cond.get(entry.label),
@@ -1436,6 +1517,7 @@ def generate_movie_windowed(
                           and Path(entry.keyframe_path).exists() else [])
         brain_prompt = d.get("video_prompt", "")
         use_tail = bool(d.get("use_prev_tail_video", False))
+        slots = _slot_manifest(d["strategy"], entry, prev, use_tail)
         # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
         # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
         if prompt_enhancer is not None:
@@ -1450,6 +1532,33 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
+        # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
+        # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错
+        # 编号永远到不了 API;可引用槽位漏提 → 自动补一句(素材不白传)。
+        if brain_prompt:
+            fixed, audit = validate_references(brain_prompt, slots)
+            if not audit["ok"]:
+                log.warning("window: %s prompt references unknown slots %s "
+                            "(allowed: %s) — dropping it for the "
+                            "content-aware fallback template", entry.label,
+                            audit["unknown"], audit["allowed"])
+                decisions.append({"stage": "ref_validate",
+                                  "label": entry.label,
+                                  "strategy": d["strategy"], "via": "gate",
+                                  "reason": f"unknown refs {audit['unknown']}"
+                                            " — fell back to template"})
+                brain_prompt = ""
+            else:
+                if audit["appended"]:
+                    log.info("window: %s prompt was missing %s — mention(s) "
+                             "appended", entry.label, audit["appended"])
+                    decisions.append({"stage": "ref_validate",
+                                      "label": entry.label,
+                                      "strategy": d["strategy"],
+                                      "via": "gate",
+                                      "reason": "appended mentions: "
+                                                f"{audit['appended']}"})
+                brain_prompt = fixed
         for s in range(max(1, n_candidates)):
             try:
                 video_path, cond = _generate_with_condition(

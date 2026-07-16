@@ -18,9 +18,15 @@ never change WHAT happens in the shot.
 - `shot_description` — the screenwriter's shot text (the ground truth of
   what must happen; never contradict it).
 - `strategy` + `model_family` — which route will run (fixes the syntax).
-- `conditions` — list of {kind: image|video|state, role, description}. These
-  are FACTS about what the generator will actually receive (images/video)
-  and about the CUT HANDOFF (state). Use ALL of them; invent NONE.
+- `conditions` — the FACTS about what the generator will receive. Media
+  rows are the SLOT MANIFEST: {kind: image|video, slot, referenceable,
+  description} — `slot` is the EXACT reference ID the executor will
+  assemble ("@Image2" / "@Video1" / "reference image 1"). Copy slot IDs
+  verbatim; a deterministic gate REJECTS any prompt referencing an ID not
+  in the manifest (you get one retry with the error). Rows with
+  referenceable=false (FIRST_FRAME/LAST_FRAME/the reference video on the
+  kling route) must NOT be @-referenced — describe the motion instead.
+  State rows are the CUT HANDOFF facts. Use ALL rows; invent NONE.
   State roles:
   - `opening_state_actual` — what a VLM actually saw in the previous shot's
     final frame. The prompt must OPEN from this exact state.

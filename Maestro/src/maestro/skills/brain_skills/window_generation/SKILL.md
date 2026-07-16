@@ -99,9 +99,17 @@ by the executor — do NOT output them.
 - kling route (`multi_image_fusion`): use the wording "reference image 1/2",
   e.g. "Use reference image 1 as the female character and reference image 2
   as the male character. Blend their appearances into the same style…"
-- IMPORTANT: when a previous shot rides along (ti2v_prev_plus_keyframe /
-  multi_image_fusion with a previous shot), @Image1 / "reference image 1" is
-  the PREVIOUS shot's last frame; your own images start at number 2.
+- NUMBERING IS GIVEN, NEVER GUESSED (the slot manifest): the context field
+  `slots_by_strategy` lists, for EVERY strategy in the menu, the exact
+  reference IDs the executor will assemble and what each one contains,
+  e.g. [{"slot": "@Image1", "content": "the previous shot's final frame"},
+  {"slot": "@Image2", "content": "the user's orange tabby cat"}]. After
+  picking a strategy, write `video_prompt` using ONLY that strategy's slot
+  IDs, copied verbatim. A deterministic gate validates your prompt: any
+  reference outside the manifest gets the whole prompt REJECTED (a
+  template replaces it), and unmentioned slots are auto-appended. Slots
+  marked FIRST_FRAME/LAST_FRAME are NOT referenceable — those routes have
+  no reference channel; describe the motion instead.
 - First/last-frame routes (`flf2v_own_pair`, `flf2v_bridge`): no reference
   syntax — describe the motion from the opening frame to the closing frame.
 - REFERENCES MUST CARRY CONTENT: the context gives every planned image's

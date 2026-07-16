@@ -95,3 +95,38 @@ state 条件说明。
   保证);评审 ④ 是最后一道网。
 - @ImageN 编号一致性(brain 自己在 prompt 里引用素材时如何保证编号与
   执行器装配一致)—— 用户已点名,方案另文,未动代码。
+
+---
+
+## 追加(2026-07-16,方案 A 已实现):@ImageN 编号一致性
+
+**问题**:编号由执行器装配 payload 时决定,brain 在 prompt 里引用素材时
+编号靠 skill 教它猜 —— 猜错无人拦截(用户点名,方案 A 获批)。
+
+**解法:把编号从"要遵守的规则"变成"发给它的数据",出口再上确定性闸。**
+
+1. **槽位清单**(`window_loop._slot_manifest`):纯函数,按策略算出执行器
+   将装配的引用槽位 [{slot, content(实况语义), referenceable}],与
+   `_generate_with_condition` 的装配顺序一一对应(单一事实源契约,
+   `test_slot_manifest.py` 锁行为)。FIRST_FRAME/LAST_FRAME/kling 参考视频
+   = referenceable=False(该路线无引用通道,prompt 只描述运动)。
+2. **清单发给写 prompt 的人**:条件 brain 的上下文带
+   `slots_by_strategy`(菜单里每个策略一份,选哪个用哪份,照抄 ID);
+   润色 agent 的 conditions 媒体行即清单投影({slot, referenceable,
+   description})。skill 改写:"NUMBERING IS GIVEN, NEVER GUESSED"。
+3. **出口闸**(`pipeline/ref_slots.validate_references`,确定性正则,
+   不靠 LLM 自觉):
+   - 引用清单外编号 → 整条 prompt 作废 → 内容感知兜底模板顶上,
+     **错编号永远到不了 API**(decisions 记 ref_validate 留痕);
+   - 可引用槽位漏提 → 自动补一句("@Image2 shows: … — keep it
+     consistent"),素材不白传;
+   - 大小写不敏感,同时覆盖 @ImageN/@VideoN 与 kling "reference image N"。
+4. **enhancer 重试一次**:输出引用了错编号 → 带着"错在哪、只许用哪些 ID"
+   的反馈重试一次;仍错 → None(保留原 prompt,主循环闸再兜一层)。
+5. **顺带修正**:t2v 策略的条件清单现在为空(旧行为会向润色 agent 谎称
+   有图 —— t2v 根本不装配图)。
+
+**测试**:`tests/unit/test_slot_manifest.py` 4 个 —— 清单与装配顺序一致
+(tiv2v/ti2v_prev_plus/multi_fusion/i2v/t2v)、闸门三行为(放行/拦截/补
+漏)、enhancer 重试一次、主循环端到端(brain 写 @Image1 于无引用通道的
+i2v 路线 → 拦截 → 兜底,错编号未到 API)。全套 429 通过。

@@ -105,14 +105,15 @@ def test_prompt_enhancer_polishes_with_skill_and_conditions():
     enh = PromptEnhancerAgent(llm=llm)
     out = enh.run("the apple drops from the counter",
                   strategy="tiv2v_window",
-                  conditions=[{"kind": "video", "role": "previous_tail",
+                  conditions=[{"kind": "video", "slot": "@Video1",
+                               "referenceable": True,
                                "description": "the previous shot's tail"}],
                   base_prompt="apple falls", label="scene 1 shot 2")
     assert out and "@Video1" in out
     sent = llm.prompts[0]
     assert "Prompt Enhancer" in sent                   # 技能全文在场
     assert "seedance_t2v" in sent                      # 家族由策略确定性推导
-    assert "previous_tail" in sent                     # 条件事实进上下文
+    assert "@Video1" in sent                           # 槽位清单进上下文
     assert "STRICT JSON" in sent
 
 
@@ -139,8 +140,10 @@ def test_conditions_for_prompt_facts(tmp_path):
         video_path = tmp_path / "prev.mp4"
 
     conds = _conditions_for_prompt("tiv2v_window", e, _P(), False)
-    kinds = {(c["kind"], c["role"]) for c in conds}
-    assert ("video", "previous_tail") in kinds
-    assert ("image", "reference") in kinds
-    assert _conditions_for_prompt("t2v", e, None, False) == [
-        {"kind": "image", "role": "reference", "description": "the tabby cat"}]
+    # 方案 A:媒体条件 = 槽位清单(slot 即执行器将装配的编号,照抄即正确)
+    slots = {c["slot"]: c for c in conds if c["kind"] in ("image", "video")}
+    assert "the ongoing motion" in slots["@Video1"]["description"]
+    assert slots["@Image1"]["description"] == "the tabby cat"
+    assert slots["@Image1"]["referenceable"] is True
+    # t2v 不装配任何图 → 媒体条件必须为空(旧行为会谎称带图,已修正)
+    assert _conditions_for_prompt("t2v", e, None, False) == []

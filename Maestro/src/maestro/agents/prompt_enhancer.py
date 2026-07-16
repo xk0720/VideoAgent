@@ -100,24 +100,58 @@ class PromptEnhancerAgent(BaseAgent):
             + '\n\nSTRICT JSON only: {"video_prompt": "<the final polished '
               'prompt, English, 30-100 words>"}'
         )
-        raw = ""
-        try:
-            raw = self.llm.complete(prompt)
-            data = _extract_json(raw)
-        except Exception as exc:
+        # 方案 A(2026-07-16):可引用槽位来自 conditions(执行器的槽位
+        # 清单投影)——输出里的编号必须 ⊆ 它;引用了不存在的编号,带着
+        # 错误反馈重试一次;仍错 → None(调用方保留原 prompt,主循环的
+        # 出口闸再兜一层)。
+        slots = [{"slot": c.get("slot", ""), "content": c.get("description", ""),
+                  "referenceable": bool(c.get("referenceable"))}
+                 for c in conditions if c.get("slot")]
+        attempt_prompt = prompt
+        for attempt in range(2):
+            raw = ""
+            try:
+                raw = self.llm.complete(attempt_prompt)
+                data = _extract_json(raw)
+            except Exception as exc:
+                brain_log("window/prompt_enhance", {
+                    "label": label, "strategy": strategy, "family": family,
+                    "raw": raw or f"<complete() raised: {exc}>",
+                    "parsed": None, "usable": False, **proof})
+                return None
+            out = (data or {}).get("video_prompt") \
+                if isinstance(data, dict) else None
+            usable = isinstance(out, str) and 10 <= len(out.strip()) <= 2000
+            audit = {"ok": True, "unknown": [], "appended": []}
+            if usable:
+                from ..pipeline.ref_slots import validate_references
+
+                fixed, audit = validate_references(out.strip(), slots)
+                usable = audit["ok"]
+                if usable:
+                    out = fixed
             brain_log("window/prompt_enhance", {
                 "label": label, "strategy": strategy, "family": family,
-                "raw": raw or f"<complete() raised: {exc}>",
-                "parsed": None, "usable": False, **proof})
+                "raw": raw,
+                "parsed": ({"video_prompt": out} if usable else None),
+                "usable": bool(usable), "ref_audit": audit,
+                "attempt": attempt, **proof})
+            if usable:
+                self._log("enhance", {"label": label, "strategy": strategy},
+                          {"chars": len(out.strip()), "attempt": attempt})
+                return out.strip()
+            if audit["unknown"] and attempt == 0:
+                # 重试一次:告诉它错在哪、只许用哪些编号
+                attempt_prompt = (
+                    prompt
+                    + "\n\nYOUR PREVIOUS ANSWER WAS REJECTED: it referenced "
+                    + ", ".join(audit["unknown"])
+                    + ", which the executor will NOT assemble. Use ONLY these "
+                      "reference IDs, exactly as written: "
+                    + (", ".join(r["slot"] for r in slots
+                                 if r["referenceable"]) or "(none — no "
+                       "reference syntax on this route)")
+                    + ". Rewrite the prompt.")
+                continue
             return None
-        out = (data or {}).get("video_prompt") if isinstance(data, dict) else None
-        usable = isinstance(out, str) and 10 <= len(out.strip()) <= 2000
-        brain_log("window/prompt_enhance", {
-            "label": label, "strategy": strategy, "family": family,
-            "raw": raw, "parsed": ({"video_prompt": out} if usable else None),
-            "usable": bool(usable), **proof})
-        if not usable:
-            return None
-        self._log("enhance", {"label": label, "strategy": strategy},
-                  {"chars": len(out.strip())})
-        return out.strip()
+        return None
