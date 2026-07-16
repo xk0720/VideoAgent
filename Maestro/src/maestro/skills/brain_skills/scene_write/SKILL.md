@@ -38,6 +38,15 @@ strategy, review, repair) hangs off these entries.
 6. Asset awareness: when the user provided assets (a location image, character
    photos, source clips), write the shots AROUND what the assets afford — a
    living-room background image is wasted on a beach script.
+7. ASSET MENTION LAW: when the user's task names a provided asset ("the cat
+   from the photo appears", "use my living-room image"), the shot
+   description(s) where it appears MUST state that requirement explicitly,
+   using the SAME wording as the asset's catalog description (e.g. "the
+   orange tabby cat (from the user's photo) jumps onto the sill"). Do NOT
+   write @Image/@Video references here — reference numbering happens
+   downstream (the slot manifest); your job is only to make the requirement
+   impossible to miss. A user-named asset that no shot description mentions
+   is a script BUG (the executor warns loudly).
 
 ## Output format (STRICT JSON — output this and nothing else)
 

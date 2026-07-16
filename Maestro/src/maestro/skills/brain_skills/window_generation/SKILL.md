@@ -138,7 +138,12 @@ by the executor — do NOT output them.
 3. NEVER waste a planned image: if this shot's image plan produced an image,
    pick a strategy that CONSUMES it (matching its role). Dropping to plain
    t2v while a planned image exists is wrong even if one consumer strategy
-   is avoided — pick a different consumer instead.
+   is avoided — pick a different consumer instead. This is ABSOLUTE when
+   the shot description names a user asset ("the cat from the photo") —
+   the slot whose content starts with "user asset:" is that asset; a
+   strategy that leaves it out breaks the user's explicit requirement.
+   In `video_prompt`, bind the description's asset mention to that slot's
+   ID ("@Image2, the user's orange tabby cat, jumps onto the sill").
 4. Continuity first: when the scene continues from the previous shot, prefer
    flf2v_bridge / tiv2v_window / ti2v_prev_last over own-image-only routes;
    when the script cuts to a new scene, prefer i2v_keyframe / flf2v_own_pair /

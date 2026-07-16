@@ -460,6 +460,24 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                     except (TypeError, ValueError):
                         durs.append(None)
             if shots:
+                # 修正 A(2026-07-16):素材白给检测(警告不阻断)——
+                # 用户给了素材,但没有任何分镜描述提及任一素材关键词。
+                # skill 只能教,这道确定性检查负责让浪费当场可见。
+                if asset_catalog:
+                    all_text = " ".join(shots).lower()
+                    words = set()
+                    for a in asset_catalog:
+                        words |= {w for w in re_words(
+                            str(a.get("desc") or a.get("label", "")))
+                            if len(w) > 3}
+                    if words and not any(w in all_text for w in words):
+                        log.warning(
+                            "scene_write: %d user asset(s) provided but NO "
+                            "shot description mentions any of them — the "
+                            "script may be wasting the assets (catalog: %s)",
+                            len(asset_catalog),
+                            [a.get("desc", a.get("label", ""))[:40]
+                             for a in asset_catalog])
                 return shots, durs, ends, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
@@ -786,7 +804,17 @@ def _slot_manifest(strategy: str, entry, prev,
     prev_ok = prev is not None and getattr(prev, "video_path", None)
 
     def _c(path, default: str) -> str:
-        return _desc_of(entry, path) or default
+        """槽位实况语义;用户素材加 "user asset: " 前缀(2026-07-16 修正:
+        enhancer 做"剧本提及 → 编号引用"翻译时,一眼锁定哪个槽位是用户
+        点名的东西)。"""
+        pstr = str(path)
+        for im in (getattr(entry, "images", None) or []):
+            if str(im.get("path", "")) == pstr:
+                d = str(im.get("description", "") or "") or default
+                if im.get("source") == "asset_image":
+                    return f"user asset: {d}"
+                return d
+        return default
 
     rows: list[dict] = []
     if strategy == "flf2v_own_pair" and pf is not None and pl is not None:

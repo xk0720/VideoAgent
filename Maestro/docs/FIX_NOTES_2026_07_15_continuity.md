@@ -130,3 +130,32 @@ state 条件说明。
 (tiv2v/ti2v_prev_plus/multi_fusion/i2v/t2v)、闸门三行为(放行/拦截/补
 漏)、enhancer 重试一次、主循环端到端(brain 写 @Image1 于无引用通道的
 i2v 路线 → 拦截 → 兜底,错编号未到 API)。全套 429 通过。
+
+---
+
+## 追加(2026-07-16 第二轮,已实现):剧本提及素材 → enhancer 格式化编号
+
+**用户方案**:剧本(scene_write)必须把"用户点名的素材出现"写进 shot
+description(但不写编号 —— 那时编号还不存在);enhancer 拿 description +
+槽位清单,把自然语言提及翻译成正确的 @ 引用。
+
+**采纳 + 三修正**:
+1. 修正 A(强制力):skill 只能教 —— 加确定性警告:有素材但全剧本无一
+   description 提及任一素材关键词 → log.warning "wasting the assets"
+   (不阻断,终端当场可见)。`_write_outline` 内实现。
+2. 修正 B(匹配锚点):槽位清单给 asset_image 来源的图加
+   `"user asset: "` 前缀 —— enhancer 翻译"提供的图片中的猫"时一眼锁定
+   哪个槽位是用户的东西(`_slot_manifest._c`)。
+3. 修正 C(职责叠加不转移):enhancer 是可选开关,翻译能力不独占 ——
+   条件 brain 仍按方案 A 持清单写引用(window_generation 规则 3 补:
+   用户点名素材的槽位绝对不可丢,description 提及绑定到该 slot ID);
+   enhancer 开着时做最终规范化。素材类任务建议常开 enhancer。
+
+**skill 新法则**:scene_write "ASSET MENTION LAW"(点名素材必须用与素材
+目录一致的措辞写进 description,不写编号);prompt_enhancer "FORMALIZE
+ASSET MENTIONS"(逐条提及 → 匹配 "user asset:" 槽位 → 照抄 slot ID 重写;
+清单没有对应槽位 → 保留文字描述,绝不发明编号 —— 发明会被闸门整条拒掉,
+且这本身是上游图计划/策略丢素材的信号)。
+
+**测试**(test_slot_manifest.py +3):清单 user-asset 前缀、剧本浪费警告
+(提及则安静)、三个 skill 新法则在场防丢。全套 432 通过。

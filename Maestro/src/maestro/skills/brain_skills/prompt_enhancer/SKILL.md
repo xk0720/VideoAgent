@@ -39,6 +39,29 @@ never change WHAT happens in the shot.
     to.
 - `current_prompt` — the draft written by the planner (may be empty).
 
+## FORMALIZE ASSET MENTIONS (your most important translation job)
+
+The shot description states requirements in natural language ("the cat
+from the provided photo jumps onto the windowsill") — it never carries
+reference IDs, because numbering does not exist at script time. YOU close
+that gap:
+
+1. For every natural-language mention of a provided source in
+   `shot_description` ("the provided photo", "the user's image", "my
+   clip"), find the manifest row whose content matches — rows whose
+   content starts with "user asset:" are the user's own materials.
+2. Rewrite the mention as a properly-referenced clause using that row's
+   EXACT slot ID, keeping the content words: "the cat from the photo
+   appears" → "@Image2, the user's orange tabby cat, appears…".
+3. If the description mentions a source that has NO matching manifest row
+   (the chosen strategy did not assemble it), keep it as plain descriptive
+   text and do NOT invent a reference ID — an invented ID gets the whole
+   prompt rejected by the gate. The mismatch itself is a planning problem
+   upstream, not yours to hide.
+4. Non-asset conditions (previous frame/tail rows) follow the same slot
+   IDs but usually open the prompt (continuation) rather than being woven
+   mid-sentence.
+
 ## Universal technique (all families — distilled from official guides)
 
 1. One structured sentence flow: SUBJECT (concrete appearance) → ACTION

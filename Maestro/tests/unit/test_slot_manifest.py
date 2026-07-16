@@ -176,3 +176,75 @@ def test_loop_gate_drops_bad_refs_end_to_end(tmp_path, monkeypatch):
         "错编号绝不允许到达生成 API"
     gates = [d for d in res.decisions if d.get("stage") == "ref_validate"]
     assert gates and "unknown refs" in gates[0]["reason"]
+
+
+def test_manifest_marks_user_assets(tmp_path):
+    """修正 B:asset_image 来源的槽位 content 带 "user asset: " 前缀 ——
+    enhancer 做"剧本提及 → 编号"翻译时的确定性锚点;t2i 图不带前缀。"""
+    prev = _Prev(tmp_path)
+    e = _entry([
+        {"path": str(tmp_path / "cat.png"), "role": "reference",
+         "source": "asset_image",
+         "description": "an orange tabby cat curled on a sofa"},
+        {"path": str(tmp_path / "bg.png"), "role": "reference",
+         "source": "t2i", "description": "a sunlit windowsill"},
+    ])
+    for im in e.images:
+        Path(im["path"]).write_bytes(b"\x89PNG\r\n")
+    rows = _slot_manifest("ti2v_prev_plus_keyframe", e, prev)
+    assert rows[1]["content"] == "user asset: an orange tabby cat curled on a sofa"
+    assert rows[2]["content"] == "a sunlit windowsill"
+
+
+def test_outline_warns_when_assets_unmentioned(caplog):
+    """修正 A:有素材但全剧本无一提及 → 大声警告(不阻断);提及了则安静。"""
+    import logging
+
+    from maestro.pipeline.window_loop import _write_outline
+
+    class _LLM:
+        def __init__(self, desc):
+            self.desc = desc
+
+        def complete(self, prompt, **kw):
+            return json.dumps({"shots": [
+                {"description": self.desc, "duration_s": 5,
+                 "end_state": "x"}]})
+
+    catalog = [{"kind": "identity", "name": "cat", "path": "/x/cat.png",
+                "label": "identity: cat an orange tabby cat",
+                "desc": "an orange tabby cat"}]
+    # maestro logger propagate=False(自带 handler)→ 测试内临时打开传播,
+    # 让 caplog(挂在 root)能收到
+    mlog = logging.getLogger("maestro")
+    old_prop = mlog.propagate
+    mlog.propagate = True
+    try:
+        with caplog.at_level(logging.WARNING, logger="maestro"):
+            _write_outline(_LLM("Shot 1: a quiet beach at dawn with rolling "
+                                "waves and seagulls"), "p", catalog,
+                           episode_guidance={}, max_shots=3,
+                           fallback_fn=lambda: ["fb"])
+        assert any("wasting the assets" in r.getMessage()
+                   for r in caplog.records)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="maestro"):
+            _write_outline(_LLM("Shot 1: the orange tabby cat wakes up on "
+                                "the windowsill in warm light"), "p",
+                           catalog, episode_guidance={}, max_shots=3,
+                           fallback_fn=lambda: ["fb"])
+        assert not any("wasting the assets" in r.getMessage()
+                       for r in caplog.records)
+    finally:
+        mlog.propagate = old_prop
+
+
+def test_skills_carry_asset_formalization_laws():
+    """三个 skill 的新法则在场(编辑技能文件时不许弄丢)。"""
+    from maestro.skills.loader import load_skill
+
+    assert "ASSET MENTION LAW" in load_skill("scene_write")["body"]
+    assert "user asset:" in load_skill("window_generation")["body"]
+    enh = load_skill("prompt_enhancer")["body"]
+    assert "FORMALIZE ASSET MENTIONS" in enh
+    assert "do NOT invent a reference ID" in enh
