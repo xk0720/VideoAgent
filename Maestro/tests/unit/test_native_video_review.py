@@ -182,3 +182,41 @@ def test_verifier_ab_primary_gate_and_fallback(tmp_path, monkeypatch):
             return None
     assert VerifierAgent(judge=_DeadJudge()).is_better(
         _clip(0.9, "c3.mp4"), _clip(0.1, "b3.mp4"), spec=spec) is True
+
+
+def test_video_parts_carry_fps_metadata(tmp_path, monkeypatch):
+    """Kevin 2026-07-16 的采样帧率(已收编):视频 Part 挂 videoMetadata.fps
+    (默认 config video_fps=5.0,可配);图片/文本 Part 不挂;调用方的原
+    parts 对象不被改写。"""
+    captured = {}
+
+    def _fake_post(url, json=None, headers=None, timeout=0):
+        captured["payload"] = json
+
+        class _R:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"candidates": [{"content": {"parts": [
+                    {"text": "ok"}]}}]}
+        return _R()
+
+    import sys
+    import types
+    fake_requests = types.SimpleNamespace(post=_fake_post)
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+
+    vlm = GeminiVLM("gemini", {"api_key": "k", "video_fps": 3})
+    original = [
+        {"text": "label"},
+        {"inline_data": {"mime_type": "video/mp4", "data": "AAAA"}},
+        {"inline_data": {"mime_type": "image/png", "data": "BBBB"}},
+    ]
+    assert vlm._generate(list(original)) == "ok"
+    sent = captured["payload"]["contents"][0]["parts"]
+    assert sent[1]["videoMetadata"] == {"fps": 3.0}       # 视频挂 fps
+    assert "videoMetadata" not in sent[2]                 # 图片不挂
+    assert "videoMetadata" not in original[1]             # 原对象未被改写
+    # fps 域钳制:>24 → 24
+    assert GeminiVLM("gemini", {"video_fps": 99}).video_fps == 24.0

@@ -53,7 +53,7 @@ def test_base_url_defaults_resolve(monkeypatch):
 
 def test_model_defaults_resolve():
     assert build_llm({"name": "deepseek"}).model == "deepseek-chat"
-    assert build_llm({"name": "openai"}).model == "gpt-5.5"
+    assert build_llm({"name": "openai"}).model == "gpt-5.6-sol"   # 2026-07-17 换代
     assert build_llm({"name": "anthropic"}).model == "claude-sonnet-4-6"
 
 

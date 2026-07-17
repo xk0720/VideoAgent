@@ -31,7 +31,7 @@ from .llm import BaseLLMClient
 # A generic OpenAI-compatible endpoint (vllm / openai-compat) requires the
 # caller to supply base_url + model; its env fallback is the generic LLM_API_KEY.
 _OPENAI_COMPAT_DEFAULTS: dict[str, tuple[str, str, str]] = {
-    "openai": ("https://api.openai.com/v1", "gpt-5.5", "OPENAI_API_KEY"),
+    "openai": ("https://api.openai.com/v1", "gpt-5.6-sol", "OPENAI_API_KEY"),
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat", "DEEPSEEK_API_KEY"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "QWEN_API_KEY"),
     "vllm": ("http://localhost:8000/v1", "", "LLM_API_KEY"),

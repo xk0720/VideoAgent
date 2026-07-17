@@ -15,7 +15,7 @@ models:
   # 纯语言大模型（编剧 / 导演 / 修复 / 验证）——只用 OpenAI。
   llm:
     name: "openai"
-    model: "gpt-5.5"       # brain 默认;gpt-5/o 系列自动用 max_completion_tokens、
+    model: "gpt-5.6-sol"   # brain 默认(2026-07-17 换代);gpt-5/o 系列自动用 max_completion_tokens、
                            # 不发 temperature(它们拒收);gpt-4o 等旧模型也兼容
 
   # 多模态大模型（语义/物理 VLM 评审 + 镜头对比 + 素材打标）。
@@ -24,7 +24,9 @@ models:
   mllm:
     name: "gemini"
     model: "gemini-3.5-flash"
-    n_frames: 4            # 每个 clip 抽几帧给评审看
+    n_frames: 4            # 抽帧后端(OpenAI 兼容 VLM)用;Gemini 走原生视频不抽帧
+    video_fps: 5           # Gemini 原生视频的采样帧率(官方默认 1.0;调高 →
+                           # 时间定位更准、token 也更多;范围 0-24)
 
   # 视频生成——只调 WaveSpeed API（真像素，无本地 GPU）。
   # 默认 = 当前效果最强的 seedance-2.0 全家桶（时长 4-15 秒任意整数，最高 4k；

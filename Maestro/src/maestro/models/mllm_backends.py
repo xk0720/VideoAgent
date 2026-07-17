@@ -579,6 +579,12 @@ class GeminiVLM(OpenAICompatVLM):
         self.api_key = self.config.get("api_key") or os.getenv("GEMINI_API_KEY")
         self.max_tokens = int(self.config.get("max_tokens", 1024))
         self.max_retries = int(self.config.get("max_retries", 3))
+        # 原生视频的采样帧率(Kevin 2026-07-16):Gemini 官方默认 1.0 fps,
+        # 对物理/时序评审和秒级定位太稀 —— 默认提到 5.0(token 相应变多)。
+        # config models.mllm.video_fps 可调;官方合法域 0-24。
+        self.video_fps = max(0.0, min(24.0,
+                                      float(self.config.get("video_fps",
+                                                            5.0))))
         # merged-review cache: (path, mtime_ns) → parsed review package.
         # One upload serves BOTH critics (semantic + physics) per clip.
         self._review_cache: dict = {}
@@ -599,12 +605,27 @@ class GeminiVLM(OpenAICompatVLM):
             "Content-Type": "application/json",
         }
 
-    def _generate(self, parts: list) -> Optional[str]:
+    def _generate(self, parts: list, **kwargs) -> Optional[str]:
         """One generateContent call with NEWTON-style retries (backoff) →
         reply text, or None (caller degrades to no-verdict)."""
         import time as _time
 
         import requests  # lazy
+
+        # ── 视频采样帧率(Kevin 2026-07-16,已收编为配置驱动)────────────
+        # Gemini 对视频默认 1.0 fps 采样,评审看不清快动作、秒级定位粗;
+        # 给每个视频 Part 挂 videoMetadata.fps(Part 级字段,与 inline_data
+        # 平级,REST 收 camelCase)。fps 优先级:调用方 kwargs > config
+        # video_fps(默认 5.0)。拷贝 Part 再挂字段 —— 不改写调用方的共享
+        # dict(拿别人的对象不动手脚)。
+        fps = float(kwargs.get("fps", self.video_fps))
+        if fps > 0:
+            parts = [
+                ({**part, "videoMetadata": {"fps": fps}}
+                 if str(part.get("inline_data", {}).get("mime_type", "")
+                        ).startswith("video/") else part)
+                for part in parts
+            ]
 
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
         payload = {"contents": [{"role": "user", "parts": parts}],
