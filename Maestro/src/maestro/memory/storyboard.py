@@ -126,6 +126,12 @@ class StoryboardMemory:
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path else None
         self.entries: list[ShotEntry] = []
+        # 跨镜一致性载体(2026-07-17 审计):视频模型跨调用零记忆,生成
+        # 角色/场景的一致性只能靠【每条 prompt 逐字复述同一段官方描述】。
+        # cast = {实体名: 10-20 词外观描述符};setting = 场景陈设+光线一句。
+        # 剧本层一次定稿,所有写 prompt 的人照抄,评审拿它当一致性标尺。
+        self.cast: dict = {}
+        self.setting: str = ""
         self._rev = 0                    # 单调更新计数(每次写 +1,可审计)
 
     # ── 构建 ──────────────────────────────────────────────────────────────
@@ -253,6 +259,7 @@ class StoryboardMemory:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"rev": self._rev,
+                   "cast": self.cast, "setting": self.setting,
                    "entries": [asdict(e) for e in self.entries]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -264,5 +271,7 @@ class StoryboardMemory:
         sb = cls(path=Path(path))
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         sb._rev = int(data.get("rev", 0))
+        sb.cast = dict(data.get("cast", {}) or {})
+        sb.setting = str(data.get("setting", "") or "")
         sb.entries = [ShotEntry(**e) for e in data.get("entries", [])]
         return sb

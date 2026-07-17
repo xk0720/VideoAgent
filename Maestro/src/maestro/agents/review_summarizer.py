@@ -34,12 +34,14 @@ from typing import Optional
 # fix modality (from DefectReport) → NON-BINDING repair-class hints. These are
 # class labels the brain's skill file groups tools under — not tool names.
 _FIX_CLASSES: dict[str, list[str]] = {
-    "motion": ["localized_regen", "edit_in_place"],
-    "presence": ["extend", "edit_in_place"],
-    "content": ["keyframe_edit", "localized_regen"],
-    "background": ["depth_edit"],
-    "foreground": ["depth_edit"],
-    "style": ["style_edit"],
+    # 2026-07-17 三分类对齐:修复菜单只剩 segment_regen(局部 flf2v)与
+    # full_regen(原法整镜重生);类名是给 brain 的建议语言,不是工具名。
+    "motion": ["segment_regen"],
+    "presence": ["segment_regen", "full_regen"],
+    "content": ["segment_regen", "full_regen"],
+    "background": ["full_regen"],
+    "foreground": ["full_regen"],
+    "style": ["full_regen"],
 }
 
 _MEASURED_SOURCES = {"law_verifier"}
@@ -123,7 +125,7 @@ class ReviewSummarizerAgent:
                     "entity": d.entity or "",
                     "frame_range": [int(d.frame_range[0]), int(d.frame_range[1])],
                     "severity": float(d.severity),
-                    "fix_classes": _FIX_CLASSES.get(d.fix_modality, ["regenerate"]),
+                    "fix_classes": _FIX_CLASSES.get(d.fix_modality, ["full_regen"]),
                     "fix_modality": d.fix_modality,
                     "evidence": ev,
                 })

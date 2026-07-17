@@ -20,7 +20,14 @@ generateContent call containing, as labeled parts:
   NEVER sampled frames on the Gemini path: temporal defects (flicker, motion
   breaks, event order) are invisible to frame stills. Clips over the inline
   budget are transcoded down (360p) — still whole video, never frames.
-- The GENERATION PROMPT the video model actually received.
+- The exact GENERATION PROMPT the video model received, quoted inside
+  the instruction text (only when it differs from the shot text).
+- JUNCTION + CONSISTENCY context when present: the previous shot's ACTUAL
+  end state (junction reality check) and this shot's script-required
+  end_state — each demands one continuity check; plus the CANONICAL CAST
+  descriptors and SETTING line — one appearance-match check per cast
+  member visible in the shot, one set-dressing check when the scene
+  continues.
 - Every CONDITIONING input with its role spelled out: "FIRST-FRAME image (the
   shot must open on it)", "LAST-FRAME image (the shot must end on it)",
   "REFERENCE image N (identity/style anchor)", "REFERENCE VIDEO (motion /
@@ -36,12 +43,16 @@ judge pixels that were never seen.
 
 ## Dimensions to cover (reference frame, not a straitjacket)
 
-1. SEMANTIC — objects/counts/attributes/setting/action-order from the prompt
-2. CONDITION ADHERENCE — does the first frame match the first-frame image; do
-   subjects match reference images; does motion continue the reference video
-3. TEXT/SIGNAGE — literal text the prompt requires
-(physics/temporal/visual belong to the sibling critics but arrive in the same
-merged call — route by `category`.)
+The merged instruction works through FIVE dimensions — semantic,
+condition, physics, temporal, visual. This critic owns:
+1. SEMANTIC — objects/counts/attributes/setting/action-order from the
+   prompt (including literal text/signage it requires)
+2. CONDITION ADHERENCE — does the first frame match the first-frame image;
+   do subjects match reference images; does motion continue the reference
+   video; do cast members match their canonical descriptors
+Routing is binary: category=="physics" issues become PhysicsVerdicts for
+the physics critic; EVERY other category (semantic/condition/temporal/
+visual) surfaces through THIS critic as kind="semantic" checklist items.
 
 ## Output contract (what the brain must be able to act on)
 

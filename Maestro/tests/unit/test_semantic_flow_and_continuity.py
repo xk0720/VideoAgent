@@ -388,3 +388,62 @@ def test_flf2v_bridge_never_uses_identity_ref_as_closing_anchor(tmp_path,
     # 无 last/首帧角色图 → flf2v 不执行,诚实降级(绝不拿身份照片当尾帧)
     assert gen.flf == []
     assert cond.get("degraded_from") == "flf2v_bridge"
+
+
+def test_cast_and_setting_flow_end_to_end(tmp_path, monkeypatch):
+    """跨镜一致性载体(2026-07-17 审计):剧本产出 cast/setting → 台账 →
+    enhancer 条件行 → 评审指令(逐角色一致性 check)。"""
+    import json as _json
+
+    from maestro.pipeline.window_loop import (
+        _conditions_for_prompt,
+        _write_outline,
+    )
+
+    class _LLM:
+        def complete(self, prompt, **kw):
+            return _json.dumps({
+                "cast": {"the cat": "an orange-and-white cat with a white "
+                                    "chest and a thin blue collar"},
+                "setting": "a warm sunlit living room with a wooden floor",
+                "shots": [{"description": "Shot 1: the cat wakes on the "
+                                          "windowsill and stretches slowly",
+                           "duration_s": 5, "end_state": "stretching"}]})
+
+    shots, durs, ends, meta, via = _write_outline(
+        _LLM(), "p", [], episode_guidance={}, max_shots=3,
+        fallback_fn=lambda: ["fb"])
+    assert via == "llm"
+    assert meta["cast"]["the cat"].startswith("an orange-and-white cat")
+    assert "living room" in meta["setting"]
+
+    # enhancer 条件行带 cast/setting
+    conds = _conditions_for_prompt("t2v", _entry(), None, False,
+                                   cast=meta["cast"],
+                                   setting=meta["setting"])
+    kinds = {c["kind"] for c in conds}
+    assert "cast" in kinds and "setting" in kinds
+    cast_row = next(c for c in conds if c["kind"] == "cast")
+    assert cast_row["role"] == "the cat"
+
+    # 评审指令带官方 cast 契约 + 出场角色逐一 check 要求
+    from maestro.models.mllm_backends import GeminiVLM
+    from maestro.types import CandidateClip
+
+    vlm = GeminiVLM("gemini", {"api_key": "k"})
+    captured = []
+
+    def _fake(parts):
+        captured.append(parts)
+        return _json.dumps({"checks": [], "issues": [], "summary": "ok"})
+    monkeypatch.setattr(vlm, "_generate", _fake)
+    v = tmp_path / "s.mp4"
+    v.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+    clip = CandidateClip(shot_idx=0, video_path=v)
+    clip.conditioning = {"video_prompt": "p", "images": [],
+                         "cast": meta["cast"], "setting": meta["setting"]}
+    vlm.review_shot(clip, ShotSpec(shot_idx=0, duration=5.0, prompt="p"))
+    text = " ".join(x.get("text", "") for x in captured[0] if "text" in x)
+    assert "CANONICAL CAST" in text
+    assert "orange-and-white cat" in text
+    assert "CANONICAL SETTING" in text

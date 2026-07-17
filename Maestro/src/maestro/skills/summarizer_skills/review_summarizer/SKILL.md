@@ -14,8 +14,7 @@ dict the brain reads FIRST.
 
 ## Consolidation rules (enforced by code — agents/review_summarizer.py)
 
-1. ORGANIZE + PRIORITIZE + LOCALIZE. Suggest fix CLASSES (localized_regen,
-   edit_in_place, keyframe_edit, depth_edit, style_edit, extend, regenerate),
+1. ORGANIZE + PRIORITIZE + LOCALIZE. Suggest fix CLASSES (segment_regen → regenerate_segment; full_regen → regenerate, the full re-run of the shot's original condition method; routing between the two is primarily the deterministic vlm_route_suggestion injected alongside this brief — your classes are non-binding secondary hints),
    NEVER a concrete tool call — tool choice is the brain's job.
 2. PROVENANCE on every issue: measured | opinion. Measurement outranks opinion
    in its domain (motion / existence / timing).

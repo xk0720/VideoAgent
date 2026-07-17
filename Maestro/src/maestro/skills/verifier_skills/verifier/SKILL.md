@@ -32,9 +32,12 @@ reliable use of an MLLM judge; absolute scores are noise:
    accept iff overall score ≥ +1 (candidate STRICTLY better — conservative 0
    or uncertainty → reject) AND min(dimension) ≥ -2 — the monotonic contract,
    now dimension-aware: no accepted repair may badly regress any dimension.
-6. FEEDBACK — the full verdict {score, dim_scores, notes, target_fixed,
-   issues, summary} is attached to the candidate and shown to the brain in
-   its next-turn history; on reject, `issues` says what the repair broke.
+6. FEEDBACK — the full verdict is attached to the candidate
+   (verifier_verdict) and ledgered in result.actions; the brain's
+   next-turn history shows outcome + new_total + verifier_issues (when
+   non-empty). `issues` are populated only when the candidate is judged
+   strictly WORSE overall (score < 0); tie rejects and dimension-guard
+   rejects carry empty issues — their WHY lives in dim_scores/notes.
 
 ## FALLBACK gate (mock mode / verify_pair unavailable → loud log, then):
 
@@ -54,7 +57,8 @@ reliable use of an MLLM judge; absolute scores are noise:
 
 ## What downstream reads from this gate
 
-- `outcome` (accepted/rejected) + verdict → brain history (never repeat a
-  rejected action on the same target; rejected-verdict issues explain WHY).
+- `outcome` (accepted/rejected) + verdict → brain history (never repeat
+  a rejected action on the same target; when score < 0 the verdict issues
+  explain WHY, otherwise read dim_scores/notes).
 - Accepted tool calls → the distilled repair workflow (skill_library.distill_
   repair) once the episode converges.

@@ -48,9 +48,11 @@ Own-image strategies (consume THIS shot's planned images, role-matched):
                       conditioning: nothing is pixel-locked.
 
 Previous-shot-anchored strategies (window continuity):
-- `ti2v_prev_last`    Previous shot's LAST frame opens this shot (strongest
-                      temporal continuity; use when the scene continues and
-                      this shot has no own image).
+- `ti2v_prev_last`    Previous shot's LAST frame opens this shot — the
+                      strongest SINGLE-FRAME anchor (pixel-locked opening).
+                      Use when the scene continues and this shot has no own
+                      image. (extend_prev is the strongest OVERALL
+                      continuity: it continues the pixels, not just frame 1.)
 - `flf2v_bridge`      Previous shot's last frame → this shot's image REPURPOSED
                       as the CLOSING anchor: continuity AND the shot ARRIVES at
                       your image. Pick only when arriving at the image is the
@@ -151,14 +153,24 @@ by the executor — do NOT output them.
    strategy that leaves it out breaks the user's explicit requirement.
    In `video_prompt`, bind the description's asset mention to that slot's
    ID ("@Image2, the user's orange tabby cat, jumps onto the sill").
-4. Continuity first: when the scene continues from the previous shot, prefer
-   flf2v_bridge / tiv2v_window / ti2v_prev_last over own-image-only routes;
-   when the script cuts to a new scene, prefer i2v_keyframe / flf2v_own_pair /
-   t2v and deliberately skip the previous-shot anchors.
+4. Continuity first: when the scene continues from the previous shot,
+   prefer extend_prev (true continuation) — or ti2v_prev_last /
+   ti2v_prev_plus_keyframe / flf2v_bridge when materials or a target frame
+   demand them — over own-image-only routes; when the script cuts to a new
+   scene, prefer i2v_keyframe / flf2v_own_pair / t2v and deliberately skip
+   the previous-shot anchors.
 5. Only pick names present in the menu; output strict JSON, nothing else.
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
-7. JUNCTION RULES (motion continuity across the cut — the #1 cause of
+7. CAST CONSISTENCY LAW (2026-07-17): the context field `cast` holds the
+   movie-wide canonical appearance descriptor per character and `setting`
+   the canonical scene dressing+lighting. Video models have NO memory
+   across calls — for EVERY character visible in this shot, your
+   `video_prompt` must restate its canonical descriptor VERBATIM (and the
+   setting words when the scene continues). This applies with extra force
+   on t2v (no pixel anchor at all) and whenever a character RE-ENTERS
+   after being absent — the descriptor is its only identity carrier.
+8. JUNCTION RULES (motion continuity across the cut — the #1 cause of
    broken movies):
    - When `junction.prev_last_frame_actual` exists, your `video_prompt`
      must OPEN FROM THAT ACTUAL STATE — the real pixels, not the script's
@@ -177,7 +189,7 @@ by the executor — do NOT output them.
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}
 
 ### Example 2 — two planned reference characters, kling route with the previous tail
-{"strategy": "multi_image_fusion", "use_prev_tail_video": true, "reason": "both leads must appear together and the motion should continue from the previous shot", "video_prompt": "Use reference image 1 as the continuing scene state, reference image 2 as the female character and reference image 3 as the male character. They sit together by the fireplace, laughing softly; the camera slowly dollies in with shallow depth of field."}
+{"strategy": "ti2v_prev_plus_keyframe", "reason": "the scene continues and both leads' reference photos must steer identity", "video_prompt": "The shot opens EXACTLY on @Image1 — the final moment of the previous shot; do not alter its scene or layout. @Image2, the female lead in her green coat, and @Image3, the male lead in his grey sweater, sit together by the fireplace laughing softly; the camera slowly dollies in with shallow depth of field."}
 
 ### Example 3 — new scene opens on this shot's own keyframe
 {"strategy": "i2v_keyframe", "reason": "scene 2 opens a new location; anchoring on scene 1 would bleed the old scene in", "video_prompt": "Opening on the empty kitchen at dawn, the camera pans slowly right as sunlight creeps across the counter."}

@@ -1,6 +1,6 @@
 ---
 name: scene_write
-agent: ScreenwriterAgent + DirectorAgent (playwriting, window loop stage A)
+agent: window-loop brain LLM via _write_outline (ScreenwriterAgent = deterministic fallback; DirectorAgent expands specs), window loop stage A
 description: Turn the user's prompt into a time-ordered list of scene/shot descriptions → ShotSpecs; the seed of the StoryboardMemory ledger.
 ---
 
@@ -62,17 +62,31 @@ strategy, review, repair) hangs off these entries.
    2026-07-16). One natural mention per shot is enough. Do NOT write
    @Image/@Video references here — numbering happens downstream (the slot
    manifest). A user-named asset that no shot description mentions is a
-   script BUG (the executor warns loudly).
+   script BUG. (The executor's deterministic warning only fires when the
+   WHOLE catalog goes unmentioned — the law applies PER asset; do not rely
+   on the warning.)
 
 ## Output format (STRICT JSON — output this and nothing else)
 
-{"shots": [{"description": "Shot 1: <detailed filmable description>",
+{"cast": {"<entity name>": "<10-20 word CANONICAL appearance descriptor:
+           species/build, coat/wardrobe with colors, distinctive marks>"},
+ "setting": "<one canonical set-dressing + lighting sentence>",
+ "shots": [{"description": "Shot 1: <detailed filmable description>",
             "duration_s": <int 4-10>,
             "end_state": "<one sentence: at the cut, who/what is where,
                           moving or still, in which direction>"},
            {"description": "Shot 2: <detailed filmable description>",
             "duration_s": <int 4-10>,
             "end_state": "..."}, ...]}
+
+- `cast` + `setting` are the CROSS-SHOT CONSISTENCY CONTRACT (video models
+  have NO memory across calls): one canonical appearance descriptor per
+  recurring character/object and one canonical set-dressing+lighting line.
+  Every downstream prompt (every shot, every repair) restates the relevant
+  descriptors VERBATIM, and the reviewer judges each shot against them.
+  Write them concrete and visual — colors, marks, materials — not moods.
+  For user-provided assets, derive the descriptor from the asset's catalog
+  identity words.
 
 - Each description is 15-40 words: subject + action + setting + camera /
   lighting where useful. One sentence that a video model can shoot.
@@ -83,7 +97,11 @@ strategy, review, repair) hangs off these entries.
   seconds onto each generation model's own duration domain. If you omit
   duration_s the executor sends NO duration and the model's own default
   applies — so always state it.
-- `end_state` is the HANDOFF BATON (the window loop shoots shots in order
+- `end_state` is MACHINE-USED twice beyond the baton: the reviewer treats
+  it as the shot-end acceptance criterion, and at generation time a VLM
+  reads the previous shot's ACTUAL last frame next to your scripted baton
+  — write end_states as concrete, visually checkable freeze-frames, never
+  literary moods. It is the HANDOFF BATON (the window loop shoots shots in order
   and shot N+1 is generated FROM shot N's final frame — your baton is what
   makes that cut physically possible):
   1. State the exact freeze-frame at the cut: every key subject's position,
@@ -118,18 +136,23 @@ strategy, review, repair) hangs off these entries.
 ### Example
 user_prompt: "a glass falls off a table; shards scatter on the floor. Then a
 boy comes and collects all shards, leaves happily"
-{"shots": [
-  {"description": "Shot 1: scene 1 — a clear drinking glass teeters on the edge of a wooden kitchen table, warm daylight, eye-level close-up, then tips over the edge", "duration_s": 5,
-   "end_state": "the glass is in mid-air just below the table edge, falling fast toward the tile floor"},
-  {"description": "Shot 2: scene 1 — the falling glass shatters on the tile floor and shards scatter outward, low camera angle at floor level, shallow depth of field", "duration_s": 4,
+{"cast": {"the boy": "a young boy of about eight, short black hair, red striped t-shirt, blue shorts, white sneakers"},
+ "setting": "a warm daylit kitchen with a wooden table, beige tile floor and a window over the sink",
+ "shots": [
+  {"description": "Shot 1: scene 1 — a clear drinking glass teeters at the very edge of the wooden kitchen table, rocking further with each wobble, warm daylight, eye-level close-up slowly pushing in", "duration_s": 5,
+   "end_state": "the glass rocks at maximum lean on the table edge, still in motion, camera pushing in"},
+  {"description": "Shot 2: scene 1 — taking over from the rocking glass, it tips past the edge, FALLS and SHATTERS on the beige tile floor, shards scattering outward, low floor-level angle, shallow depth of field", "duration_s": 4,
    "end_state": "shards lie scattered and at rest on the tile floor around the impact point"},
-  {"description": "Shot 3: scene 1 — a young boy kneels down beside the scattered shards, carefully collects them into his hand, then stands up and walks away smiling, medium shot", "duration_s": 8,
+  {"description": "Shot 3: scene 1 — the boy kneels down beside the scattered shards, carefully collects them into his hand, then stands up and walks away smiling, medium shot", "duration_s": 8,
    "end_state": "the boy is walking away from camera, shards in hand, floor clear"}
 ]}
 
-Note how the batons connect: shot 1 ends with the glass FALLING (not resting)
-because shot 2 needs the impact; shot 2 may end at rest because shot 3
-introduces a NEW agent (the boy) acting on the shards.
+Note how the batons connect and obey the COMPLETE-ACTION LAW: shot 1 hands
+off SUSTAINABLE motion (rocking, camera push) — never a suspended fall;
+shot 2 completes tip + fall + impact INSIDE one shot; shot 2 may end at
+rest because shot 3 introduces a NEW agent (the boy) acting on the shards.
+The cast entry gives the boy ONE canonical appearance that every later
+prompt restates verbatim.
 
 ## Where the output goes
 outline (one line per shot) → DirectorAgent expands each line into a ShotSpec
@@ -138,8 +161,11 @@ graph) → StoryboardMemory.from_outline builds the ledger (all pending).
 
 ## Current implementation status
 The window loop's `_write_outline` drives REAL LLM playwriting with this
-skill as the prompt (strict-JSON output above, validated: strings only,
-exact duplicates dropped, capped at max_shots). The deterministic splitter
+skill as the prompt (strict-JSON output above; validated per shot object:
+description ≥12 chars, case-insensitive exact duplicates dropped, list
+capped at max_shots; duration_s coerced to int and clamped into 4-10
+(invalid/missing → no duration sent to the API); end_state and
+cast/setting passed through as-is — missing → empty, never fabricated). The deterministic splitter
 (ScreenwriterAgent: semicolon clauses cycled over n_shots) is the FALLBACK
 only — it CANNOT be the primary because clause-cycling fabricates duplicate
 shots whenever clauses < n_shots.

@@ -88,7 +88,8 @@ def test_fix_classes_are_hints_never_tool_calls():
     clip = _clip(verdicts=[_measured()])
     b = _brief(clip, _spec())
     iss = b["issues"][0]
-    assert iss["fix_classes"] == ["localized_regen", "edit_in_place"]
+    # 2026-07-17 三分类对齐:motion → 局部段重生
+    assert iss["fix_classes"] == ["segment_regen"]
     assert "tool" not in iss and "args" not in iss
 
 

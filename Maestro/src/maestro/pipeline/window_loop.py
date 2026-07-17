@@ -88,7 +88,9 @@ log = get_logger(__name__)
 #   排序依据:硬锚(像素级续接)优先于软锚 —— flf2v_bridge(双端硬锚)>
 #   tiv2v_window(尾段运动参考+可选软图,全走 t2v)> ti2v_prev_last(首帧硬锚)>
 #   ti2v_prev_plus_keyframe(t2v+refs 软锚)> multi_image_fusion(融合)。
-_CONDITION_PRIORITY = ["flf2v_own_pair", "flf2v_bridge", "extend_prev",
+# 审计对齐(2026-07-17):extend_prev(真续接,最强)先于 flf2v_bridge
+# (bridge 只在"必须到达本镜图"时才对 —— 确定性层无从判断意图,默认续接)。
+_CONDITION_PRIORITY = ["flf2v_own_pair", "extend_prev", "flf2v_bridge",
                        "ti2v_prev_last", "ti2v_prev_plus_keyframe",
                        "t2v_own_refs", "i2v_keyframe", "t2v"]
 # §B 确定性兜底的优先级(用户素材优先于生成 —— 真材实料的外观赢过再生成)
@@ -215,7 +217,9 @@ def ensure_asset_descriptions(asset_memory: Optional[AssetMemory],
         if mllm is not None and cache_dir is not None:
             out_dir = Path(cache_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
-            frame = extract_frame(Path(src), 10 ** 6,
+            dur_s = _probe_seconds(Path(src))
+            mid_idx = max(0, int(dur_s * 12)) if dur_s > 0 else 10 ** 6
+            frame = extract_frame(Path(src), mid_idx,
                                   out_dir / f"asset_{sid}_mid.png")
             if frame is not None:
                 try:
@@ -465,7 +469,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
 
 def _write_outline(llm, user_prompt: str, asset_catalog: list,
                    episode_guidance: dict, max_shots: int,
-                   fallback_fn) -> tuple[list[str], list, list[str], str]:
+                   fallback_fn) -> tuple[list[str], list, list[str], dict, str]:
     """§A 真·LLM playwriting → (outline, via)。三层纪律同 _decide:
 
     1) LLM + scene_write 技能全文 → 严格 JSON {"shots": [...]},逐条校验
@@ -491,7 +495,12 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                           },
                           "max_shots_hard_cost_cap": max_shots},
                          ensure_ascii=False)
-            + '\n\nSTRICT JSON only: {"shots": [{"description": "Shot 1: '
+            + '\n\nSTRICT JSON only: {"cast": {"<entity name>": "<10-20 '
+              'word CANONICAL appearance descriptor (species/build, coat/'
+              'wardrobe with colors, distinctive marks) — every shot prompt '
+              'will restate it VERBATIM>"}, "setting": "<one canonical '
+              'set-dressing + lighting sentence for the (main) scene>", '
+              '"shots": [{"description": "Shot 1: '
               '<detailed filmable description>", "duration_s": <int 4-10>, '
               '"end_state": "<one sentence: at the CUT, who/what is where, '
               'moving or still, in which direction>"}, '
@@ -550,6 +559,12 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         durs.append(max(4, min(10, int(dur))))
                     except (TypeError, ValueError):
                         durs.append(None)
+            # 跨镜一致性载体(2026-07-17 审计):cast/setting 官方描述符。
+            # brain 没输出 → 空(不编造);有输出 → 全链注入。
+            cast = ({str(k): str(v) for k, v in data.get("cast").items()
+                     if str(v).strip()}
+                    if isinstance(data.get("cast"), dict) else {})
+            setting = str(data.get("setting", "") or "").strip()
             if shots:
                 # 修正 A(2026-07-16):素材白给检测(警告不阻断)——
                 # 用户给了素材,但没有任何分镜描述提及任一素材关键词。
@@ -569,11 +584,13 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                             len(asset_catalog),
                             [a.get("desc", a.get("label", ""))[:40]
                              for a in asset_catalog])
-                return shots, durs, ends, "llm"
+                return shots, durs, ends, \
+                    {"cast": cast, "setting": setting}, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
     # (不是 config 的 shot_duration,也不是我们编的数);end_state 同理为空。
-    return fb, [None] * len(fb), [""] * len(fb), "fallback"
+    return fb, [None] * len(fb), [""] * len(fb), \
+        {"cast": {}, "setting": ""}, "fallback"
 
 
 def _skill_body_named(name: str) -> str:
@@ -818,8 +835,11 @@ def _make_keyframe(strategy: str, entry, video_gen,
             if not src.exists():
                 continue
             out = out_dir / f"shot{entry.shot_idx:03d}_kf{slot}_extract.png"
-            # 取源片段的中间帧(比首帧更能代表片段内容)
-            got = extract_frame(src, 10 ** 6, out)
+            # 取源片段的【中间】帧(比首帧/末帧更代表内容;审计 2026-07-17:
+            # 旧代码 idx=10**6 实取的是末帧,与注释不符 —— 已修正)。
+            dur_s = _probe_seconds(src)
+            mid_idx = max(0, int(dur_s * 12)) if dur_s > 0 else 10 ** 6
+            got = extract_frame(src, mid_idx, out)
             if got is not None:
                 cap = str(getattr(shot, "caption", "") or "")
                 return got, (f"a frame extracted from the user's source "
@@ -1379,7 +1399,9 @@ def _junction_state(mllm, prev, cache_dir: Path) -> str:
 def _conditions_for_prompt(strategy: str, entry, prev,
                            use_prev_tail: bool,
                            junction: str = "",
-                           source_videos: Optional[list] = None) -> list[dict]:
+                           source_videos: Optional[list] = None,
+                           cast: Optional[dict] = None,
+                           setting: str = "") -> list[dict]:
     """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
     按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
     事实,不能发明条件。
@@ -1408,6 +1430,13 @@ def _conditions_for_prompt(strategy: str, entry, prev,
     if own_end:
         conds.append({"kind": "state", "role": "required_end_state",
                       "description": own_end})
+    # 跨镜一致性描述符(2026-07-17):出现在本镜的角色,其官方外观描述
+    # 必须逐字进 prompt(视频模型跨调用零记忆,这是唯一载体)。
+    for name, desc in (cast or {}).items():
+        conds.append({"kind": "cast", "role": name, "description": desc})
+    if setting:
+        conds.append({"kind": "setting", "role": "scene_setting",
+                      "description": setting})
     return conds
 
 
@@ -1618,7 +1647,8 @@ def generate_movie_windowed(
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
     asset_catalog0 = _media_catalog(asset_memory)
-    outline, shot_durations, shot_end_states, outline_via = _write_outline(
+    outline, shot_durations, shot_end_states, script_meta, outline_via = \
+        _write_outline(
         llm, user_prompt, asset_catalog0,
         episode_guidance=guidance,
         max_shots=int(plan_cfg.get("max_shots", 6)),
@@ -1641,6 +1671,13 @@ def generate_movie_windowed(
     # 评审的镜尾验收标准;空串 = brain 没说,不编造。
     for entry_, end_ in zip(storyboard.entries, shot_end_states):
         entry_.end_state = end_
+    # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)
+    storyboard.cast = dict(script_meta.get("cast", {}))
+    storyboard.setting = str(script_meta.get("setting", ""))
+    if storyboard.cast:
+        log.info("window: cast canon — %s",
+                 "; ".join(f"{k}: {v[:60]}" for k, v in
+                           storyboard.cast.items()))
     log.info("window: playwriting done via=%s — %s",
              outline_via, storyboard.summary())
 
@@ -1656,6 +1693,7 @@ def generate_movie_windowed(
         d = _decide(
             llm, "image-plan", menu,
             {"shot": entry.to_brain_line(),
+             "cast": storyboard.cast, "setting": storyboard.setting,
              "storyboard": storyboard.to_brain_json(),
              "asset_catalog": asset_catalog,
              "episode_guidance": guidance},
@@ -1710,6 +1748,7 @@ def generate_movie_windowed(
             {"shot": entry.to_brain_line(),
              "prev_shot": prev.to_brain_line() if prev else None,
              "junction": junction_ctx,
+             "cast": storyboard.cast, "setting": storyboard.setting,
              "slots_by_strategy": slots_by_strategy,
              "storyboard": storyboard.to_brain_json(),
              "episode_guidance": guidance},
@@ -1743,7 +1782,9 @@ def generate_movie_windowed(
                 conditions=_conditions_for_prompt(d["strategy"], entry, prev,
                                                   use_tail,
                                                   junction=junction_actual,
-                                                  source_videos=source_videos),
+                                                  source_videos=source_videos,
+                                                  cast=storyboard.cast,
+                                                  setting=storyboard.setting),
                 base_prompt=brain_prompt or spec.prompt, label=entry.label)
             if enhanced:
                 brain_prompt = enhanced
@@ -1805,6 +1846,8 @@ def generate_movie_windowed(
                 "video_prompt": brain_prompt or spec.prompt,
                 "end_state": entry.end_state or None,
                 "junction_prev_actual": junction_actual or None,
+                "cast": (storyboard.cast or None),
+                "setting": (storyboard.setting or None),
                 "images": [{"path": im.get("path"), "role": im.get("role")}
                            for im in entry.images
                            if im.get("path") and Path(im["path"]).exists()],

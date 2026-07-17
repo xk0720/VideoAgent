@@ -22,9 +22,9 @@ decision covers three things at once:
 | plan | image role(s) | video call that follows | payload image field |
 |---|---|---|---|
 | single_first_frame | first frame anchor | seedance-2.0 i2v (ti2v) | `image` |
-| single_reference | reference (character/object/scene consistency) | seedance-2.0 t2v + refs, or kling-video-o1 | `reference_images` / `images` |
+| single_reference | reference (character/object/scene consistency) | seedance-2.0 t2v + refs (t2v_own_refs / ti2v_prev_plus_keyframe) | `reference_images` (@ImageN) |
 | pair_first_last | first frame + last frame | seedance-2.0 i2v (both ends locked) | `image` + `last_image` |
-| pair_reference | two references (e.g. two characters; character + scene) | kling-video-o1 (may also carry the previous shot's tail `video`) | `images` |
+| pair_reference | two references (e.g. two characters; character + scene) | seedance-2.0 t2v + refs (both ride @ImageN on the same call) | `reference_images` |
 | none | no images | t2v / previous-shot-anchored routes | — |
 
 ## How to decide (reason from the story and the assets — NOT rules to memorize)
@@ -60,6 +60,18 @@ decision covers three things at once:
     mid-scene shots (they anchor on the previous shot's last frame / tail —
     see the window_generation skill). NOT every shot needs its own image;
     gratuitous keyframes BREAK continuity instead of helping it.
+- A first_frame-role image is consumed by i2v_keyframe; with a previous
+  shot it may instead be REPURPOSED as flf2v_bridge's closing anchor, or
+  ride as @Image2 next to the previous last frame on the t2v route — the
+  role states intent, the condition stage picks the consumer.
+- The user's source videos ALSO ride natively as @VideoN references on the
+  t2v strategies (condition stage, ≤3, 15s head clips) — plan
+  video_extract only when the shot must OPEN/CLOSE on an exact frame of
+  the user's footage; for mere subject consistency @VideoN already covers it.
+- t2i image descriptions must EMBED the canonical `cast` descriptor of any
+  character in the image and the `setting` words (both provided in your
+  context) — independently-worded t2i prompts are how the same character
+  gets two different looks.
 - `asset_catalog` entries carry kind + a description. When you pick
   asset_image, put the retrieval query into that image's `description`
   (retrieval scores by keyword overlap with asset descriptions).
@@ -90,7 +102,7 @@ decision covers three things at once:
 {"strategy": "single_first_frame", "images": [{"source": "t2i", "description": "a glass of water standing near the edge of a wooden kitchen table, warm morning light, photorealistic, eye-level close-up"}], "reason": "opening shot sets the look; the video must start exactly on this framing"}
 
 ### Example 2 — the user provided two character photos; both appear in this shot
-{"strategy": "pair_reference", "images": [{"source": "asset_image", "description": "female character portrait"}, {"source": "asset_image", "description": "male character portrait"}], "reason": "both characters share the frame; their faces must stay recognizable — reference pair via the kling route"}
+{"strategy": "pair_reference", "images": [{"source": "asset_image", "description": "female character portrait"}, {"source": "asset_image", "description": "male character portrait"}], "reason": "both characters share the frame; their faces must stay recognizable — reference pair via the seedance t2v @refs route"}
 
 ### Example 3 — a transition shot from state A to state B (mixed sources)
 {"strategy": "pair_first_last", "images": [{"source": "video_extract", "description": "the corridor from the user's source clip"}, {"source": "t2i", "description": "the same corridor, the door at the end now open, camera slightly closer, same lighting"}], "reason": "the shot opens on the user's real corridor and must end on the opened door"}

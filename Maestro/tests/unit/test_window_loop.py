@@ -605,7 +605,7 @@ def test_llm_playwriting_replaces_clause_cycling(tmp_path):
                  "medium shot", "duration_s": 30},
             ]})
 
-    outline, durs, ends, via = _write_outline(
+    outline, durs, ends, _meta, via = _write_outline(
         _Playwright(), "a glass falls; a boy collects shards", [],
         episode_guidance={"past_task_shapes": [
             {"n_shots": 3, "outcome": "good", "user_prompt": "similar"}]},
@@ -633,7 +633,7 @@ def test_llm_playwriting_validation_and_fallback(tmp_path):
                 "Shot 4: extra beyond the cost cap in this test run",
             ]})
 
-    outline, durs, ends, via = _write_outline(
+    outline, durs, ends, _meta, via = _write_outline(
         _Dupes(), "p", [], episode_guidance={}, max_shots=3,
         fallback_fn=lambda: ["fb"])
     assert via == "llm"
@@ -646,7 +646,7 @@ def test_llm_playwriting_validation_and_fallback(tmp_path):
         def complete(self, prompt, **kw):
             return "I would suggest maybe some nice shots?"
 
-    outline2, durs2, ends2, via2 = _write_outline(
+    outline2, durs2, ends2, _meta2, via2 = _write_outline(
         _Garbage(), "p", [], episode_guidance={}, max_shots=6,
         fallback_fn=lambda: ["Shot 1: fallback split"])
     assert via2 == "fallback" and outline2 == ["Shot 1: fallback split"]

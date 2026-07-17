@@ -1,7 +1,7 @@
 ---
 name: video_retrieval
-agent: RetrievalTool + AssetMemory (asset retrieval; window stage B sources / repair tool retrieve_replace)
-description: Retrieve material from the user's uploaded assets (images / videos / identity anchors) — the base of the asset_image / video_extract image sources and of the retrieve_replace repair tool.
+agent: RetrievalTool + AssetMemory (asset retrieval; window stage B sources + @VideoN source-video references)
+description: Retrieve material from the user's uploaded assets (images / videos / identity anchors) — the base of the asset_image / video_extract image sources, the scene_write media catalog, and the @VideoN source-video references on t2v routes.
 ---
 
 # Video Retrieval — asset retrieval skill
@@ -9,21 +9,30 @@ description: Retrieve material from the user's uploaded assets (images / videos 
 ## Role
 User-uploaded assets (AssetMemory: video_shots source clips, identity_anchors
 character images, style_anchors style images) are the ONLY source of "real
-appearance". Three consumers:
+appearance". Consumers:
 
 1. Image-plan source `asset_image`: use a user image directly as a planned
    image (the strongest guarantee of character-look consistency — a real
    photo beats any regeneration).
 2. Image-plan source `video_extract`: retrieve a source clip by the shot
-   description (retrieve_source_shots) and extract its MIDDLE frame (more
-   representative of the clip than the first frame).
-3. Repair tool `retrieve_replace` (repair brain's menu): when a semantic
-   defect is "a real element is missing", replace the generated shot with a
-   source clip.
+   description (retrieve_source_shots) and extract its MIDDLE frame
+   (probed-duration midpoint; more representative than first/last frame).
+3. The scene_write MEDIA CATALOG: images AND videos with their semantic
+   labels — the script brain sees what the user provided.
+4. @VideoN source-video references: user videos ride natively on the t2v
+   strategies (≤3, 15-second head clips, seedance-2.0 limits).
+(retrieve_replace was RETIRED from the repair menu 2026-07-17; only a
+legacy execute handler remains.)
 
 ## Retrieval rules
 - retrieve_source_shots(query): use the FULL shot description as the query,
-  never a single word (matching scores by caption/label keyword overlap).
+  never a single word (ranking = cosine between a deterministic hashed
+  bag-of-tokens embedding of the query and each shot's ingest embedding —
+  full descriptions maximize token overlap).
+- Every retrieval returns (path, ACTUAL semantic label), and the actual
+  label — user description > VLM caption > filename — is what travels
+  into downstream prompts, never the search query (ruling 1.2: describe
+  what was actually retrieved, not what was searched for).
 - Image assets are scored across the WHOLE catalog by keyword overlap between
   the query and each asset's label; the label priority chain is
   user-provided description > VLM caption (backfilled by

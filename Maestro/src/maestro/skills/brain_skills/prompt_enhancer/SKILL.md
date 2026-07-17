@@ -24,9 +24,15 @@ never change WHAT happens in the shot.
   assemble ("@Image2" / "@Video1" / "reference image 1"). Copy slot IDs
   verbatim; a deterministic gate REJECTS any prompt referencing an ID not
   in the manifest (you get one retry with the error). Rows with
-  referenceable=false (FIRST_FRAME/LAST_FRAME/the reference video on the
-  kling route) must NOT be @-referenced — describe the motion instead.
-  State rows are the CUT HANDOFF facts. Use ALL rows; invent NONE.
+  referenceable=false (FIRST_FRAME/LAST_FRAME/CONTINUATION_SOURCE/the
+  reference video on the retired kling route) must NOT be @-referenced — describe the motion instead.
+  State rows are the CUT HANDOFF facts. `cast` rows carry the
+  movie-wide CANONICAL appearance descriptor per character and a
+  `setting` row the canonical scene dressing+lighting — for every
+  character VISIBLE in this shot, restate its descriptor VERBATIM in the
+  prompt (video models have no cross-call memory; this is the only
+  identity carrier on unanchored routes and re-entries). Use ALL rows;
+  invent NONE.
   State roles:
   - `opening_state_actual` — what a VLM actually saw in the previous shot's
     final frame. The prompt must OPEN from this exact state.
@@ -37,7 +43,9 @@ never change WHAT happens in the shot.
     anti-settle clause ("still rolling as the shot ends — it does not slow
     down or settle"); video models kill motion at clip end unless told not
     to.
-- `current_prompt` — the draft written by the planner (may be empty).
+- `current_prompt` — the planner's draft (never empty: when the planner
+  wrote none it falls back to the shot description, so a current_prompt
+  identical to shot_description means "no draft yet").
 
 ## FORMALIZE ASSET MENTIONS (your most important translation job)
 
@@ -83,13 +91,18 @@ that gap:
 
 ### seedance_t2v (text-to-video + reference channels)
 - Mention every reference image as `@Image1`, `@Image2`, … and the
-  reference video as `@Video1` — in the SAME numbering order as the
-  conditions list. Unmentioned references are wasted.
+  user's source video(s) as `@Video1`, `@Video2`, … — copy each slot ID
+  from the manifest. The gate auto-appends a generic mention for any
+  referenceable slot you omit — weave every slot in yourself so the
+  mention is coherent prose instead of a bolted-on sentence.
 - Say what each reference IS FOR: "Reference @Image1 for the cat's
   appearance", "Continue @Video1's motion and camera seamlessly".
-- When the first condition is the previous shot's last frame or tail,
-  OPEN the prompt with the continuation ("Continuing directly from
-  @Video1, …") so the model treats it as the entry state.
+- FIRST-FRAME PIN (field-verified): when a manifest row's content says
+  @Image1 is the previous shot's final frame (ti2v_prev_plus_keyframe),
+  OPEN the prompt with the explicit pin "The shot opens EXACTLY on
+  @Image1 — the final moment of the previous shot; do not alter its scene
+  or layout", then describe the motion that unfolds from it. A softer
+  mention ("consistent with @Image1") loses the frame lock.
 
 ### seedance_i2v (image-to-video, first frame locked)
 - The first frame IS the opening state — do NOT re-describe its static

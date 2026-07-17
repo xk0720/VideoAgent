@@ -807,6 +807,24 @@ class GeminiVLM(OpenAICompatVLM):
                 f'The script requires this shot to END in this state: '
                 f'"{end_state}". Judge the FINAL moment against it (moving '
                 f'vs at rest matters) — add one check for it.')
+        # 跨镜一致性(2026-07-17 审计):官方外观描述符 = 一致性标尺。
+        # 只对本镜画面里出现的角色判;每个出场角色出一条 check。
+        cast = cond.get("cast") or {}
+        if isinstance(cast, dict) and cast:
+            canon = "; ".join(f'{k}: "{v}"' for k, v in cast.items())
+            junction_lines.append(
+                "CANONICAL CAST (the movie-wide appearance contract — every "
+                f"shot must match it): {canon}. For each cast member VISIBLE "
+                "in this shot, add one check: does its appearance match the "
+                "canonical descriptor (species/build, coat/wardrobe colors, "
+                "distinctive marks)? A drifted look is an issue "
+                "(category=consistency-worthy → use category \"semantic\").")
+        setting_c = str(cond.get("setting") or "").strip()
+        if setting_c:
+            junction_lines.append(
+                f'CANONICAL SETTING: "{setting_c}". If this shot is in the '
+                "same scene, its set dressing and lighting must match — add "
+                "one check.")
         instruction = _SHOT_REVIEW_INSTRUCTION.format(
             shot_prompt=spec.prompt,
             gen_prompt_block=(f'\nThe exact generation prompt was:\n"{gen_prompt}"'
