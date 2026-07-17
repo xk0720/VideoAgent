@@ -59,6 +59,12 @@ class ShotEntry:
     # 是动是停、朝什么方向"。下一镜的开头必须从这里继续;评审拿它当镜尾
     # 验收标准。brain 没输出 = 空串,不编造。
     end_state: str = ""
+    # ViMax 借鉴(2026-07-17 P2):首尾帧变化幅度 large|medium|small(策略
+    # 提示:小变 → extend/i2v 足够;大变 → flf 双锚/t2v);空 = 未声明。
+    variation: str = ""
+    # 换场/首镜的【开场静态快照】(纯静态,无进行中动作)—— 图计划的 t2i
+    # prompt 底稿;续接镜留空(开场 = 上镜 end_state,不重复声明)。
+    opening_frame: str = ""
     # keyframe:路径 + 来源(t2i 生成 | 素材库图片 | 素材视频抽帧 | 无)。
     # Image Plan 升级后仍保留:= images 里第一张 first/first_frame 角色图
     # (老策略 i2v_keyframe / flf2v_bridge 读它,兼容不破)。
@@ -106,6 +112,8 @@ class ShotEntry:
             "label": self.label,
             "description": self.description,
             "end_state": self.end_state,
+            "variation": self.variation,
+            "opening_frame": self.opening_frame,
             "status": self.status,
             "image_plan": self.image_plan,
             "images": [{"role": im.get("role"), "source": im.get("source"),

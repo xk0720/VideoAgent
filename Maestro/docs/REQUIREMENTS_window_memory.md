@@ -454,3 +454,42 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
 (末端,响亮)。**抽帧能力保留**:图计划的 `video_extract` 仍抽中间帧当
 key image(需要某个物体/精确帧时)。skill 三处同步(video_retrieval 打标
 链、scene_write "可写直接续用素材的镜头"、image_plan video_extract 定位)。
+
+---
+
+## 追加裁决(2026-07-17 第三轮,已实现):ViMax 借鉴七项(用户:"都做吧")
+
+来源:精读本地 ViMax 仓库 shot planning(storyboard_artist / character_
+extractor / script_enhancer 等)。P1 五项 + P2 两项全部采纳:
+
+- **① <角括号> 出场标记(代码+skill)**:剧本每次提到 cast 角色都写
+  `<name>`(名字照抄 cast 键)。机器解析(`_MARKER_RE`/`_cast_in_shot`)
+  确定本镜出场角色 → cast 注入与评审 check 只对出场者
+  (clip.conditioning["cast"] = 子集)。诚实降级:无标记/标记全不匹配 →
+  全量注入。**出口一律剥标记**(`_strip_markers`):spec.prompt、brain
+  的 video_prompt、enhanced prompt、t2i prompt/检索词(_make_keyframe 与
+  _execute_image_plan 收口)—— 生成模型永远看不到角括号;台账 description
+  保留标记供解析。
+- **② cast 静/动拆分(skill)**:描述符定型 "static: …; dynamic: …" ——
+  static 半句 = 逐字不变的身份契约,dynamic 半句 = 允许变的部分(表情/
+  姿态/持物);易混角色必须有响亮区分特征;完整度按"角色设定图"标准。
+- **③ 画面地理(skill)**:出场者写画内方位与朝向("left of frame,
+  facing right");特写点名入画身体部位;**不可见者不入描述**(画外音/
+  暗示存在都禁止)。scene_write 规则 8 + enhancer 规则 8。
+- **④ 机位复用(skill)**:同场景优先回到已确立机位("same framing as
+  shot 1"),只在叙事需要时换角度。scene_write 规则 9。
+- **⑤ 重复即精确(skill)**:关键视觉事实(角色身份词、关键物外观、
+  承重空间关系)在最要紧处再说一遍 —— enhancer 规则 7,由角色扩展到
+  物体与空间关系。
+- **⑥ variation 变化幅度(P2,代码+skill)**:剧本逐镜声明首尾帧变化
+  large|medium|small(词表校验,非法 → 空);入台账 ShotEntry.variation
+  → to_brain_line → 条件决策上下文。策略提示:小变偏续接单锚
+  (extend/i2v),大变偏双锚/自由(flf/t2v);是提示不是闸门。
+- **⑦ opening_frame 开场静态快照(P2,代码+skill)**:仅首镜/换场镜输出
+  纯静态开场快照(无进行中动作)。入台账 → image_plan 上下文;t2i 首帧
+  prompt 以它为底稿(静态句适合单帧,动作句会出运动模糊/半程姿态);
+  brain 不给逐张 spec 时确定性兜底同样优先用它。续接镜必须留空
+  (开场 = 上镜 end_state,重复声明招矛盾)。
+
+测试:tests/unit/test_vimax_borrowings.py(10 条:标记剥除/出场过滤/
+诚实降级/词表校验/兜底底稿/出口收口)。全套 458 通过。

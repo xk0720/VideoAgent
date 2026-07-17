@@ -74,7 +74,16 @@ decision covers three things at once:
 - t2i image descriptions must EMBED the canonical `cast` descriptor of any
   character in the image and the `setting` words (both provided in your
   context) — independently-worded t2i prompts are how the same character
-  gets two different looks.
+  gets two different looks. Use the STATIC half of a cast descriptor
+  verbatim; pick the dynamic half (pose/expression) to fit this frame.
+- OPENING SNAPSHOT AS T2I BASE (ViMax-derived, 2026-07-17): when the
+  shot's ledger line carries `opening_frame` (the script's purely static
+  opening snapshot — first shot / scene cuts), build the first-frame
+  image's t2i prompt FROM it: it already states the composition with no
+  ongoing action, which is exactly what a still needs (a motion sentence
+  makes t2i render motion blur or a mid-action pose that i2v then can't
+  start from). Add cast/setting words as above. The executor's own
+  fallback does the same when you give no per-image spec.
 - `asset_catalog` entries carry kind + a description. When you pick
   asset_image, put the retrieval query into that image's `description`
   (retrieval scores by keyword overlap with asset descriptions).

@@ -86,6 +86,19 @@ that gap:
 5. Physics wording helps physics: name the causal chain ("rolls off the
    edge, drops, bounces once with a slight squash") — reviewers check it.
 6. English only. No frame numbers, no model parameters, no file paths.
+7. REDUNDANCY FOR PRECISION (ViMax-derived): repeating a critical visual
+   fact is a FEATURE, not a flaw — video models weight repeated tokens.
+   Restate the identity words of the key character, the KEY OBJECT's
+   look ("the clear drinking glass … the glass, still intact,") and the
+   load-bearing SPATIAL relation ("at the very edge of the table … still
+   at the table's edge") once more at the moment they matter most. Two
+   mentions of a critical fact beat one elegant mention; do not exceed
+   the word budget to do it.
+8. FRAME GEOGRAPHY (ViMax-derived): keep/add explicit in-frame position
+   and facing for each visible subject ("left of frame, facing right",
+   "back to camera") and, in close-ups, name exactly which body part or
+   region fills the frame. Never mention anything not visible in this
+   shot — describe only what the camera sees.
 
 ## Family-specific syntax (get this wrong and the conditions are IGNORED)
 

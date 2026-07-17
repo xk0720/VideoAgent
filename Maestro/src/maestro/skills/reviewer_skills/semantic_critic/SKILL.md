@@ -27,7 +27,9 @@ generateContent call containing, as labeled parts:
   end_state — each demands one continuity check; plus the CANONICAL CAST
   descriptors and SETTING line — one appearance-match check per cast
   member visible in the shot, one set-dressing check when the scene
-  continues.
+  continues. (Since 2026-07-17 the cast block is PRE-FILTERED to the
+  members the script marks as on screen in THIS shot — check each listed
+  member; a listed member entirely absent from frame is itself a defect.)
 - Every CONDITIONING input with its role spelled out: "FIRST-FRAME image (the
   shot must open on it)", "LAST-FRAME image (the shot must end on it)",
   "REFERENCE image N (identity/style anchor)", "REFERENCE VIDEO (motion /

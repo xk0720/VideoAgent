@@ -159,6 +159,15 @@ by the executor — do NOT output them.
    demand them — over own-image-only routes; when the script cuts to a new
    scene, prefer i2v_keyframe / flf2v_own_pair / t2v and deliberately skip
    the previous-shot anchors.
+   VARIATION HINT (ViMax-derived, 2026-07-17): the shot's ledger line may
+   carry `variation` — the scripted first-to-last-frame change magnitude.
+   `small` (composition barely changes) favors continuation-style routes
+   (extend_prev / ti2v_prev_last / i2v_keyframe): a single opening anchor
+   fully determines such a shot. `large` (subject crosses frame, camera
+   travels, layout shifts) favors routes with a TARGET or freedom
+   (flf2v_own_pair / flf2v_bridge / t2v_own_refs / t2v): a lone opening
+   anchor tends to under-deliver big change. `medium`/empty = neutral.
+   It is a HINT to weigh, not a gate — continuity rules above still win.
 5. Only pick names present in the menu; output strict JSON, nothing else.
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.

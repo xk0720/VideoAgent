@@ -48,6 +48,17 @@ strategy, review, repair) hangs off these entries.
 5. Entity consistency: use the SAME name for the same character/object across
    all shot descriptions (detection, tracking and asset retrieval all align
    by name).
+   CAST MARKER LAW (ViMax-derived, 2026-07-17): every time a CAST character
+   appears in a shot description, wrap its name in angle brackets — `<the
+   boy>`, `<the orange-and-white cat>` — with the name COPIED EXACTLY from
+   the cast keys. The markers are MACHINE-PARSED: the executor derives
+   "which cast members are on screen in this shot" from them, injects only
+   THOSE appearance descriptors into the prompt, and tells the reviewer to
+   check only those. Unmarked cast mention = that shot gets the FULL cast
+   injected (safe but imprecise); a marker that matches no cast key is
+   wasted. Markers never reach the generation model — the executor strips
+   the brackets before any prompt. Mark characters only, not props or the
+   setting.
 6. Asset awareness: when the user provided assets (a location image, character
    photos, source clips), write the shots AROUND what the assets afford — a
    living-room background image is wasted on a beach script. VIDEO catalog
@@ -70,19 +81,43 @@ strategy, review, repair) hangs off these entries.
    script BUG. (The executor's deterministic warning only fires when the
    WHOLE catalog goes unmentioned — the law applies PER asset; do not rely
    on the warning.)
+8. FRAME GEOGRAPHY (ViMax-derived): state WHERE in the frame subjects are
+   and WHICH WAY they face whenever it matters for the cut or the action —
+   "on the left side of the frame, facing right", "back to camera, walking
+   away". When a shot is a close-up, name the exact body part / region in
+   frame ("only her hands and the cup are visible"). NO-INVISIBLE-ELEMENTS:
+   never mention an entity in a shot description that is NOT visible in
+   that shot — an off-screen voice or an implied presence confuses both
+   the generator and the reviewer; if it isn't in frame, it isn't in the
+   description.
+9. CAMERA-POSITION REUSE (ViMax-derived): within one scene, prefer
+   RETURNING to an already-established camera setup over inventing a new
+   angle for every shot — reuse stabilizes background, lighting and
+   spatial layout across cuts for free. Say it explicitly: "same
+   framing/angle as shot 1". Change the angle only when the story needs
+   it (a reveal, a new subject, an axis change).
 
 ## Output format (STRICT JSON — output this and nothing else)
 
-{"cast": {"<entity name>": "<10-20 word CANONICAL appearance descriptor:
-           species/build, coat/wardrobe with colors, distinctive marks>"},
+{"cast": {"<entity name>": "<CANONICAL appearance descriptor in the form
+           'static: <10-20 words of UNCHANGING visual identity —
+           species/build, coat/wardrobe with colors, distinctive marks>;
+           dynamic: <what varies across shots — expression, pose,
+           held items — or "none">'>"},
  "setting": "<one canonical set-dressing + lighting sentence>",
- "shots": [{"description": "Shot 1: <detailed filmable description>",
+ "shots": [{"description": "Shot 1: <detailed filmable description; every
+             cast appearance marked as <name>>",
             "duration_s": <int 4-10>,
             "end_state": "<one sentence: at the cut, who/what is where,
-                          moving or still, in which direction>"},
+                          moving or still, in which direction>",
+            "variation": "large|medium|small",
+            "opening_frame": "<first shot & scene cuts ONLY: one purely
+             STATIC opening snapshot — layout, subjects' positions, NO
+             ongoing action; omit for continuing shots>"},
            {"description": "Shot 2: <detailed filmable description>",
             "duration_s": <int 4-10>,
-            "end_state": "..."}, ...]}
+            "end_state": "...",
+            "variation": "..."}, ...]}
 
 - `cast` + `setting` are the CROSS-SHOT CONSISTENCY CONTRACT (video models
   have NO memory across calls): one canonical appearance descriptor per
@@ -92,6 +127,16 @@ strategy, review, repair) hangs off these entries.
   Write them concrete and visual — colors, marks, materials — not moods.
   For user-provided assets, derive the descriptor from the asset's catalog
   identity words.
+  STATIC/DYNAMIC SPLIT (ViMax-derived): the `static:` half is the identity
+  contract — it must stay word-for-word true in EVERY shot; the `dynamic:`
+  half names what is ALLOWED to change (expression, pose, held items), so
+  downstream prompts vary only those. DISTINCTNESS: when two cast members
+  could be confused (two boys, two cats), give each at least one loud
+  distinguishing static feature (hair color, clothing color, a marking).
+  COMPLETION-DESIGN: describe every character as if designing it for a
+  character sheet — complete enough that an artist could draw it from the
+  static half alone (species/age/build, hair, full outfit with colors,
+  footwear); "a boy" is not a descriptor.
 
 - Each description is 15-40 words: subject + action + setting + camera /
   lighting where useful. One sentence that a video model can shoot.
@@ -125,6 +170,19 @@ strategy, review, repair) hangs off these entries.
      suspended one-off action ("mid-air", "mid-fall", "mid-impact").
      Complete the jump/fall inside its own shot first (COMPLETE-ACTION
      LAW above).
+- `variation` (ViMax-derived) = how much the LAST frame differs from the
+  FIRST frame of this shot: `small` (same composition, minor motion — a
+  glass rocking), `medium` (subject moved / pose changed inside the same
+  framing), `large` (composition or location visibly different — subject
+  crossed the frame, camera traveled). It is a STRATEGY HINT downstream
+  (small favors continuation-style generation; large favors two-anchor /
+  free routes). State it honestly per shot; omit only if truly unsure.
+- `opening_frame` — ONLY for the FIRST shot and shots right after a SCENE
+  CUT: one purely STATIC snapshot of the opening composition (who is
+  where, facing which way, the set and light) with NO ongoing actions —
+  it becomes the base for a generated opening still. CONTINUING shots must
+  OMIT it (their opening IS the previous end_state; restating it invites
+  contradictions).
 - YOU decide the shot count — it is never preset. Read it off the story's
   beats, informed by `episode_guidance.past_task_shapes` (how many shots
   similar past tasks used and whether they succeeded). `max_shots` is ONLY a
@@ -141,23 +199,29 @@ strategy, review, repair) hangs off these entries.
 ### Example
 user_prompt: "a glass falls off a table; shards scatter on the floor. Then a
 boy comes and collects all shards, leaves happily"
-{"cast": {"the boy": "a young boy of about eight, short black hair, red striped t-shirt, blue shorts, white sneakers"},
+{"cast": {"the boy": "static: a young boy of about eight, short black hair, red striped t-shirt, blue shorts, white sneakers; dynamic: expression shifts from focused to smiling, hands empty then holding shards"},
  "setting": "a warm daylit kitchen with a wooden table, beige tile floor and a window over the sink",
  "shots": [
-  {"description": "Shot 1: scene 1 — a clear drinking glass teeters at the very edge of the wooden kitchen table, rocking further with each wobble, warm daylight, eye-level close-up slowly pushing in", "duration_s": 5,
-   "end_state": "the glass rocks at maximum lean on the table edge, still in motion, camera pushing in"},
+  {"description": "Shot 1: scene 1 — a clear drinking glass teeters at the very edge of the wooden kitchen table, right of frame, rocking further with each wobble, warm daylight, eye-level close-up slowly pushing in", "duration_s": 5,
+   "end_state": "the glass rocks at maximum lean on the table edge, still in motion, camera pushing in",
+   "variation": "small",
+   "opening_frame": "a clear drinking glass stands at the very edge of a wooden kitchen table, right of frame, warm window daylight, eye-level close-up"},
   {"description": "Shot 2: scene 1 — taking over from the rocking glass, it tips past the edge, FALLS and SHATTERS on the beige tile floor, shards scattering outward, low floor-level angle, shallow depth of field", "duration_s": 4,
-   "end_state": "shards lie scattered and at rest on the tile floor around the impact point"},
-  {"description": "Shot 3: scene 1 — the boy kneels down beside the scattered shards, carefully collects them into his hand, then stands up and walks away smiling, medium shot", "duration_s": 8,
-   "end_state": "the boy is walking away from camera, shards in hand, floor clear"}
+   "end_state": "shards lie scattered and at rest on the tile floor around the impact point",
+   "variation": "large"},
+  {"description": "Shot 3: scene 1 — <the boy> kneels down beside the scattered shards, facing camera, carefully collects them into his hand, then stands up and walks away smiling, medium shot, same floor-level area as shot 2", "duration_s": 8,
+   "end_state": "the boy is walking away from camera, shards in hand, floor clear",
+   "variation": "large"}
 ]}
 
 Note how the batons connect and obey the COMPLETE-ACTION LAW: shot 1 hands
 off SUSTAINABLE motion (rocking, camera push) — never a suspended fall;
 shot 2 completes tip + fall + impact INSIDE one shot; shot 2 may end at
 rest because shot 3 introduces a NEW agent (the boy) acting on the shards.
-The cast entry gives the boy ONE canonical appearance that every later
-prompt restates verbatim.
+The cast entry splits static identity from what may vary; `<the boy>` is
+marked exactly where he appears (shots 1-2 have no cast on screen — no
+markers, and the boy is rightly NOT mentioned there: no-invisible-elements);
+only shot 1 opens the scene, so only it carries an opening_frame.
 
 ## Where the output goes
 outline (one line per shot) → DirectorAgent expands each line into a ShotSpec
@@ -170,7 +234,11 @@ skill as the prompt (strict-JSON output above; validated per shot object:
 description ≥12 chars, case-insensitive exact duplicates dropped, list
 capped at max_shots; duration_s coerced to int and clamped into 4-10
 (invalid/missing → no duration sent to the API); end_state and
-cast/setting passed through as-is — missing → empty, never fabricated). The deterministic splitter
+cast/setting passed through as-is — missing → empty, never fabricated;
+variation validated against {large, medium, small} else empty;
+opening_frame passed through; `<name>` markers parsed for per-shot cast
+then STRIPPED from every prompt-bound string — they never reach a
+generation model). The deterministic splitter
 (ScreenwriterAgent: semicolon clauses cycled over n_shots) is the FALLBACK
 only — it CANNOT be the primary because clause-cycling fabricates duplicate
 shots whenever clauses < n_shots.

@@ -59,6 +59,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -164,6 +165,30 @@ def _retrieve_asset_image(query: str, asset_memory: Optional[AssetMemory]
             best, best_score = item, score
     return (Path(best["path"]),
             str(best.get("desc") or best.get("label", ""))) if best else None
+
+
+# ViMax 借鉴(2026-07-17 P1-1):剧本描述里的 <角括号> 实体标记 ——
+# 机器可解析的"本镜谁出场",cast 注入与评审 check 由此精准化。
+_MARKER_RE = re.compile(r"<([^<>\n]{1,60})>")
+
+
+def _strip_markers(text: str) -> str:
+    """<the cat> → the cat。标记是规划层元数据,进最终 prompt 前必须剥掉
+    (生成模型不认识角括号)。"""
+    return _MARKER_RE.sub(r"\1", text or "")
+
+
+def _cast_in_shot(description: str, cast: dict) -> dict:
+    """按 <标记> 求本镜出场角色的 cast 子集(大小写不敏感全等匹配)。
+    诚实降级:描述无任何标记(旧剧本/兜底层)或标记全都对不上 cast 键
+    → 返回全量(宁多注入,绝不静默丢契约)。"""
+    if not cast:
+        return {}
+    marks = {m.strip().lower() for m in _MARKER_RE.findall(description or "")}
+    if not marks:
+        return dict(cast)
+    hit = {k: v for k, v in cast.items() if k.strip().lower() in marks}
+    return hit or dict(cast)
 
 
 def re_words(text: str) -> list[str]:
@@ -514,9 +539,16 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               'will restate it VERBATIM>"}, "setting": "<one canonical '
               'set-dressing + lighting sentence for the (main) scene>", '
               '"shots": [{"description": "Shot 1: '
-              '<detailed filmable description>", "duration_s": <int 4-10>, '
+              '<detailed filmable description — mark every cast character '
+              'as <name> in angle brackets, names copied from cast keys>", '
+              '"duration_s": <int 4-10>, '
               '"end_state": "<one sentence: at the CUT, who/what is where, '
-              'moving or still, in which direction>"}, '
+              'moving or still, in which direction>", '
+              '"variation": "large|medium|small (expected first-to-last '
+              'frame change inside this shot)", '
+              '"opening_frame": "<ONLY for the first shot and scene cuts: '
+              'a purely STATIC opening snapshot (no ongoing actions); omit '
+              'for continuing shots>"}, '
               "...]} — each description 15-40 words (subject + action + "
               "setting + camera), scene N stated when the location changes. "
               "YOU decide the shot count AND each shot's duration_s (4-10 "
@@ -547,7 +579,8 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         "episode_guidance": episode_guidance,
                         "max_shots": max_shots}})
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
-            shots, durs, ends, seen = [], [], [], set()
+            shots, durs, ends, variations, openings, seen = \
+                [], [], [], [], [], set()
             for s_ in data["shots"][:max_shots]:
                 # 兼容两种形态:纯字符串,或 {description, duration_s, end_state}
                 if isinstance(s_, dict):
@@ -565,6 +598,13 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                     # 交接棒(需求 ②-①):end_state 是 brain 的决定;没输出
                     # = 空串,不编造(下游按"无交接信息"诚实处理)。
                     ends.append(end)
+                    var = str(s_.get("variation", "") or "").strip().lower() \
+                        if isinstance(s_, dict) else ""
+                    variations.append(
+                        var if var in ("large", "medium", "small") else "")
+                    openings.append(
+                        str(s_.get("opening_frame", "") or "").strip()
+                        if isinstance(s_, dict) else "")
                     # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
                     # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
                     # 用模型自然默认(用户裁决:绝不 feed 任何预设值)。
@@ -598,12 +638,15 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                             [a.get("desc", a.get("label", ""))[:40]
                              for a in asset_catalog])
                 return shots, durs, ends, \
-                    {"cast": cast, "setting": setting}, "llm"
+                    {"cast": cast, "setting": setting,
+                     "variations": variations,
+                     "opening_frames": openings}, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
     # (不是 config 的 shot_duration,也不是我们编的数);end_state 同理为空。
     return fb, [None] * len(fb), [""] * len(fb), \
-        {"cast": {}, "setting": ""}, "fallback"
+        {"cast": {}, "setting": "", "variations": [""] * len(fb),
+         "opening_frames": [""] * len(fb)}, "fallback"
 
 
 def _skill_body_named(name: str) -> str:
@@ -731,14 +774,25 @@ def _execute_image_plan(decision: dict, entry, video_gen,
     # 素材>抽帧>t2i 优先,描述用分镜描述(尾帧槽位加收尾措辞)。
     while len(specs) < len(roles):
         idx = len(specs)
+        role_ = roles[idx]
+        # P2-⑦(ViMax 借鉴):首帧槽位优先用剧本的【开场静态快照】做
+        # t2i 底稿(纯静态构图,无进行中动作 —— 比整条 shot 描述更适合
+        # 单帧);没有快照(续接镜/旧剧本)照旧用 shot 描述。
+        base_ = (entry.opening_frame
+                 if role_ in ("first", "first_frame")
+                 and getattr(entry, "opening_frame", "")
+                 else entry.description)
         specs.append({"source": "", "description":
-                      entry.description + (" — the closing frame of this shot"
-                                           if roles[idx] == "last" else "")})
+                      base_ + (" — the closing frame of this shot"
+                               if role_ == "last" else "")})
     produced: list = []
     for i, role in enumerate(roles):
         spec_i = specs[i] if i < len(specs) else {}
         src = spec_i.get("source") or _default_source(video_gen, asset_memory)
-        query = spec_i.get("description") or entry.description
+        # <角括号> 标记剥除:query 会成为 t2i prompt / 检索词,生成模型
+        # 不认识规划层标记(brain 抄写 shot 描述时可能连标记一起抄)。
+        query = _strip_markers(spec_i.get("description")
+                               or entry.description)
         img, actual = None, ""
         try:
             img, actual = _make_keyframe(
@@ -826,7 +880,7 @@ def _make_keyframe(strategy: str, entry, video_gen,
     裁决 1.2:语义跟着图走,后面写 prompt 的人引用的是"实际拿到的",
     不是"当时搜的"。`slot` 区分同一 shot 的多张图。"""
     out_dir.mkdir(parents=True, exist_ok=True)
-    query = query or entry.description
+    query = _strip_markers(query or entry.description)
     if strategy == "t2i":
         out = out_dir / f"shot{entry.shot_idx:03d}_kf{slot}_t2i.png"
         return Path(video_gen.text_to_image(query, out, seed=seed)), query
@@ -1678,12 +1732,20 @@ def generate_movie_windowed(
     # (用户裁决:千万不能自己随意指定时长)。
     for spec_, dur_ in zip(specs, shot_durations):
         spec_.duration = (float(dur_) if dur_ is not None else None)
+        # <角括号> 标记是规划层元数据 —— spec.prompt 会进兜底模板/生成
+        # prompt,必须剥掉(台账 description 保留标记供出场解析)。
+        spec_.prompt = _strip_markers(spec_.prompt)
     storyboard = StoryboardMemory.from_outline(
         outline, path=cache_dir / "storyboard.json")
     # 交接棒(需求 ②-①)进台账:brain 声明的镜尾状态,下一镜续接的依据、
     # 评审的镜尾验收标准;空串 = brain 没说,不编造。
-    for entry_, end_ in zip(storyboard.entries, shot_end_states):
+    for i_, (entry_, end_) in enumerate(zip(storyboard.entries,
+                                            shot_end_states)):
         entry_.end_state = end_
+        vars_ = script_meta.get("variations") or []
+        opens_ = script_meta.get("opening_frames") or []
+        entry_.variation = vars_[i_] if i_ < len(vars_) else ""
+        entry_.opening_frame = opens_[i_] if i_ < len(opens_) else ""
     # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)
     storyboard.cast = dict(script_meta.get("cast", {}))
     storyboard.setting = str(script_meta.get("setting", ""))
@@ -1747,6 +1809,10 @@ def generate_movie_windowed(
             "required_end_state": entry.end_state or None,
         }
 
+        # P1-1(ViMax 借鉴):按 <标记> 确定性解析本镜出场角色 ——
+        # cast 注入与评审 check 都只对出场者,不再靠 LLM 自判。
+        shot_cast = _cast_in_shot(entry.description, storyboard.cast)
+
         # §C brain 选条件策略(episode → llm → 兜底 三层)。
         # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
         # —— 它写 video_prompt 时引用编号只许照抄所选策略的清单,不许猜。
@@ -1762,6 +1828,7 @@ def generate_movie_windowed(
              "prev_shot": prev.to_brain_line() if prev else None,
              "junction": junction_ctx,
              "cast": storyboard.cast, "setting": storyboard.setting,
+             "cast_in_shot": sorted(shot_cast),
              "slots_by_strategy": slots_by_strategy,
              "storyboard": storyboard.to_brain_json(),
              "episode_guidance": guidance},
@@ -1783,7 +1850,9 @@ def generate_movie_windowed(
         cand_keyframes = ([Path(entry.keyframe_path)]
                           if entry.keyframe_path
                           and Path(entry.keyframe_path).exists() else [])
-        brain_prompt = d.get("video_prompt", "")
+        # brain 的上下文里 shot 描述带 <标记>,它写 prompt 时可能照抄 ——
+        # 出口一律剥标记(enhanced 同理,见下)。
+        brain_prompt = _strip_markers(d.get("video_prompt", ""))
         use_tail = bool(d.get("use_prev_tail_video", False))
         slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
                                source_videos=source_videos)
@@ -1791,16 +1860,17 @@ def generate_movie_windowed(
         # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
         if prompt_enhancer is not None:
             enhanced = prompt_enhancer.run(
-                entry.description, strategy=d["strategy"],
+                _strip_markers(entry.description), strategy=d["strategy"],
                 conditions=_conditions_for_prompt(d["strategy"], entry, prev,
                                                   use_tail,
                                                   junction=junction_actual,
                                                   source_videos=source_videos,
-                                                  cast=storyboard.cast,
+                                                  cast=shot_cast,
                                                   setting=storyboard.setting),
-                base_prompt=brain_prompt or spec.prompt, label=entry.label)
+                base_prompt=brain_prompt or spec.prompt,
+                label=entry.label)
             if enhanced:
-                brain_prompt = enhanced
+                brain_prompt = _strip_markers(enhanced)
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
@@ -1859,7 +1929,7 @@ def generate_movie_windowed(
                 "video_prompt": brain_prompt or spec.prompt,
                 "end_state": entry.end_state or None,
                 "junction_prev_actual": junction_actual or None,
-                "cast": (storyboard.cast or None),
+                "cast": (shot_cast or None),
                 "setting": (storyboard.setting or None),
                 "images": [{"path": im.get("path"), "role": im.get("role")}
                            for im in entry.images
