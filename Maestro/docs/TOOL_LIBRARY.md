@@ -120,6 +120,16 @@ accept/reject,verdict 挂 candidate.verifier_verdict)→ None 时大声记
 
 ## 缺口台账(发现即登记,补齐即划掉)
 
+- [ ] 已调研未启用(2026-07-17,用户裁决走 t2v 路线,以下备选登记):
+  ① kling-v3.0-pro/4k i2v `image`+`end_image`+`element_list`(≤3)——
+  全平台唯一"硬首帧+身份引用"单调用 schema(复核确认;element 先经
+  kling-elements 注册 $0.01/个,element_id 可缓存复用;未实跑+跨族风格
+  风险);② seedream-v4/edit `images` 数组(1-10,$0.027)组合首帧:
+  编辑(底图=上镜尾帧+素材图)→ 组合帧 → seedance i2v 硬锁。t2v 软锁
+  路线实测不足时再启用。
+- [x] multi_image_fusion(kling 融合)从菜单退役(无指定首帧,与"首帧
+  引用优先"方针冲突;执行分支保留兼容旧 episode)— 2026-07-17
+
 - [x] keyframe_edit 真实后端(seedream-v4/edit)— 2026-07-11 补
 - [x] t2i(flux-kontext-pro)— 2026-07-10 补
 - [x] 专用 video-extend 端点 — 2026-07-08 补

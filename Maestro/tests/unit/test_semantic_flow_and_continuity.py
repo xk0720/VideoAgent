@@ -269,3 +269,122 @@ def test_media_catalog_shows_videos_but_retrieval_stays_images(tmp_path):
     # 图片检索:哪怕检索词更像视频内容,也只在图片里选
     path, _ = _retrieve_asset_image("a man walking along a boardwalk", mem)
     assert path == img
+
+
+def test_source_videos_ride_t2v_reference_channel(tmp_path, monkeypatch):
+    """2026-07-17 G-1:上镜尾帧+素材 → t2v 路线;用户源视频挂 @VideoN
+    (≤3、逐条≤15s),清单/兜底模板/payload 三处一致。"""
+    import maestro.pipeline.window_loop as wl
+    from maestro.pipeline.window_loop import (
+        _generate_with_condition,
+        _prepared_source_videos,
+        _slot_manifest,
+    )
+    from maestro.types import AssetMemory, Shot
+
+    vid = tmp_path / "walk.mp4"
+    vid.write_bytes(b"\x00" * 16)
+    mem = AssetMemory(video_shots={"v0": Shot(
+        shot_id="v0", source_video=str(vid), start_time=0, end_time=4,
+        caption="a man in a red jacket walking on a boardwalk")})
+    monkeypatch.setattr(wl, "_probe_seconds", lambda v: 4.0)   # ≤15s 不裁
+    src = _prepared_source_videos(mem, tmp_path / "labels")
+    assert len(src) == 1 and src[0][0] == vid
+    assert "red jacket" in src[0][1]
+
+    kf = tmp_path / "kf.png"
+    kf.write_bytes(b"\x89PNG\r\n")
+    e = _entry([{"path": str(kf), "role": "reference",
+                 "description": "the red-jacket man"}])
+
+    class _P:
+        video_path = str(tmp_path / "prev.mp4")
+    Path(_P.video_path).write_text("PREV")
+
+    # 清单:@Image1(尾帧)+ @Image2(本镜图)+ @Video1(素材,user asset 前缀)
+    rows = _slot_manifest("ti2v_prev_plus_keyframe", e, _P(),
+                          source_videos=src)
+    assert [r["slot"] for r in rows] == ["@Image1", "@Image2", "@Video1"]
+    assert rows[2]["content"].startswith("user asset:")
+
+    class _Gen:
+        def __init__(self):
+            self.calls = []
+
+        def capabilities(self):
+            return {"t2v", "i2v", "ref_images", "ref_video"}
+
+        def generate(self, prompt, duration, out_path, fps=8,
+                     first_frame=None, reference_images=None, seed=0,
+                     reference_video=None):
+            self.calls.append({"prompt": prompt,
+                               "reference_video": reference_video,
+                               "first_frame": first_frame})
+            p = Path(out_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("MOCK")
+            return p
+
+    prev_last = tmp_path / "prev_last.png"
+    prev_last.write_bytes(b"\x89PNG\r\n")
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: prev_last)
+    gen = _Gen()
+    from maestro.types import ShotSpec
+    spec = ShotSpec(shot_idx=1, duration=5.0, prompt="the man walks on")
+    _, cond = _generate_with_condition(
+        "ti2v_prev_plus_keyframe", e, _P(), spec, gen, tmp_path / "g",
+        seed=0, fps=8, window_tail_s=2.0, source_videos=src)
+    call = gen.calls[-1]
+    assert call["first_frame"] is None                    # t2v 路线
+    assert call["reference_video"] == [vid]               # 素材视频进通道
+    assert "opens EXACTLY on @Image1" in call["prompt"]   # G-2 首帧强锁
+    assert "@Video1" in call["prompt"]
+    assert cond["reference_videos"] == [str(vid)]
+
+
+def test_flf2v_bridge_never_uses_identity_ref_as_closing_anchor(tmp_path,
+                                                                monkeypatch):
+    """护栏:身份参考图绝不当收场锚 —— 只有 'last'/首帧角色图可以。"""
+    import maestro.pipeline.window_loop as wl
+    from maestro.pipeline.window_loop import _generate_with_condition
+    from maestro.types import ShotSpec
+
+    ref = tmp_path / "cat_photo.png"
+    ref.write_bytes(b"\x89PNG\r\n")
+    e = _entry([{"path": str(ref), "role": "reference",
+                 "description": "an orange tabby cat"}])   # 仅参考角色
+
+    class _P:
+        video_path = str(tmp_path / "prev.mp4")
+    Path(_P.video_path).write_text("PREV")
+    prev_last = tmp_path / "prev_last.png"
+    prev_last.write_bytes(b"\x89PNG\r\n")
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: prev_last)
+
+    class _Gen:
+        def __init__(self):
+            self.flf = []
+
+        def capabilities(self):
+            return {"t2v", "i2v", "flf2v"}
+
+        def frame_to_frame(self, prompt, first_frame, last_frame, out_path,
+                           duration=None, seed=0):
+            self.flf.append((str(first_frame), str(last_frame)))
+            p = Path(out_path); p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("FLF"); return p
+
+        def generate(self, prompt, duration, out_path, fps=8,
+                     first_frame=None, reference_images=None, seed=0,
+                     reference_video=None):
+            p = Path(out_path); p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("MOCK"); return p
+
+    gen = _Gen()
+    spec = ShotSpec(shot_idx=1, duration=5.0, prompt="p")
+    _, cond = _generate_with_condition(
+        "flf2v_bridge", e, _P(), spec, gen, tmp_path / "g",
+        seed=0, fps=8, window_tail_s=2.0)
+    # 无 last/首帧角色图 → flf2v 不执行,诚实降级(绝不拿身份照片当尾帧)
+    assert gen.flf == []
+    assert cond.get("degraded_from") == "flf2v_bridge"

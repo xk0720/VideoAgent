@@ -90,8 +90,7 @@ log = get_logger(__name__)
 #   ti2v_prev_plus_keyframe(t2v+refs 软锚)> multi_image_fusion(融合)。
 _CONDITION_PRIORITY = ["flf2v_own_pair", "flf2v_bridge", "extend_prev",
                        "ti2v_prev_last", "ti2v_prev_plus_keyframe",
-                       "t2v_own_refs", "multi_image_fusion",
-                       "i2v_keyframe", "t2v"]
+                       "t2v_own_refs", "i2v_keyframe", "t2v"]
 # §B 确定性兜底的优先级(用户素材优先于生成 —— 真材实料的外观赢过再生成)
 _KEYFRAME_PRIORITY = ["asset_image", "video_extract", "t2i", "none"]
 # §B' Image Plan 兜底优先级:有上镜时单首帧最稳;素材/能力不足逐级退到 none。
@@ -878,8 +877,40 @@ def _mention(entry, path, n: int, kind: str = "@Image") -> str:
     return f"{kind}{n} is a planned image for this shot — keep it consistent."
 
 
+def _prepared_source_videos(asset_memory, cache_dir: Path) -> list[tuple]:
+    """用户源视频 → t2v reference_videos 通道的可用形态(2026-07-17 裁决
+    G-1:上镜尾帧+有素材 → 走 t2v,素材视频挂 @VideoN 引用)。
+
+    ≤3 条(官方上限),逐条裁到 ≤15s(官方单条上限,取头段 —— 素材参考
+    看的是内容不是接点);带素材语义(caption)供清单/兜底模板引用。
+    ffmpeg 不可用且超长 → 原样上传交给 API 把关(留痕)。"""
+    out: list[tuple] = []
+    if asset_memory is None:
+        return out
+    for sid, shot in (asset_memory.video_shots or {}).items():
+        if len(out) >= 3:
+            log.info("source videos capped to 3 (seedance-2.0 limit)")
+            break
+        src = getattr(shot, "source_video", "") or ""
+        sp = Path(src)
+        if not src or not sp.exists():
+            continue
+        use = sp
+        if _probe_seconds(sp) > 15.0:
+            cut = _head_clip(sp, 15.0,
+                             Path(cache_dir) / f"srcvid_{sid}_15s.mp4")
+            if cut is not None:
+                use = Path(cut)
+            else:
+                log.warning("source video %s >15s and ffmpeg unavailable — "
+                            "uploading as-is (API may reject)", sp.name)
+        out.append((use, str(getattr(shot, "caption", "") or sp.stem)))
+    return out
+
+
 def _slot_manifest(strategy: str, entry, prev,
-                   use_prev_tail: bool = False) -> list[dict]:
+                   use_prev_tail: bool = False,
+                   source_videos: Optional[list] = None) -> list[dict]:
     """方案 A(2026-07-16 裁决):【槽位清单】—— 执行器将要装配的引用槽位,
     在写 prompt 之前算出来,发给写 prompt 的人(brain / enhancer)。编号
     从"brain 要遵守的规则"变成"brain 拿到的数据",错无可猜。
@@ -918,6 +949,9 @@ def _slot_manifest(strategy: str, entry, prev,
         rows = [{"slot": f"@Image{i + 1}", "referenceable": True,
                  "content": _c(p, "a planned reference image")}
                 for i, p in enumerate(refs)]
+        rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
+                  "content": f"user asset: {cap}"}
+                 for i, (_v, cap) in enumerate(source_videos or [])]
     elif strategy == "flf2v_bridge" and prev_ok:
         anchor = kf or (refs[0] if refs else None)
         rows = [{"slot": "FIRST_FRAME", "referenceable": False,
@@ -935,6 +969,9 @@ def _slot_manifest(strategy: str, entry, prev,
         rows += [{"slot": f"@Image{i + 2}", "referenceable": True,
                   "content": _c(p, "a planned image (target look)")}
                  for i, p in enumerate(own)]
+        rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
+                  "content": f"user asset: {cap}"}
+                 for i, (_v, cap) in enumerate(source_videos or [])]
     elif strategy == "extend_prev" and prev_ok:
         rows = [{"slot": "CONTINUATION_SOURCE", "referenceable": False,
                  "content": "the previous shot's tail — generation continues "
@@ -1007,11 +1044,12 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
     if refs and "ref_images" in caps:
         menu.append({"name": "t2v_own_refs",
                      "description": "This shot's planned REFERENCE image(s) "
-                                    "ride the seedance t2v reference channel. "
-                                    "Write `video_prompt` mentioning them as "
-                                    "@Image1(, @Image2) with their roles (e.g. "
-                                    "'@Image1 is the female character…'). Soft "
-                                    "conditioning; no frame is pixel-locked."})
+                                    "ride the seedance t2v reference channel "
+                                    "(@Image1, @Image2…), and the user's "
+                                    "source video(s) ride as @VideoN when "
+                                    "provided. Soft conditioning; no frame "
+                                    "is pixel-locked. Mention every slot "
+                                    "with its content."})
     if has_prev:
         menu.append({"name": "ti2v_prev_last",
                      "description": "Previous shot's LAST frame as the first "
@@ -1040,36 +1078,21 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
                                         "the target final frame."})
         if (has_kf or refs) and "ref_images" in caps:
             menu.append({"name": "ti2v_prev_plus_keyframe",
-                         "description": "t2v reference channel with the "
-                                        "previous shot's last frame as @Image1 "
-                                        "(the moment to continue from) + this "
-                                        "shot's image(s) as @Image2(…) (target "
-                                        "look). SOFT anchoring — for "
-                                        "pixel-exact continuity use "
-                                        "ti2v_prev_last or flf2v_bridge. Write "
-                                        "`video_prompt` with the @ImageN "
-                                        "mentions."})
-        if (has_kf or refs) and "multi_i2v" in caps \
-                and hasattr(video_gen, "multi_image_to_video"):
-            menu.append({"name": "multi_image_fusion",
-                         "description": "kling-video-o1 reference route: FUSE "
-                                        "[previous shot's last frame + this "
-                                        "shot's image(s)] (≤7) into one video "
-                                        "— no designated first frame. Write "
-                                        "`video_prompt` referring to them as "
-                                        "'reference image 1/2…' with roles; "
-                                        "set use_prev_tail_video=true to ALSO "
-                                        "ride the previous shot's tail video "
-                                        "(image cap drops to 4)."})
-    elif refs and "multi_i2v" in caps \
-            and hasattr(video_gen, "multi_image_to_video") and len(refs) >= 2:
-        # 无上镜(如第一镜)但计划了双参考 → kling 融合仍可用
-        menu.append({"name": "multi_image_fusion",
-                     "description": "kling-video-o1 reference route over this "
-                                    "shot's OWN reference pair — compose one "
-                                    "video consistent with both images. Write "
-                                    "`video_prompt` as 'reference image 1 is "
-                                    "…, reference image 2 is …'."})
+                         "description": "THE route when continuing from the "
+                                        "previous shot WHILE carrying "
+                                        "materials (2026-07-17 ruling): t2v "
+                                        "reference channels — @Image1 = the "
+                                        "previous shot's last frame (the "
+                                        "prompt must open EXACTLY on it; "
+                                        "field-verified to pin the first "
+                                        "frame), @Image2(…) = this shot's "
+                                        "planned/generated images, @VideoN = "
+                                        "the user's source video(s) when "
+                                        "provided. Reference ACCURACY is "
+                                        "everything — every slot mentioned "
+                                        "with its content."})
+    # 2026-07-17:multi_image_fusion(kling 融合,无指定首帧)与"首帧引用
+    # 优先"方针冲突 → 从菜单退役(执行分支保留兼容旧 episode)。
     return menu
 
 
@@ -1077,7 +1100,8 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                              video_gen, cache_dir: Path, seed: int,
                              fps: int, window_tail_s: float,
                              brain_prompt: str = "",
-                             use_prev_tail_video: bool = False
+                             use_prev_tail_video: bool = False,
+                             source_videos: Optional[list] = None
                              ) -> tuple[Path, dict]:
     """执行 §C 策略 → (视频路径, 实际用到的条件记录)。条件记录进台账,
     保证"这镜是怎么搭条件生成的"可审计。
@@ -1112,23 +1136,32 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
 
     if strategy == "t2v_own_refs":
         # Image Plan reference 角色图 → seedance t2v @refs(无需上镜)。
+        # 2026-07-17 G-1:用户源视频同乘 reference_videos(@VideoN)。
         if refs:
+            src_vids = [v for (v, _c_) in (source_videos or [])]
             cond.update(reference_images=[str(p) for p in refs],
+                        reference_videos=([str(v) for v in src_vids] or None),
                         anchoring="soft_t2v_refs")
             # 裁决 1.2:引用必须带内容 —— 每个 @ImageN 说清它实际是什么
-            fallback_prompt = spec.prompt + ". " + " ".join(
+            fallback_prompt = (spec.prompt + ". " + " ".join(
                 _mention(entry, p_, i + 1) for i, p_ in enumerate(refs))
+                + "".join(f" @Video{i + 1} is the user's source video "
+                          f"({cap}) — keep its subject consistent."
+                          for i, (_v, cap) in enumerate(source_videos or [])))
             return Path(video_gen.generate(
                 prompt=brain_prompt or fallback_prompt,
                 duration=spec.duration, out_path=out, fps=fps,
-                reference_images=refs, seed=seed)), cond
+                reference_images=refs, seed=seed,
+                reference_video=(src_vids or None))), cond
         strategy = "t2v"
         cond = {"strategy": "t2v", "degraded_from": "t2v_own_refs"}
 
     if strategy == "flf2v_bridge":
         last = _last_frame(Path(prev.video_path),
                            cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
-        anchor_img = kf or (refs[0] if refs else None)
+        # 护栏(2026-07-17):收场锚只许 'last' 角色图或首帧角色图 ——
+        # 身份参考照片当尾帧 = 强迫镜头结束在照片构图上,语义错误。
+        anchor_img = pl if pl is not None else kf
         if last is not None and anchor_img is not None:
             cond.update(first_anchor=str(last), last_anchor=str(anchor_img))
             return Path(video_gen.frame_to_frame(
@@ -1147,18 +1180,26 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         own = refs if refs else ([kf] if kf is not None else [])
         if last is not None and own:
             all_refs = [last] + own
+            src_vids = [v for (v, _c_) in (source_videos or [])]
             cond.update(reference_images=[str(p) for p in all_refs],
+                        reference_videos=([str(v) for v in src_vids] or None),
                         anchoring="soft_t2v_refs")
-            # 裁决 1.2:@Image1 = 上镜尾帧(续接点);本镜图逐张带实况语义
+            # 裁决 1.2/G-2:@Image1 = 上镜尾帧,prompt 强锁开场(用户实测
+            # t2v 的 @Image1 基本能固定首帧);本镜图/素材视频逐个带实况语义
             fallback_prompt = (
-                spec.prompt + ". Open on the exact scene state shown in "
-                "@Image1 (the final moment of the previous shot). "
+                spec.prompt + ". The shot opens EXACTLY on @Image1 — the "
+                "final moment of the previous shot; do not alter its scene "
+                "or layout. "
                 + " ".join(_mention(entry, p_, i + 2)
-                           for i, p_ in enumerate(own)))
+                           for i, p_ in enumerate(own))
+                + "".join(f" @Video{i + 1} is the user's source video "
+                          f"({cap}) — keep its subject consistent."
+                          for i, (_v, cap) in enumerate(source_videos or [])))
             return Path(video_gen.generate(
                 prompt=brain_prompt or fallback_prompt,
                 duration=spec.duration, out_path=out, fps=fps,
-                reference_images=all_refs, seed=seed)), cond
+                reference_images=all_refs, seed=seed,
+                reference_video=(src_vids or None))), cond
         # 尾帧抽不出来 → 还有自己的图可用。降级取向:有首帧角色图(含兼容
         # 模式的 keyframe)优先硬锚 i2v;纯参考角色图(从未打算当首帧)才
         # 降到 t2v_own_refs —— 角色语义在降级里也不许错配。
@@ -1337,7 +1378,8 @@ def _junction_state(mllm, prev, cache_dir: Path) -> str:
 
 def _conditions_for_prompt(strategy: str, entry, prev,
                            use_prev_tail: bool,
-                           junction: str = "") -> list[dict]:
+                           junction: str = "",
+                           source_videos: Optional[list] = None) -> list[dict]:
     """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
     按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
     事实,不能发明条件。
@@ -1347,7 +1389,8 @@ def _conditions_for_prompt(strategy: str, entry, prev,
     description} —— 增强器引用编号只许照抄 slot,校验闸在出口把关。
     状态条件(kind=state)照旧。"""
     conds: list[dict] = []
-    for r in _slot_manifest(strategy, entry, prev, use_prev_tail):
+    for r in _slot_manifest(strategy, entry, prev, use_prev_tail,
+                            source_videos=source_videos):
         conds.append({"kind": ("video" if "video" in r["slot"].lower()
                                else "image"),
                       "slot": r["slot"],
@@ -1629,6 +1672,10 @@ def generate_movie_windowed(
                  f", degraded from {degraded_from}" if degraded_from else "")
 
     # ── §C+§D 大循环:逐镜窗口生成 + 小循环评审修复 ─────────────────────────
+    # G-1(2026-07-17):用户源视频备成 t2v reference_videos 可用形态
+    # (≤3 条、逐条 ≤15s、带语义),整个 run 备一次,t2v 引用策略共用。
+    source_videos = _prepared_source_videos(asset_memory,
+                                            cache_dir / "asset_labels")
     shot_results = []
     while True:
         entry = storyboard.next_pending()
@@ -1655,7 +1702,8 @@ def generate_movie_windowed(
         menu = _condition_menu(entry, prev, video_gen)
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
-                                      use_prev_tail=True)
+                                      use_prev_tail=True,
+                                      source_videos=source_videos)
             for m in menu}
         d = _decide(
             llm, "generation-condition", menu,
@@ -1685,7 +1733,8 @@ def generate_movie_windowed(
                           and Path(entry.keyframe_path).exists() else [])
         brain_prompt = d.get("video_prompt", "")
         use_tail = bool(d.get("use_prev_tail_video", False))
-        slots = _slot_manifest(d["strategy"], entry, prev, use_tail)
+        slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
+                               source_videos=source_videos)
         # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
         # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
         if prompt_enhancer is not None:
@@ -1693,7 +1742,8 @@ def generate_movie_windowed(
                 entry.description, strategy=d["strategy"],
                 conditions=_conditions_for_prompt(d["strategy"], entry, prev,
                                                   use_tail,
-                                                  junction=junction_actual),
+                                                  junction=junction_actual,
+                                                  source_videos=source_videos),
                 base_prompt=brain_prompt or spec.prompt, label=entry.label)
             if enhanced:
                 brain_prompt = enhanced
@@ -1732,7 +1782,8 @@ def generate_movie_windowed(
                 video_path, cond = _generate_with_condition(
                     d["strategy"], entry, prev, spec, video_gen,
                     shot_dir, seed=s, fps=fps, window_tail_s=window_tail_s,
-                    brain_prompt=brain_prompt, use_prev_tail_video=use_tail)
+                    brain_prompt=brain_prompt, use_prev_tail_video=use_tail,
+                    source_videos=source_videos)
             except Exception as exc:
                 log.info("window: conditioned generation failed (%s): %s — "
                          "falling back to plain t2v for this seed",
@@ -1762,6 +1813,25 @@ def generate_movie_windowed(
             }
             initial.append(clip)
 
+        # R-1(2026-07-17 裁决):全修闭包 —— "regenerate" 严格按该镜的
+        # 【原始条件方法】重生成(同策略/同条件/同底 prompt + hint;引用
+        # 闸门复用,漏提的槽位自动补句)。非窗口管线无此闭包,保持旧行为。
+        def _regen_original(seed: int, hint: str = "",
+                            _strategy=d["strategy"], _bp=brain_prompt,
+                            _entry=entry, _prev=prev, _spec=spec,
+                            _ut=use_tail, _slots=slots,
+                            _dir=shot_dir):
+            base = _bp or _spec.prompt
+            prompt = base + (f" Fix: {hint}" if hint else "")
+            fixed, audit = validate_references(prompt, _slots)
+            v_path, r_cond = _generate_with_condition(
+                _strategy, _entry, _prev, _spec, video_gen, _dir,
+                seed=seed, fps=fps, window_tail_s=window_tail_s,
+                brain_prompt=(fixed if audit["ok"] else base),
+                use_prev_tail_video=_ut, source_videos=source_videos)
+            r_cond["regen_of_original"] = True
+            return v_path, r_cond
+
         # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain 修复
         # → Verifier 闸门 —— 全部在现有 generate_shot_orchestrated 内完成。
         res = generate_shot_orchestrated(
@@ -1774,6 +1844,7 @@ def generate_movie_windowed(
             initial_candidates=initial,
             patience=patience, quality_bar=quality_bar,
             repair_severity=repair_severity,
+            regen_fn=_regen_original,
         )
         shot_results.append(res)
         best = res.clip

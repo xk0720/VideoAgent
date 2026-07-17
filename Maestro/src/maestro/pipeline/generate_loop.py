@@ -758,6 +758,7 @@ def generate_shot_orchestrated(
     patience: int = 2,
     quality_bar: Optional[float] = None,
     repair_severity: float = 0.0,
+    regen_fn=None,        # R-1:全修按原始条件方法重生成(窗口层闭包)
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
@@ -991,7 +992,7 @@ def generate_shot_orchestrated(
                 replayed_skill_ids.add(decision["skill_id"])
             cand = orchestrator.execute(
                 decision, best, spec, cache_dir, turn, board,
-                asset_memory=asset_memory, fps=fps,
+                asset_memory=asset_memory, fps=fps, regen_fn=regen_fn,
             )
             gen_calls += 1
 

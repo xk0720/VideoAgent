@@ -327,9 +327,12 @@ def test_multi_image_strategies_gated_and_executed(tmp_path, monkeypatch):
     e1.keyframe_path = str(kf)
     e0.video_path = str(tmp_path / "v0.mp4")
 
-    # 门控:两个多图策略都出现;能力/前提缺失时消失
+    # 门控:ti2v_prev_plus_keyframe 出现;multi_image_fusion 已退役
+    # (2026-07-17:kling 融合无指定首帧,与"首帧引用优先"方针冲突,
+    # 菜单摘除,执行分支保留兼容旧 episode)
     names = {m["name"] for m in _condition_menu(e1, e0, vg)}
-    assert {"ti2v_prev_plus_keyframe", "multi_image_fusion"} <= names
+    assert "ti2v_prev_plus_keyframe" in names
+    assert "multi_image_fusion" not in names
     no_kf_names = {m["name"] for m in _condition_menu(e0, None, vg)}
     assert "ti2v_prev_plus_keyframe" not in no_kf_names
     assert "multi_image_fusion" not in no_kf_names

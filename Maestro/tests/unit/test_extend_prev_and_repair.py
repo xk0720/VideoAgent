@@ -254,3 +254,55 @@ def test_propagate_head_without_anchor_degrades(tmp_path, monkeypatch):
     d.mkdir()
     assert tl.propagate_repair(_TL(d), _Defect(), video_gen=_Gen(),
                                cache_dir=tmp_path / "r") is None
+
+
+def test_regenerate_uses_original_method_closure(tmp_path):
+    """R-1(2026-07-17):窗口路径下 regenerate = 严格按原始条件方法重生成
+    (闭包被调用,hint 附加);无闭包(旧管线)→ generator.run 旧行为。"""
+    from maestro.agents.generator import GeneratorAgent
+    from maestro.agents.orchestrator import OrchestratorAgent
+    from maestro.critics.board import ReviewBoard
+    from maestro.critics.semantic import SemanticCritic
+    from maestro.models.video_gen import MockVideoGenClient
+
+    calls = []
+
+    def _regen(seed, hint=""):
+        calls.append({"seed": seed, "hint": hint})
+        p = tmp_path / f"regen_{seed}.mp4"
+        p.write_text("REGEN")
+        return p, {"strategy": "extend_prev", "regen_of_original": True}
+
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    orch = OrchestratorAgent(generator=gen)
+    best = gen.run(ShotSpec(shot_idx=0, duration=2.0, prompt="p"),
+                   tmp_path, revision=0, seed=0)
+    cand = orch.execute({"tool": "regenerate",
+                         "args": {"hint": "keep the cat visible"}},
+                        best, ShotSpec(shot_idx=0, duration=2.0, prompt="p"),
+                        tmp_path, r=1,
+                        board=ReviewBoard([SemanticCritic()]),
+                        regen_fn=_regen)
+    assert cand is not None and calls[0]["hint"] == "keep the cat visible"
+    assert Path(cand.video_path).read_text() == "REGEN"
+
+
+def test_route_suggestion_deterministic():
+    """R-3 方案 B:最坏缺陷覆盖 ≥90% → 建议 regenerate;局部 → 建议
+    regenerate_segment;建议进 brain 上下文(_build_user)。"""
+    from maestro.agents.defect_report import Defect, DefectReport
+    from maestro.agents.orchestrator import OrchestratorAgent
+
+    def _report(lo, hi, n):
+        return DefectReport(defects=[Defect(
+            kind="physics", entity="x", frame_range=(lo, hi), severity=0.8,
+            fix_modality="motion", note="n")], n_frames=n)
+
+    s_local = OrchestratorAgent._route_suggestion(_report(10, 30, 100))
+    assert s_local["tool"] == "regenerate_segment"
+    assert s_local["frame_range"] == [10, 30]
+    s_global = OrchestratorAgent._route_suggestion(_report(0, 96, 100))
+    assert s_global["tool"] == "regenerate"
+    assert OrchestratorAgent._route_suggestion(None) is None
+    assert OrchestratorAgent._route_suggestion(
+        DefectReport(defects=[], n_frames=100)) is None

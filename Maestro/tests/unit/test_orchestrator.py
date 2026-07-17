@@ -108,23 +108,22 @@ def test_available_actions_base_menu_no_caps_no_assets():
     gen = GeneratorAgent(video_gen=MockVideoGenClient())  # caps = {t2v,i2v}
     orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
     names = {a["name"] for a in orch.available_actions(asset_memory=None)}
-    # Whole-clip + the LOCALIZED-propagated tools (offered for any backend with
-    # a video capability); no edit/extend/retrieve/flf2v without those caps/assets.
-    # 2026-07-16 裁决:keyframe_edit_propagate 禁用(中间帧编辑引发前后
-    # 失调)、frame_to_frame 与新 regenerate_segment 重复 —— 双双摘除
-    assert names == {"regenerate", "keyframe_edit", "accept",
-                     "regenerate_segment"}
-    assert "keyframe_edit_propagate" not in names
-    assert "frame_to_frame" not in names
-    assert "edit_clip" not in names and "extend_clip" not in names
+    # 2026-07-17 裁决(修复三分类):菜单 = accept / regenerate_segment /
+    # regenerate(原法全修);其余工具全部退役(handler 保留)
+    assert names == {"regenerate", "accept", "regenerate_segment"}
+    for gone in ("keyframe_edit", "keyframe_edit_propagate", "frame_to_frame",
+                 "edit_clip", "extend_clip", "depth_edit", "style_edit",
+                 "retrieve_replace"):
+        assert gone not in names
 
 
 def test_available_actions_edit_appears_with_edit_cap():
+    # 2026-07-17:edit_clip 已退役 —— 即使后端有 edit 能力也不再入菜单
     gen = GeneratorAgent(video_gen=_EditCapVideoGen())
     orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
     names = {a["name"] for a in orch.available_actions()}
-    assert "edit_clip" in names
-    assert "extend_clip" not in names  # _EditCapVideoGen has no 'extend'
+    assert "edit_clip" not in names
+    assert names == {"regenerate", "accept", "regenerate_segment"}
 
 
 def test_available_actions_extend_and_retrieve_gate():
@@ -137,10 +136,9 @@ def test_available_actions_extend_and_retrieve_gate():
     orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen,
                              retrieval=_StubRetrieval(mem))
     names = {a["name"] for a in orch.available_actions(asset_memory=mem)}
-    assert {"edit_clip", "extend_clip", "retrieve_replace"} <= names
-    # retrieve disappears when there are no source shots
-    names_no = {a["name"] for a in orch.available_actions(asset_memory=AssetMemory())}
-    assert "retrieve_replace" not in names_no
+    # 2026-07-17:extend_clip / retrieve_replace 均已退役
+    assert "extend_clip" not in names and "retrieve_replace" not in names
+    assert names == {"regenerate", "accept", "regenerate_segment"}
 
 
 # ── v0.4 widened palette: depth_edit / style_edit appear with caps ───────────
@@ -167,14 +165,12 @@ class _FullPaletteVideoGen(MockVideoGenClient):
 
 
 def test_available_actions_full_palette_includes_depth_and_style():
+    # 2026-07-17:全能力后端下菜单同样只剩 3(depth/style/edit/extend 退役;
+    # execute handler 保留 —— 下方 route 测试仍验证 handler 可用)
     gen = GeneratorAgent(video_gen=_FullPaletteVideoGen())
     orch = OrchestratorAgent(llm=StubBrainLLM("{}"), generator=gen)
     names = {a["name"] for a in orch.available_actions()}
-    assert {"depth_edit", "style_edit", "edit_clip", "extend_clip"} <= names
-    # The menu text describes each by defect modality (mirrors UniVA plan.txt).
-    menu = orch.available_actions()
-    depth = next(a for a in menu if a["name"] == "depth_edit")
-    assert "background" in depth["description"].lower()
+    assert names == {"regenerate", "accept", "regenerate_segment"}
 
 
 def test_execute_depth_and_style_edit_route_to_backend(tmp_path):
@@ -238,8 +234,8 @@ def test_decide_replays_skill_step_when_repair_skill_hits():
 
 def test_decide_falls_to_llm_when_no_skill_matches():
     gen = GeneratorAgent(video_gen=_EditCapVideoGen())
-    reply = json.dumps({"tool": "edit_clip",
-                        "args": {"prompt": "fix", "backend": "runway"},
+    reply = json.dumps({"tool": "regenerate",
+                        "args": {"hint": "fix"},
                         "reason": "motion"})
     brain = StubBrainLLM(reply)
     # No skill library → must reason fresh.
@@ -248,7 +244,7 @@ def test_decide_falls_to_llm_when_no_skill_matches():
     d = orch.decide(_clip(), _spec(), orch.available_actions(), history=[],
                     defect_report=report)
     assert d["via"] == "llm"
-    assert d["tool"] == "edit_clip"
+    assert d["tool"] == "regenerate"
     assert brain.prompts, "LLM consulted for fresh reasoning"
 
 
@@ -275,14 +271,15 @@ def test_decide_falls_to_llm_when_skill_steps_exhausted():
 # ── decide(): valid JSON → validated; garbage → INVALID sentinel ─────────────
 def test_decide_returns_validated_decision_for_known_tool():
     gen = GeneratorAgent(video_gen=_EditCapVideoGen())
-    reply = json.dumps({"tool": "edit_clip",
-                        "args": {"prompt": "fix the arc", "backend": "runway"},
+    reply = json.dumps({"tool": "regenerate_segment",
+                        "args": {"frame_start": 3, "frame_end": 9,
+                                 "hint": "fix the arc"},
                         "reason": "motion verdict"})
     orch = OrchestratorAgent(llm=StubBrainLLM(reply), generator=gen)
     menu = orch.available_actions()
     d = orch.decide(_clip(), _spec(), menu, history=[])
-    assert d["tool"] == "edit_clip"
-    assert d["args"]["prompt"] == "fix the arc"
+    assert d["tool"] == "regenerate_segment"
+    assert d["args"]["hint"] == "fix the arc"
     assert d["reason"] == "motion verdict"
 
 

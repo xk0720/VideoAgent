@@ -118,23 +118,20 @@ class OrchestratorAgent:
         caps = vg.capabilities() if vg is not None else set()
         has_shots = bool(asset_memory and getattr(asset_memory, "video_shots", None))
 
+        # 2026-07-17 裁决(修复三分类):菜单收缩为 accept /
+        # regenerate_segment(局部 flf2v)/ regenerate(全修 = 严格按该镜的
+        # 【原始条件方法】重生成一次)+ simulate_reference(接了 sim 才出现)。
+        # keyframe_edit / edit_clip / depth_edit / style_edit / extend_clip /
+        # retrieve_replace 全部退役出菜单(执行 handler 保留兼容旧 skill 记录)。
         menu: list[dict] = [
             {
                 "name": "regenerate",
-                "description": "Re-generate the whole shot from the original prompt "
-                "plus an anti-defect hint appended to the generation prompt. The "
-                "broadest fix; use when the defect is global or no narrower tool fits.",
+                "description": "FULL re-generation: strictly re-runs this "
+                "shot's ORIGINAL condition method (same strategy — extend/"
+                "i2v/t2v-with-references — same conditioning inputs, same "
+                "base prompt) with your anti-defect hint appended. Pick when "
+                "the defect is GLOBAL (the whole clip is wrong).",
                 "args": {"hint": "str — anti-defect instruction to append"},
-            },
-            {
-                "name": "keyframe_edit",
-                "description": "Locally edit ONE keyframe image, then re-generate "
-                "anchored on the edited frame. Cheapest; use for a localized visual "
-                "defect at a specific keyframe.",
-                "args": {
-                    "keyframe_idx": "int — index into the clip's keyframes",
-                    "edit_instruction": "str — what to change in that frame",
-                },
             },
         ]
         # ── LOCALIZED, propagated tools (v0.4) ──────────────────────────────
@@ -164,49 +161,6 @@ class OrchestratorAgent:
                     "hint": "str — anti-defect instruction for the regenerated span",
                 },
             })
-        if "edit" in caps and self.video_gen is not None:
-            menu.append({
-                "name": "edit_clip",
-                "description": "Whole-clip prompt-guided re-render (edit model). "
-                "It has NO frame addressing: NEVER write frame numbers into the "
-                "prompt — describe the EVENT MOMENT ('as the glass leaves the "
-                "table edge...') plus a DETAILED correction (subject, scene, "
-                "what was wrong, what correct motion looks like, what must stay "
-                "unchanged). Use for GLOBAL motion/look problems; for a "
-                "span-localized defect prefer regenerate_segment.",
-                "args": {
-                    "prompt": "str — edit instruction describing the corrected motion",
-                    "backend": "str — 'seedance' (default, best free-form) | "
-                               "'runway' (free-form) | 'vace' (structure-guided)",
-                },
-            })
-        if "depth" in caps and self.video_gen is not None:
-            menu.append({
-                "name": "depth_edit",
-                "description": "Depth-guided foreground/background edit (VACE). "
-                "Suitable for a BACKGROUND or FOREGROUND defect — the wrong scene "
-                "behind/in front of the subject — while preserving the rest of the "
-                "motion and layout.",
-                "args": {"prompt": "str — what the corrected fg/bg should look like"},
-            })
-        if "style" in caps and self.video_gen is not None:
-            menu.append({
-                "name": "style_edit",
-                "description": "Artistic style transfer (runway). Suitable for a "
-                "STYLE defect — wrong palette / texture / look — keeping the same "
-                "content and motion, re-rendered in the requested style.",
-                "args": {"prompt": "str — the target artistic style to render in"},
-            })
-        if "extend" in caps and self.video_gen is not None:
-            menu.append({
-                "name": "extend_clip",
-                "description": "Continue the clip FROM ITS CURRENT ENDING. Only "
-                "for a clip that is genuinely incomplete but whose ending is "
-                "GOOD. If the ending itself is the defect (e.g. the subject "
-                "vanished in the final frames), extending REPRODUCES the broken "
-                "state — use regenerate_segment on the tail instead.",
-                "args": {"prompt": "str — what should happen in the continuation"},
-            })
         if self.sim_client is not None and "ref_video" in caps:
             menu.append({
                 "name": "simulate_reference",
@@ -225,14 +179,6 @@ class OrchestratorAgent:
                                   "implicit; SI units; RIGID bodies only",
                     "hint": "str — anti-defect instruction for the regeneration",
                 },
-            })
-        if has_shots and self.retrieval is not None:
-            menu.append({
-                "name": "retrieve_replace",
-                "description": "Replace the clip with a matching REAL source shot "
-                "from uploaded footage. Best for a semantic 'missing element' "
-                "defect that real footage can ground.",
-                "args": {"query": "str — what to retrieve from the asset memory"},
             })
         menu.append({
             "name": "accept",
@@ -293,11 +239,34 @@ class OrchestratorAgent:
                     if legacy else "the terse INLINE instruction")
         return legacy or self._INLINE_SKILL
 
+    @staticmethod
+    def _route_suggestion(defect_report) -> Optional[dict]:
+        """R-3 方案 B(2026-07-17):按 VLM 评审的最坏缺陷覆盖度给出
+        确定性路由建议 —— 覆盖 ≥90% 视作全局(regenerate 原法全修),
+        否则局部(regenerate_segment)。只是【强建议】,brain 有明确理由
+        可推翻(它看得到全部缺陷,VLM 可能误分类)。"""
+        if defect_report is None:
+            return None
+        w = defect_report.worst()
+        if w is None:
+            return None
+        lo, hi = w.frame_range
+        n = max(1, int(getattr(defect_report, "n_frames", 0) or hi or 1))
+        coverage = (hi - lo) / n
+        return {
+            "tool": "regenerate" if coverage >= 0.9 else "regenerate_segment",
+            "reason": f"the worst defect spans {coverage:.0%} of the clip "
+                      f"(frames {lo}-{hi} of {n})",
+            "frame_range": [int(lo), int(hi)],
+        }
+
     def _build_user(self, clip, spec, menu, history, defect_report=None,
                     review_brief=None) -> dict:
         """THIS TURN 的完整输入上下文(裁决 1.3:decide 把它原样落
         brain_calls.jsonl,输入输出都可审计)。"""
         return {
+            # R-3:评审判级的确定性投影 —— 采纳除非有明确理由(skill 说明)
+            "vlm_route_suggestion": self._route_suggestion(defect_report),
             "shot_prompt": spec.prompt,
             # A consolidated, prioritized brief produced by the review-summarizer
             # (when wired); empty until then — the brain still has the raw review
@@ -530,7 +499,7 @@ class OrchestratorAgent:
     # ─────────────────────────────────────────────────────────────────────
     def execute(
         self, decision, best, spec, cache_dir, r, board: ReviewBoard,
-        asset_memory=None, fps: int = 8,
+        asset_memory=None, fps: int = 8, regen_fn=None,
     ) -> Optional[CandidateClip]:
         """Run the brain's chosen tool, wrap the output in a fresh reviewed
         CandidateClip, and RETURN it (the loop's Verifier decides accept).
@@ -548,10 +517,22 @@ class OrchestratorAgent:
         if tool == "regenerate":
             hint = str(args.get("hint", "")) or "improve physical plausibility and "\
                 "match the prompt's key elements"
-            cand = self.generator.run(
-                spec, cache_dir, revision=r, seed=300 + r,
-                extra_prompt=hint, fps=fps,
-            )
+            if regen_fn is not None:
+                # R-1(2026-07-17 裁决):全修 = 严格按该镜的【原始条件方法】
+                # 重生成(同策略/同条件输入/同底 prompt + hint)。闭包由窗口
+                # 层提供;非窗口管线(regen_fn=None)保持旧行为。
+                video_path, rcond = regen_fn(seed=300 + r, hint=hint)
+                cand = CandidateClip(shot_idx=spec.shot_idx,
+                                     video_path=Path(video_path), revision=r)
+                self._log("regen_original", {"shot_idx": spec.shot_idx,
+                                             "hint": hint[:200]},
+                          {"cond": {k: v for k, v in (rcond or {}).items()
+                                    if k != "reference_images"}})
+            else:
+                cand = self.generator.run(
+                    spec, cache_dir, revision=r, seed=300 + r,
+                    extra_prompt=hint, fps=fps,
+                )
 
         elif tool == "keyframe_edit":
             try:

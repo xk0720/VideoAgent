@@ -71,11 +71,6 @@ Previous-shot-anchored strategies (window continuity):
                       this shot's image(s) as @Image2(…) (target look). SOFT
                       anchoring — for pixel-exact continuity prefer
                       ti2v_prev_last or flf2v_bridge.
-- `multi_image_fusion` kling-video-o1 route: FUSE [previous shot's last frame
-                      + this shot's image(s)] (≤7 images) into one video, no
-                      designated first frame. Set `use_prev_tail_video: true`
-                      to ALSO carry the previous shot's tail video (the image
-                      cap then drops to 4).
 
 Fallback:
 - `t2v`               Text only — no visual anchor. For a hard scene cut with
@@ -87,7 +82,7 @@ Fallback:
  "reason": "<one short sentence>",
  "video_prompt": "<the COMPLETE video-generation prompt, written for the
                   chosen strategy's reference syntax — strongly recommended>",
- "use_prev_tail_video": true|false   (only meaningful for multi_image_fusion)}
+}
 
 You output SEMANTIC fields only. Mechanical payload fields (aspect_ratio,
 duration, keep_original_sound, image upload URLs) are filled deterministically
@@ -96,15 +91,21 @@ by the executor — do NOT output them.
 ## Reference syntax per model family (get this right or the images are ignored)
 
 - seedance routes (`t2v_own_refs`, `ti2v_prev_plus_keyframe`): mention images
-  as `@Image1`, `@Image2`, e.g. "Reference @Image1 for the man's appearance
-  in @Image2's living-room setting."
+  as `@Image1`, `@Image2`, and user source videos as `@Video1`(…) — images
+  and videos number separately.
+- FIRST-FRAME LAW on `ti2v_prev_plus_keyframe` (2026-07-17, field-verified:
+  t2v's @Image1 CAN pin the opening frame when the prompt demands it): the
+  prompt MUST open with "The shot opens EXACTLY on @Image1 — the final
+  moment of the previous shot" (or equivalent unambiguous wording). A vague
+  "consistent with @Image1" loses the pin. Reference ACCURACY is the whole
+  game on this route: @Image1 = previous last frame (continuity), @Image2…
+  = generated/planned images (target look), @VideoN = the user's source
+  video(s) (identity) — each mentioned with its actual content, none
+  swapped, none skipped.
 - `extend_prev`: NO reference syntax (the model natively continues from
   the previous final frame). Write only what happens NEXT + an explicit
   maintenance clause ("keep the same orange-and-white cat, the same living
   room and warm sunlight"). Never re-describe what already happened.
-- kling route (`multi_image_fusion`): use the wording "reference image 1/2",
-  e.g. "Use reference image 1 as the female character and reference image 2
-  as the male character. Blend their appearances into the same style…"
 - NUMBERING IS GIVEN, NEVER GUESSED (the slot manifest): the context field
   `slots_by_strategy` lists, for EVERY strategy in the menu, the exact
   reference IDs the executor will assemble and what each one contains,

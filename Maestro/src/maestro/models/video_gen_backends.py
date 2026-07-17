@@ -227,7 +227,14 @@ class WaveSpeedClient(BaseVideoGenClient):
                 raise RuntimeError(
                     f"model '{model_id}' has no reference_videos channel — "
                     "reference-video conditioning needs the seedance-2.0 family")
-            payload["reference_videos"] = [self._upload_media(reference_video)]
+            vids = (list(reference_video)
+                    if isinstance(reference_video, (list, tuple))
+                    else [reference_video])
+            if len(vids) > 3:
+                log.info("reference_videos capped to 3 (got %d) — "
+                         "seedance-2.0 documented limit", len(vids))
+            payload["reference_videos"] = [self._upload_media(v)
+                                           for v in vids[:3]]
         if reference_images:
             # seedance-2.0 reference_images channel. VERIFIED (2026-07, official
             # model pages) ONLY on the TEXT-to-video endpoint: ≤9 images,

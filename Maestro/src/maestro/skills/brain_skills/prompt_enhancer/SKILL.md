@@ -114,7 +114,7 @@ that gap:
 - If a LAST_FRAME condition row exists, end the prompt by describing the
   arrival at that frame's content.
 
-### kling_reference (kling-video-o1 reference-to-video)
+### kling_reference (RETIRED from the menu 2026-07-17 — kept for legacy replay only)
 - Mention images as "reference image 1", "reference image 2", … (NOT
   @ImageN — kling uses plain wording), each with its purpose: "Use
   reference image 1 as the continuing scene state and reference image 2
