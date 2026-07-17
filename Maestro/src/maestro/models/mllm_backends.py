@@ -1063,6 +1063,34 @@ class GeminiVLM(OpenAICompatVLM):
         ])
         return (reply or "").strip()
 
+    def caption_video(self, video_path) -> str:
+        """素材视频的【原生视频】打标(2026-07-17 裁决:入库不再抽帧 ——
+        某个 shot 可能直接续用用户片段,标签必须描述整段内容(身份词 +
+        场景 + 运动),不是某一帧)。假设素材段不长;超 18MB 由
+        _video_part 自动 360p 转码。失败/桩文件 → ""(调用方落
+        中间帧 caption → 文件名的兜底链,绝不编)。"""
+        from ..physics.track_extractor_backends import _looks_like_video
+
+        p = Path(str(video_path))
+        if not p.is_file() or not _looks_like_video(p):
+            return ""
+        got = self._video_part("THE CLIP", p)
+        if not got:
+            return ""
+        self._require_key()
+        reply = self._generate(got + [{"text":
+            "Describe this video clip in ONE or TWO short sentences for "
+            "retrieval and script planning: who/what it shows (identity "
+            "words — species/build, coat/wardrobe with colors, distinctive "
+            "marks), the setting, and the main motion/camera movement. "
+            "Start with one category word from [character, object, "
+            "background, style] and a colon. Example: 'character: a young "
+            "man in a bright red jacket with a black backpack walks "
+            "steadily forward along a seaside boardwalk in golden "
+            "afternoon light, camera tracking from behind'. No other "
+            "text."}])
+        return (reply or "").strip()
+
     def describe_junction(self, image_path) -> str:
         """接点实况(2026-07-15 需求 ②):看上一镜的【真实尾帧】,一句话
         说清续接状态 —— 每个关键主体在哪、看起来是动是停、朝什么方向。

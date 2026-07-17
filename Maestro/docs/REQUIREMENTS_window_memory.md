@@ -442,3 +442,15 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
   (regenerate = **严格按原始条件方法重生成**,窗口层闭包)。菜单裁到
   3 + simulate_reference 门控;方案 B:确定性 vlm_route_suggestion
   (覆盖 ≥90% → 全修)注入 brain 上下文作强建议。
+
+---
+
+## 追加裁决(2026-07-17 第二轮,已实现):视频素材入库原生打标
+
+视频入库不再依赖抽帧打标 —— shot 可能直接续用用户片段,标签必须描述
+**整段内容**(身份词+场景+运动/运镜)。假设素材段不长,Gemini-flash 原生
+看整段(`GeminiVLM.caption_video`,>18MB 自动转码,桩文件诚实沉默)。
+降级链:原生视频 caption → 中间帧 caption(无视频通道的 VLM)→ 文件名
+(末端,响亮)。**抽帧能力保留**:图计划的 `video_extract` 仍抽中间帧当
+key image(需要某个物体/精确帧时)。skill 三处同步(video_retrieval 打标
+链、scene_write "可写直接续用素材的镜头"、image_plan video_extract 定位)。

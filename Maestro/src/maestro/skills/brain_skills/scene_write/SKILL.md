@@ -50,7 +50,12 @@ strategy, review, repair) hangs off these entries.
    by name).
 6. Asset awareness: when the user provided assets (a location image, character
    photos, source clips), write the shots AROUND what the assets afford — a
-   living-room background image is wasted on a beach script.
+   living-room background image is wasted on a beach script. VIDEO catalog
+   entries describe the WHOLE clip (subject identity + setting + its main
+   motion/camera, from native video understanding) — you can therefore
+   write shots that directly CONTINUE or incorporate the user's footage
+   ("the character keeps walking forward along the same path as in the
+   clip"), not just shots that borrow a still.
 7. ASSET MENTION LAW: when the user's task names a provided asset ("the cat
    from the photo appears", "use my living-room image"), the shot
    description(s) where it appears MUST state that requirement explicitly —

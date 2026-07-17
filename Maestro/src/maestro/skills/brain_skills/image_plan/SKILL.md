@@ -66,8 +66,11 @@ decision covers three things at once:
   role states intent, the condition stage picks the consumer.
 - The user's source videos ALSO ride natively as @VideoN references on the
   t2v strategies (condition stage, ≤3, 15s head clips) — plan
-  video_extract only when the shot must OPEN/CLOSE on an exact frame of
-  the user's footage; for mere subject consistency @VideoN already covers it.
+  video_extract only when the shot needs a KEY IMAGE from the footage (an
+  exact frame to open/close on, or a specific object's look); for mere
+  subject consistency @VideoN already covers it, and the clip's catalog
+  label already describes its full content (native video understanding),
+  so you know what a frame extraction would yield before planning it.
 - t2i image descriptions must EMBED the canonical `cast` descriptor of any
   character in the image and the `setting` words (both provided in your
   context) — independently-worded t2i prompts are how the same character

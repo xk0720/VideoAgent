@@ -201,10 +201,83 @@ def test_review_instruction_carries_junction_checks(tmp_path, monkeypatch):
     assert "still rolling toward the window" in text  # 剧本 end_state 在场
 
 
+def test_video_asset_native_caption_priority(tmp_path, monkeypatch):
+    """2026-07-17 裁决:入库打标【原生视频理解】优先(整段内容,不抽帧);
+    原生失败 → 中间帧兜底;抽帧能力保留给图计划 video_extract。"""
+    import maestro.pipeline.window_loop as wl
+    from maestro.pipeline.window_loop import ensure_asset_descriptions
+    from maestro.types import AssetMemory, Shot
+
+    vid = tmp_path / "walk.mp4"
+    vid.write_bytes(b"\x00" * 32)
+
+    class _NativeVLM:
+        def __init__(self):
+            self.native_calls = 0
+            self.frame_calls = 0
+
+        def caption_video(self, path):
+            self.native_calls += 1
+            return ("character: a man in a red jacket walks forward "
+                    "along a boardwalk, camera tracking from behind")
+
+        def caption_image(self, path):
+            self.frame_calls += 1
+            return "should not be needed"
+
+    booms = []
+    monkeypatch.setattr(wl, "extract_frame",
+                        lambda v, i, o: booms.append(1))
+    mem = AssetMemory(video_shots={"v0": Shot(
+        shot_id="v0", source_video=str(vid), start_time=0, end_time=4)})
+    n = ensure_asset_descriptions(mem, _NativeVLM(),
+                                  cache_dir=tmp_path / "labels")
+    assert n == 1 and booms == []                 # 原生路径,零抽帧
+    assert mem.video_shots["v0"].caption.startswith("character: a man")
+    assert "(from the user's video clip)" in mem.video_shots["v0"].caption
+
+    # 原生失败 → 中间帧兜底
+    class _BrokenNative(_NativeVLM):
+        def caption_video(self, path):
+            raise RuntimeError("no video channel")
+
+        def caption_image(self, path):
+            return "character: a man in a red jacket on a boardwalk"
+
+    frame = tmp_path / "mid.png"
+    frame.write_bytes(b"\x89PNG\r\n")
+    monkeypatch.setattr(wl, "extract_frame", lambda v, i, o: frame)
+    monkeypatch.setattr(wl, "_probe_seconds", lambda v: 4.0)
+    mem2 = AssetMemory(video_shots={"v0": Shot(
+        shot_id="v0", source_video=str(vid), start_time=0, end_time=4)})
+    assert ensure_asset_descriptions(mem2, _BrokenNative(),
+                                     cache_dir=tmp_path / "labels") == 1
+    assert "red jacket" in mem2.video_shots["v0"].caption
+
+
+def test_gemini_caption_video_honesty(tmp_path, monkeypatch):
+    """caption_video:真视频 → 原生 parts + 指令;文本桩 → ""(不上载)。"""
+    from maestro.models.mllm_backends import GeminiVLM
+
+    vlm = GeminiVLM("gemini", {"api_key": "k"})
+    captured = []
+    monkeypatch.setattr(vlm, "_generate",
+                        lambda parts: captured.append(parts) or
+                        "character: a walking man")
+    stub = tmp_path / "fake.mp4"
+    stub.write_text("MOCK")
+    assert vlm.caption_video(stub) == ""          # 桩 → 沉默
+    real = tmp_path / "real.mp4"
+    real.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+    assert vlm.caption_video(real) == "character: a walking man"
+    parts = captured[0]
+    assert parts[1]["inline_data"]["mime_type"] == "video/mp4"
+    assert "script planning" in parts[2]["text"]
+
+
 def test_video_asset_captioning_chain(tmp_path, monkeypatch):
-    """2026-07-16 裁决:用户大概率只给一个路径。视频素材:VLM 看中间帧
-    补 caption(检索键 + 剧本可见语义);无 VLM → 文件名兜底 + 大声警告;
-    有用户描述 → 一个字不动。"""
+    """兜底链(2026-07-16):VLM 只有 caption_image → 中间帧;无 VLM →
+    文件名 + 大声警告;有用户描述 → 一个字不动。"""
     import maestro.pipeline.window_loop as wl
     from maestro.pipeline.window_loop import ensure_asset_descriptions
     from maestro.types import AssetMemory, Shot

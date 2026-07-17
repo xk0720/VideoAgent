@@ -16,7 +16,9 @@ appearance". Consumers:
    photo beats any regeneration).
 2. Image-plan source `video_extract`: retrieve a source clip by the shot
    description (retrieve_source_shots) and extract its MIDDLE frame
-   (probed-duration midpoint; more representative than first/last frame).
+   (probed-duration midpoint) as a KEY IMAGE — for when a plan needs a
+   specific object/moment as a frame. Labeling does NOT depend on this:
+   ingest labels come from native video understanding (see below).
 3. The scene_write MEDIA CATALOG: images AND videos with their semantic
    labels — the script brain sees what the user provided.
 4. @VideoN source-video references: user videos ride natively on the t2v
@@ -38,6 +40,14 @@ legacy execute handler remains.)
   user-provided description > VLM caption (backfilled by
   ensure_asset_descriptions when a real VLM is available) > filename
   (honest degradation — retrieval quality is limited and logged).
+- VIDEO assets are labeled by NATIVE VIDEO UNDERSTANDING (2026-07-17):
+  Gemini watches the WHOLE clip and writes identity words + setting + the
+  main motion/camera — because a shot may directly continue the user's
+  footage, the label must describe the clip's content and movement, not
+  one frame. Degradation chain: native video caption > middle-frame
+  caption (VLMs without a video channel, e.g. qwen-local) > filename
+  (loud). Frame EXTRACTION itself is unchanged — video_extract still
+  pulls a key image from the clip when a plan needs an exact frame.
 - A hit whose file no longer exists is NOT a hit — degrade honestly.
 - Gating: with an empty asset library, the strategies/tools that depend on
   this skill disappear from the menus (the brain never sees an inexecutable

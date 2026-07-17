@@ -207,14 +207,27 @@ def ensure_asset_descriptions(asset_memory: Optional[AssetMemory],
                 n += 1
             except AttributeError:
                 pass                      # StyleRef 若无该字段则跳过(不硬塞)
-    # 视频素材:中间帧 caption → Shot.caption(检索键 + 剧本可见语义)
+    # 视频素材打标(2026-07-17 裁决):【原生视频理解】优先 —— shot 可能
+    # 直接续用用户片段,标签必须描述整段(身份词+场景+运动),不是单帧;
+    # 假设素材段不长,Gemini-flash 直接看整段。降级链:原生视频 caption →
+    # 中间帧 caption(无视频通道的 VLM)→ 文件名(末端,响亮)。
+    # 抽帧能力本身保留:图计划的 video_extract 仍用它取 key image。
     for sid, shot in (getattr(asset_memory, "video_shots", None) or {}).items():
         cap = (getattr(shot, "caption", "") or "").strip()
         src = getattr(shot, "source_video", "") or ""
         if cap or not src or not Path(src).exists():
             continue
         text = ""
-        if mllm is not None and cache_dir is not None:
+        if mllm is not None:
+            native = getattr(mllm, "caption_video", None)
+            if native is not None:
+                try:
+                    text = (native(src) or "").strip()
+                except Exception as exc:
+                    log.warning("native video caption failed for %s: %r — "
+                                "falling back to a middle-frame caption",
+                                Path(src).name, exc)
+        if not text and mllm is not None and cache_dir is not None:
             out_dir = Path(cache_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
             dur_s = _probe_seconds(Path(src))
@@ -256,7 +269,7 @@ def _media_catalog(asset_memory: Optional[AssetMemory]) -> list[dict]:
     for sid, shot in (asset_memory.video_shots or {}).items():
         src = getattr(shot, "source_video", "") or ""
         if src and Path(src).exists():
-            cap = (getattr(shot, "caption", "") or "").strip()                 or Path(src).stem.replace("_", " ")
+            cap = (getattr(shot, "caption", "") or "").strip() or Path(src).stem.replace("_", " ")
             out.append({"kind": "video", "name": sid,
                         "label": f"video: {cap}", "desc": cap,
                         "path": str(src)})
