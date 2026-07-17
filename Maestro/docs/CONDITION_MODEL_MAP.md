@@ -41,9 +41,9 @@
 | 4 | `t2v_own_refs` | 参考角色图 ≤9 | `bytedance/seedance-2.0/text-to-video` | `prompt(@ImageN 提及), reference_images[], …` | 软(身份/构图) |
 | 5 | `ti2v_prev_last` | 上镜尾帧 | `bytedance/seedance-2.0/image-to-video` | `image = 上镜尾帧` | 硬锁开场帧 |
 | 6 | `flf2v_bridge` | 上镜尾帧 → 本镜图 | `bytedance/seedance-2.0/image-to-video` | `image = 上镜尾帧, last_image = 本镜图` | 硬锁两端 |
-| 7 | `ti2v_prev_plus_keyframe` | 上镜尾帧 + 本镜图(软) | `bytedance/seedance-2.0/text-to-video` | `reference_images = [尾帧, 本镜图…](@Image1 续接点, @Image2… 目标构图)` | 软 |
+| 7 | `ti2v_prev_plus_keyframe`(2026-07-17 定稿:**尾帧+素材的唯一路线**) | 上镜尾帧 + 生成图/素材图 + 用户源视频 | `bytedance/seedance-2.0/text-to-video` | `reference_images = [尾帧, 本镜图…](@Image1 必须 prompt 强锁 "opens EXACTLY on @Image1" —— 用户实测可基本固定首帧;@Image2… 目标/身份)+ reference_videos = [用户源视频 ≤3,逐条裁 15s](@VideoN)` | 软锁首帧(prompt 强制)+ 引用 |
 | 8 | `extend_prev`(2026-07-16 顶替 tiv2v_window) | 上镜尾段**视频**(+ 可选 'last' 角色图) | `bytedance/seedance-2.0/video-extend` | `prompt(只写接下来 + 维持清单), video = 上镜尾段(从其末帧续画), last_image = 'last' 角色图(可选目标尾帧), duration, resolution, generate_audio=false` | **真续接**(末帧起画;输出=原片+续段拼接,执行器裁头) |
-| 9 | `multi_image_fusion` | 2..7 张图(+ 可选尾段视频) | `kwaivgi/kling-video-o1/reference-to-video` | `prompt, images[](≤7;带 video ≤4), video?, duration{5,10}, aspect_ratio, keep_original_sound` | 软(多图融合) |
+| 9 | ~~`multi_image_fusion`~~ | **已退役**(2026-07-17:无指定首帧,与"首帧引用优先"方针冲突;执行分支保留兼容旧 episode) | — | — | — |
 
 规则(硬编码在后端,违反即 RuntimeError,不允许静默):
 
@@ -66,18 +66,15 @@
 
 | 工具 | 调用链 | 模型 id | 关键参数 |
 |---|---|---|---|
-| `regenerate` | generator.run(无锚) | `bytedance/seedance-2.0/text-to-video` | `prompt(+fix hint), duration=spec.duration` |
-| `keyframe_edit` | image_edit → generator.run(first_frame=改后图) | `bytedance/seedream-v4/edit` → `…/image-to-video` | `image=改后关键帧` |
+| `regenerate`(2026-07-17 重定义) | **窗口路径:regen_fn 闭包严格重跑该镜【原始条件方法】**(同策略/同条件输入/同底 prompt + hint,引用闸门复用);旧管线无闭包时 generator.run 旧行为 | 原策略对应模型(见 §1) | 原条件 + hint |
+| ~~`keyframe_edit`~~ | **已退役出菜单**(2026-07-17 三分类裁决;handler 保留) | — | — |
 | `regenerate_segment`(2026-07-16 重做) | propagate_repair:interior 跨度 → **flf2v 双锚**(左邻【原始】尾帧 + 右邻【原始】首帧)一笔重生,**免级联**(尾锚=下游原开头);tail 跨度 → i2v 从左锚;head 跨度 → 左锚=条件首帧图,没有则诚实 None(brain 改选整镜工具) | `bytedance/seedance-2.0/image-to-video` | `image, last_image, duration=段长(snap 后 _fit_to_seconds 回贴)` |
 | ~~`keyframe_edit_propagate`~~ | **已禁用**(2026-07-16 裁决:改中间帧导致前后失调;菜单摘除,代码保留) | — | — |
 | ~~`frame_to_frame`~~ | **已摘除**(与新 regenerate_segment 语义重复) | — | — |
-| `edit_clip` backend=seedance | edit_video | `bytedance/seedance-2.0/video-edit` | `prompt, video(URL), resolution`(≤15s 输入) |
-| `edit_clip` backend=runway | edit_video | `runwayml/gen4-aleph` | `prompt, video, aspect_ratio`(URL-only,base64 会 400) |
-| `depth_edit` | edit_video(vace, depth) | `wavespeed-ai/wan-2.1-14b-vace` | `task=depth, video, prompt, size` |
-| `style_edit` | edit_video(runway, style 框架化 prompt) | `runwayml/gen4-aleph` | 同 runway |
-| `extend_clip` | extend | `bytedance/seedance-2.0/video-extend` | `prompt, video, duration, resolution` |
+| ~~`edit_clip` / `depth_edit` / `style_edit` / `extend_clip` / `retrieve_replace`~~ | **全部退役出菜单**(2026-07-17 三分类:不修 / 局部 regenerate_segment / 全修 regenerate;handler 保留兼容旧 skill 记录) | — | — |
 | `simulate_reference` | Genesis 仿真 → generate(reference_video=仿真片) | `bytedance/seedance-2.0/text-to-video` | `reference_videos=[仿真参考]` |
-| `adjust_prompt` / `retrieve_replace` / `accept` | 无生成 API 调用 | — | — |
+| `accept` | 无生成 API 调用 | — | — |
+| (决策辅助)`vlm_route_suggestion` | R-3 方案 B:最坏缺陷覆盖 ≥90% → 建议 regenerate,否则 regenerate_segment;强建议注入 brain 上下文,有明确理由可推翻 | — | — |
 | (窗口关键帧阶段 t2i) | text_to_image | `wavespeed-ai/flux-kontext-pro/text-to-image` | `prompt, num_images=1, aspect_ratio` |
 
 旧账清偿(2026-07-16):头部段修复不再锚定缺陷片自身第 0 帧 ——

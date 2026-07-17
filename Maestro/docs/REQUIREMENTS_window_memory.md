@@ -424,3 +424,21 @@ image 2 as the male character…" 这样的角色化描述;seedance 则用 @Imag
 - **(追问)不修的机制**:converged(实证 shot3 零修复)/quality_bar 原有;
   新增 `--repair-severity`(最坏缺陷低于阈值不修,
   stop_reason=minor_defects_tolerated,默认 0 关闭,荐 0.6)。
+
+---
+
+## 追加需求(2026-07-17,已裁决并实现):生成三分类定稿 + 修复三分类
+
+- **生成**(用户实测:t2v 的 @Image1 可基本固定首帧):① 尾段续接 →
+  extend_prev(video-extend);② 尾帧 + 无素材 → ti2v_prev_last(i2v 硬
+  锁);③ 尾帧 + 有素材(生成图/检索图/源视频)→ ti2v_prev_plus_keyframe
+  (t2v:@Image1=尾帧 + prompt 强锁 "opens EXACTLY on @Image1";
+  @Image2..=图;@VideoN=用户源视频,新接,≤3 条逐条裁 15s)。首镜/换场
+  四路保留;multi_image_fusion 退役;flf2v_bridge 护栏(身份照片绝不当
+  收场锚)。已调研未启用备选(kling elements 双锚路线 / seedream 组合
+  首帧)登记缺口台账。
+- **修复三分类**:不修(converged/quality_bar/repair_severity,后者默认
+  不动)/ 局部(regenerate_segment,内段 flf2v 免级联)/ 全修
+  (regenerate = **严格按原始条件方法重生成**,窗口层闭包)。菜单裁到
+  3 + simulate_reference 门控;方案 B:确定性 vlm_route_suggestion
+  (覆盖 ≥90% → 全修)注入 brain 上下文作强建议。
