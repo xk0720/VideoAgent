@@ -213,23 +213,76 @@ def _scrub_cast_labels(text: str, cast: Optional[dict] = None) -> str:
     return out
 
 
-def _regen_prompt(strategy: str, base: str, hint: str, slots: list) -> str:
+# 剧本句的 "Shot N: scene N —" 前缀是台账元数据,进 prompt 前剥掉
+_SHOT_PREFIX_RE = re.compile(r"^\s*shot\s+\d+\s*:\s*"
+                             r"(scene\s+\d+\s*[—-]\s*)?", re.IGNORECASE)
+
+
+def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
+                  action: str = "", end_state: str = "") -> str:
     """全修(regenerate)的 prompt 合成 —— P0-B(2026-07-18,attempt3):
     hint 非空时【替换】原动作部分,绝不追加("base + Fix: hint" 让动作说
-    两遍、身份说三遍,越修越长,首帧软锁被稀释)。形状 = 用户实测成功的
-    裁剪版:PIN 句(仅 @Image1=上镜尾帧的策略)+ hint(评审给的动作+
-    preserve 句);漏提的可引用槽位由引用闸门自动补句。hint 引用了清单外
-    编号 → 回退原 base(错编号绝不出门)。"""
+    两遍、身份说三遍,越修越长,首帧软锁被稀释)。
+
+    二轮修订(用户质询:hint 若只写外观不写动作?):PIN + 纯外观修正 =
+    整条 prompt 无运动指令 → 静止/循环。不做"hint 有没有动作"的启发式
+    检测(动词识别不可靠,静默分支不诚实)——【无条件】在 hint 后接一句
+    剧本动作锚:起点(PIN)+ 过程(剧本句)+ 终点(end_state)三件套
+    永远齐;hint 本含动作时动作被说两遍 —— 动作是唯一重复有益的内容
+    类别(建景句重复诱导重建场景,动作重复是加权)。
+
+    漏提的可引用槽位由引用闸门自动补句;hint 引用了清单外编号 → 回退
+    原 base(错编号绝不出门)。"""
     if not hint:
         return base
     pin = _PIN_SENTENCE if strategy == "ti2v_prev_plus_keyframe" else ""
-    prompt = f"{pin} {hint}".strip() if pin else hint
+    act = _SHOT_PREFIX_RE.sub("", str(action or "").strip()).rstrip(". ")
+    anchor = ""
+    if act:
+        es = str(end_state or "").strip().rstrip(". ")
+        anchor = (f"This shot's scripted action: {act}"
+                  + (f", ending as: {es}." if es else "."))
+    prompt = " ".join(x for x in (pin, hint.strip(), anchor) if x)
     fixed, audit = validate_references(prompt, slots)
     if not audit["ok"]:
         log.warning("regen hint references unknown slots %s — falling back "
                     "to the original prompt", audit["unknown"])
         return base
     return fixed
+
+
+_PRESERVE_CLAUSE = "Preserve the established scene, lighting and camera."
+
+
+def _scrub_setting_sentence(text: str, setting: str, strategy: str) -> str:
+    """P0-A 加固(2026-07-18 二轮):锚定路线出口的建景句确定性拦截。
+    canonical setting 原句(大小写不敏感)整句出现在 prompt 里 → 替换为
+    preserve 句(整句替换安全,不剪碎句子;最毒的一类噪声不再赌 skill
+    自觉);只出现改写片段(无法安全定界)→ 响亮告警不动刀。无锚路线
+    不拦 —— 那里 setting 是唯一的场景载体。"""
+    if strategy not in _ANCHORED_STRATEGIES:
+        return text
+    out = str(text or "")
+    canon = str(setting or "").strip().rstrip(".")
+    if not canon or not out:
+        return out
+    pat = re.compile(re.escape(canon), re.IGNORECASE)
+    if pat.search(out):
+        out = pat.sub(_PRESERVE_CLAUSE.rstrip("."), out, count=1)
+        log.info("anchored route: canonical setting sentence in the prompt "
+                 "replaced with the preserve clause (scene lives in the "
+                 "anchor, not the text)")
+        return out
+    content = {w for w in re_words(canon) if len(w) >= 4}
+    if content:
+        hit = content & {w for w in re_words(out)}
+        if len(hit) / len(content) >= 0.7:
+            log.warning("anchored-route prompt appears to paraphrase the "
+                        "canonical setting sentence (%d/%d content words) — "
+                        "cannot excise safely; the writer must be fixed via "
+                        "skill, passing through unmodified",
+                        len(hit), len(content))
+    return out
 
 
 def _cast_in_shot(description: str, cast: dict) -> dict:
@@ -1932,8 +1985,10 @@ def generate_movie_windowed(
                           and Path(entry.keyframe_path).exists() else [])
         # brain 的上下文里 shot 描述带 <标记>、cast 带契约标签,它写
         # prompt 时可能照抄 —— 出口一律剥标记+清洗标签(enhanced 同理)。
-        brain_prompt = _scrub_cast_labels(
-            _strip_markers(d.get("video_prompt", "")), storyboard.cast)
+        brain_prompt = _scrub_setting_sentence(
+            _scrub_cast_labels(_strip_markers(d.get("video_prompt", "")),
+                               storyboard.cast),
+            storyboard.setting, d["strategy"])
         use_tail = bool(d.get("use_prev_tail_video", False))
         slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
                                source_videos=source_videos)
@@ -1951,8 +2006,10 @@ def generate_movie_windowed(
                 base_prompt=brain_prompt or spec.prompt,
                 label=entry.label)
             if enhanced:
-                brain_prompt = _scrub_cast_labels(_strip_markers(enhanced),
-                                                  storyboard.cast)
+                brain_prompt = _scrub_setting_sentence(
+                    _scrub_cast_labels(_strip_markers(enhanced),
+                                       storyboard.cast),
+                    storyboard.setting, d["strategy"])
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
@@ -2028,12 +2085,17 @@ def generate_movie_windowed(
                             _strategy=d["strategy"], _bp=brain_prompt,
                             _entry=entry, _prev=prev, _spec=spec,
                             _ut=use_tail, _slots=slots,
-                            _dir=shot_dir, _cast=storyboard.cast):
+                            _dir=shot_dir, _cast=storyboard.cast,
+                            _setting=storyboard.setting):
             # P0-B(2026-07-18):hint 替换原动作,不再 " Fix: " 追加 ——
-            # 合成逻辑在 _regen_prompt(可测);hint 过同一套出口清洗。
+            # 合成逻辑在 _regen_prompt(可测);剧本动作锚保证 motion
+            # 永远在场;hint 过同一套出口清洗(标签+建景句)。
             hint_ = _scrub_cast_labels(_strip_markers(hint), _cast)
             prompt = _regen_prompt(_strategy, _bp or _spec.prompt,
-                                   hint_, _slots)
+                                   hint_, _slots,
+                                   action=_spec.prompt,
+                                   end_state=_entry.end_state)
+            prompt = _scrub_setting_sentence(prompt, _setting, _strategy)
             v_path, r_cond = _generate_with_condition(
                 _strategy, _entry, _prev, _spec, video_gen, _dir,
                 seed=seed, fps=fps, window_tail_s=window_tail_s,

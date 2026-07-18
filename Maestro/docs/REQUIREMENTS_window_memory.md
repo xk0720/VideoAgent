@@ -529,3 +529,31 @@ shot1/2 同样带噪却成功 = i2v 通道级硬锁不吃 prompt 噪声,反证�
   发明任何条件行里没有的视觉细节(blue-and-white bowl)。
 
 测试:tests/unit/test_prompt_diet_attempt3.py(11 条)。全套 469 通过。
+
+---
+
+## 追加裁决(2026-07-18 二轮,已实现):警戒线取代硬帽 + hint 动作保底
+
+用户两问定案:「≤70 是否太绝对」「hint 若没有 motion 描述呢」。
+
+- **≤70 降级为警戒线**(分段预算按用户裁决暂不加):长度是代理指标,
+  真病是内容类型。skill 措辞改为「四段式自然落在 55-95 词;过 ~100 先
+  自查禁止内容(建景句/布局重述/重复身份),砍那个,永远不砍动作词」
+  (enhancer DIET + window_generation 规则 6,PIN 条款同步去数字)。
+- **建景句确定性拦截**(`_scrub_setting_sentence`):锚定路线出口,
+  canonical setting 原句(大小写不敏感)整句出现 → 替换为
+  `_PRESERVE_CLAUSE`(整句替换安全);只出现改写片段(≥70% 内容词命中
+  但句子变了,无法安全定界)→ 响亮告警不动刀。无锚路线不拦(setting
+  是唯一场景载体)。收口:brain video_prompt / enhanced / 全修合成。
+- **hint 动作保底**(P0-B 二轮):hint 可能只写外观(纯身份缺陷)——
+  PIN + 纯外观 = 无运动指令 → 静止/循环。不做启发式动作检测(不可靠),
+  `_regen_prompt` 新参 action/end_state,【无条件】接剧本动作锚
+  "This shot's scripted action: <剧本句,剥 'Shot N: scene N —' 前缀>,
+  ending as: <end_state>." —— 起点(PIN)/过程(剧本句)/终点(end_state)
+  三件套永远齐;动作是唯一重复有益的内容类别。
+- **hint 契约升级**(orchestrator skill):regenerate 的 hint 就是新
+  prompt 正文(替换非批注),必须自足 —— 完整动作 + 一句身份(static
+  半句自然语序,标签禁入)+ preserve 句;动作锚只是保底,缺动作的 hint
+  仍是不合格 hint。
+
+测试:test_prompt_diet_attempt3.py 增至 21 条。全套 474 通过。

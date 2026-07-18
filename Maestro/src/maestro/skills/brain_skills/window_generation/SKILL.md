@@ -175,7 +175,9 @@ by the executor — do NOT output them.
    opening is pixel-decided (i2v_keyframe, flf2v_own_pair, flf2v_bridge,
    ti2v_prev_last, ti2v_prev_plus_keyframe, extend_prev) keep the draft
    LEAN — pin (where the syntax has one) + one identity clause + one
-   action sentence + one preserve clause, ≤70 words. Never restate the
+   action sentence + one preserve clause; that shape naturally lands
+   around 55-95 words, and crossing ~100 means forbidden content crept
+   in (cut that, never the action). Never restate the
    setting as a scene-establishing sentence and never re-describe the
    opening layout: the anchor already carries them, and a noisy prompt
    makes t2v rebuild the scene from text instead of continuing from

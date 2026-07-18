@@ -156,3 +156,73 @@ def test_decide_replay_and_fallback_log_context(tmp_path):
         assert r["context"]["junction"]["prev_last_frame_actual"] == \
             "cat at bowl"
         assert r["menu"] == ["t2v", "ti2v_prev_last"]
+
+
+# ── 二轮修订(2026-07-18):hint 动作保底 + 建景句拦截 + 警戒线 ────────
+
+def test_regen_action_anchor_guarantees_motion():
+    # hint 只写外观(纯身份缺陷)→ 剧本动作锚保证 motion 在场
+    hint = "Ensure the cat's coat matches the reference exactly."
+    out = _regen_prompt(
+        "ti2v_prev_plus_keyframe", "base", hint, SLOTS,
+        action="Shot 4: scene 1 — the cat reaches the bowl and eats",
+        end_state="the cat stands at the bowl, head lowered, eating")
+    assert out.startswith(_PIN_SENTENCE)
+    assert hint in out
+    # "Shot N: scene N —" 台账前缀已剥;起点/过程/终点三件套齐
+    assert "This shot's scripted action: the cat reaches the bowl" in out
+    assert "Shot 4" not in out
+    assert "ending as: the cat stands at the bowl" in out
+
+
+def test_regen_action_anchor_without_end_state():
+    out = _regen_prompt("extend_prev", "base", "fix the paw.", [],
+                        action="the cat trots on")
+    assert out == ("fix the paw. This shot's scripted action: "
+                   "the cat trots on.")
+
+
+def test_setting_scrub_verbatim_replaced_case_insensitive():
+    from maestro.pipeline.window_loop import (
+        _scrub_setting_sentence,
+        _PRESERVE_CLAUSE,
+    )
+
+    setting = ("a cozy living room with a wooden windowsill, honey-colored "
+               "wood floor, cream sofa and warm morning sunlight")
+    # attempt3 实拍:enhancer 把 setting 首字母大写后整句贴进 prompt
+    prompt = ("The shot opens EXACTLY on @Image1. A cozy living room with "
+              "a wooden windowsill, honey-colored wood floor, cream sofa "
+              "and warm morning sunlight. The cat reaches the bowl.")
+    out = _scrub_setting_sentence(prompt, setting,
+                                  "ti2v_prev_plus_keyframe")
+    assert "cozy living room" not in out
+    assert _PRESERVE_CLAUSE.rstrip(".") in out
+    assert "The cat reaches the bowl." in out
+
+
+def test_setting_scrub_unanchored_untouched():
+    from maestro.pipeline.window_loop import _scrub_setting_sentence
+
+    setting = "a cozy living room with warm morning sunlight"
+    prompt = f"A wide shot. {setting}. The cat enters."
+    assert _scrub_setting_sentence(prompt, setting, "t2v") == prompt
+
+
+def test_setting_scrub_paraphrase_warns_only(caplog):
+    import logging
+
+    from maestro.pipeline.window_loop import _scrub_setting_sentence
+
+    logging.getLogger("maestro").propagate = True
+    setting = ("a cozy living room with a wooden windowsill, honey-colored "
+               "wood floor, cream sofa and warm morning sunlight")
+    # 改写版:词都在,句子变了 → 无法安全定界,不动刀只告警
+    prompt = ("Inside the cozy living room, near the wooden windowsill and "
+              "cream sofa, warm morning sunlight over the honey-colored "
+              "wood floor, the cat trots.")
+    with caplog.at_level(logging.WARNING):
+        out = _scrub_setting_sentence(prompt, setting,
+                                      "ti2v_prev_plus_keyframe")
+    assert out == prompt
+    assert any("paraphrase" in r.getMessage() for r in caplog.records)

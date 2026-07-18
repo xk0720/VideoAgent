@@ -51,8 +51,12 @@ action lands in `history` and must never be repeated on the same target.
   `hint`.
 - `regenerate` — FULL re-generation that STRICTLY re-runs this shot's
   ORIGINAL condition method: same strategy (extend / i2v / t2v-with-
-  references), same conditioning inputs, same base prompt, with your
-  `hint` appended. It preserves the shot's continuity anchors — this is
+  references), same conditioning inputs — but your `hint` REPLACES the
+  old prompt body (2026-07-18: appending bred ever-longer prompts that
+  drowned the first-frame pin). The executor rebuilds the prompt as:
+  first-frame pin (where the route has one) + your hint + a
+  deterministic "scripted action" anchor (the shot's script sentence +
+  its end state). It preserves the shot's continuity anchors — this is
   NOT a blind reroll. Pick when the defect is global.
 - `simulate_reference` (only when a sim client is wired) — write a rigid-
   body scene_spec; a physics simulation produces a CORRECT motion
@@ -79,8 +83,17 @@ rolling with visible surface rotation…"), never "frames 16-24".
 
 30-60 words: subject + what was wrong + what CORRECT looks like + what
 must stay unchanged (scene, lighting, camera, identity). Restate the
-canonical cast descriptor for any character involved (the movie-wide
-appearance contract) — regenerated spans drift identity without it.
+cast identity as natural prose (the static half of the contract — the
+labels "static:"/"dynamic:" never enter a hint) — regenerated spans
+drift identity without it.
+
+For `regenerate` the bar is higher — your hint IS the new prompt body
+(replacement, not annotation): it must be SELF-CONTAINED — the complete
+corrected ACTION of the shot from opening to end (never only the
+appearance fix), one identity clause, and a preserve clause ("preserve
+the established scene, lighting and camera"). The executor appends the
+scripted-action anchor as a deterministic backstop, but a motion-less
+hint still yields a weaker prompt — always write the action.
 
 ## Decision procedure
 

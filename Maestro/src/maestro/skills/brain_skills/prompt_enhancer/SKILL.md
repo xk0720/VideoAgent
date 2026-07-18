@@ -69,7 +69,7 @@ re-establish in text COMPETES with the anchor. A field run proved it: a
 the model ignore @Image1 and re-render the scene from text in a loop;
 trimming the SAME prompt to four parts fixed the SAME shot.
 
-On an anchored route the prompt is EXACTLY four parts, ≤70 words total:
+On an anchored route the prompt is EXACTLY four parts:
 1. THE PIN (t2v pin route only): "The shot opens EXACTLY on @Image1 — the
    final moment of the previous shot; do not alter its scene or layout."
 2. ONE identity clause tying the cast look to its reference ("@Image2
@@ -80,11 +80,20 @@ On an anchored route the prompt is EXACTLY four parts, ≤70 words total:
    camera" (this REPLACES any setting restatement).
 
 FORBIDDEN on anchored routes: a scene-establishing sentence (the setting
-words re-stated as prose — that is an instruction to BUILD a new scene);
-re-describing the opening layout or the subject's current position/facing
-(that is what @Image1 shows); more than one identity clause. The full
-setting/descriptor restatement rules below apply to UNANCHORED routes
-(fresh t2v scene cuts, re-entries) — there the text is the only carrier.
+words re-stated as prose — that is an instruction to BUILD a new scene;
+a deterministic gate replaces a VERBATIM canonical-setting sentence with
+the preserve clause, but a paraphrased scene sentence is yours to
+prevent); re-describing the opening layout or the subject's current
+position/facing (that is what @Image1 shows); more than one identity
+clause. The full setting/descriptor restatement rules below apply to
+UNANCHORED routes (fresh t2v scene cuts, re-entries) — there the text is
+the only carrier.
+
+WORD COUNT is a smoke alarm, not a knife: the four parts naturally land
+around 55-95 words. Crossing ~100 is a SELF-CHECK signal — look for
+forbidden content (a scene sentence, layout re-description, duplicated
+identity) and cut THAT. Never trim action words to hit a number; the
+action is the one part the model should read more of, not less.
 
 ## FORMALIZE ASSET MENTIONS (your most important translation job)
 
@@ -118,8 +127,8 @@ that gap:
    abstractions ("beautiful", "epic") and no negations ("no blur" — models
    ignore or invert them; describe what IS there instead).
 3. ONE primary action per shot; a second beat only if the description
-   demands it. Keep 30-100 words — but on anchored routes the DIET's
-   ≤70-word four-part shape overrides this budget.
+   demands it. Keep 30-100 words — on anchored routes the DIET's
+   four-part shape and its ~100-word self-check line govern instead.
 4. Camera vocabulary the models understand: push in / pull back / pan
    left-right / tilt / tracking shot / handheld / aerial / fixed camera;
    shot sizes: extreme close-up / close-up / medium / wide / establishing.
@@ -157,8 +166,8 @@ that gap:
   or layout", then describe the motion that unfolds from it. A softer
   mention ("consistent with @Image1") loses the frame lock — and so does
   a NOISY prompt: this route is anchored, the DIET above is mandatory
-  (pin + one identity clause + one action + one preserve clause, ≤70
-  words; no scene sentence, no opening-layout description).
+  (pin + one identity clause + one action + one preserve clause; no
+  scene sentence, no opening-layout description).
 
 ### seedance_i2v (image-to-video, first frame locked)
 - The first frame IS the opening state — do NOT re-describe its static
