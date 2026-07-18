@@ -557,3 +557,33 @@ shot1/2 同样带噪却成功 = i2v 通道级硬锁不吃 prompt 噪声,反证�
   仍是不合格 hint。
 
 测试:test_prompt_diet_attempt3.py 增至 21 条。全套 474 通过。
+
+---
+
+## 追加需求(2026-07-18,dev-rl 分支,已实现):S0 RL 数据管道
+
+用户批准 RL 方案(docs/RL_TOOLCALLING_RESEARCH_2026_07_18.md)后的第一步:
+
+- **decision_id 贯通**:brain_log 每条记录自发 16 位 uuid 并返回;
+  _brain_pick/_decide(三条路径)/orchestrator.decide 把 id 写进决策
+  dict。决策与延迟结局从"时序猜"变"id 连"。
+- **结局记录**(与决策同文件 brain_calls.jsonl):`repair/outcome`
+  (verifier accept/reject/stop,靠 decision_id 连修复决策;
+  generate_loop 两处)+ `window/shot_outcome`(每镜 converged/
+  stop_reason/repair_turns/条件决策 id;窗口主循环)。orchestrator
+  日志补 tools_menu(完整菜单条目,重建 prompt 用)。
+- **prompt 单源**:决策 prompt 构建抽为 `window_loop.decision_prompt`,
+  生产与数据集构建器 import 同一函数 —— 训练分布=生产分布逐字符一致
+  (Crayotter "一处 schema 三处消费" 原则)。
+- **scripts/rl/build_dataset.py**:run 目录 → sft/kto/dpo_pairs/
+  eval_holdout/excluded 五个 jsonl。标签规则 v1 保守("不怪它的失败
+  不进它的坏样本";修复=verifier 判决、条件/润色=零修复收敛、结构层
+  失败=坏、归因不清=排除且写明原因)。成对样本两路:enhancer 拒/过
+  重试对(confidence 1.0)、修复拒-收相邻轮对(0.7 如实标注)。旧
+  格式日志诚实排除不崩(attempt3 实测:1 坏样本 + 19 条带原因排除)。
+- **scripts/rl/eval_replay.py**:holdout 重放 + 生产同款校验器打分
+  (parse/in_menu/refs_ok/agree/pass^k),对任意 OpenAI 兼容端点,
+  零生成费;三基线纪律(原始底座/仅 SFT/仅格式奖励)写入 README。
+- 训练脚本(TRL SFT/KTO/DPO)属 S1,不进本仓库依赖。
+
+测试:tests/unit/test_rl_dataset.py(6 条,全离线)。全套 480 通过。

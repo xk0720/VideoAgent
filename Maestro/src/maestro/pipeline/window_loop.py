@@ -502,6 +502,21 @@ _KIND_TO_SKILL = {"image-plan": "image_plan",
                   "generation-condition": "window_generation"}
 
 
+def decision_prompt(skill_text: str, menu: list, context: dict) -> str:
+    """window 决策(image-plan / generation-condition)喂给 brain 的完整
+    prompt。S0(2026-07-18):单源导出 —— 训练数据集构建器 import 同一个
+    函数重建 prompt,训练分布与生产分布逐字符一致(Crayotter 的
+    "一处 schema 三处消费" 原则)。"""
+    return (
+        skill_text
+        + "\n\nTHIS TURN (JSON):\n"
+        + json.dumps({"menu": menu, **context}, ensure_ascii=False)
+        + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
+          '"reason": "<one short sentence>", ... optional semantic fields '
+          "per the skill above (images / video_prompt / use_prev_tail_video)}"
+    )
+
+
 def _skill_body(kind: str) -> str:
     """载入该决策类型的技能全文(缓存);没有就返回内联短指令。
     装载结果必须响亮可见(2026-07-15 用户令:百分之百确定技能进了 prompt
@@ -557,14 +572,7 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
                    # 裁决 1.3:输入也要可审计 —— THIS TURN 的完整上下文
                    # (技能全文不重复存,skill_chars 已证明其在场)
                    "context": context}
-    prompt = (
-        skill_text
-        + "\n\nTHIS TURN (JSON):\n"
-        + json.dumps({"menu": menu, **context}, ensure_ascii=False)
-        + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
-          '"reason": "<one short sentence>", ... optional semantic fields '
-          "per the skill above (images / video_prompt / use_prev_tail_video)}"
-    )
+    prompt = decision_prompt(skill_text, menu, context)
     raw = ""
     try:
         raw = llm.complete(prompt)
@@ -604,11 +612,12 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
         out["use_prev_tail_video"] = data["use_prev_tail_video"]
     # debug 日志(2026-07-14 用户令):brain 的原始输出 + 校验后决策全量落盘,
     # 拿它对照 docs/CONDITION_MODEL_MAP.md §1 就能核对"该策略调了哪个模型"。
-    brain_log(f"window/{kind}", {
+    did = brain_log(f"window/{kind}", {
         "label": context.get("shot", {}).get("label")
         if isinstance(context.get("shot"), dict) else None,
         "menu": sorted(valid), "raw": raw, "parsed": dict(out),
         "usable": True, **skill_proof})
+    out["decision_id"] = did
     return out
 
 
@@ -790,10 +799,11 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
              "reason": "replaying a verified strategy from a similar past episode"}
         # attempt3 教训(2026-07-18):重放路径不记 context,排查时会误读
         # 成"junction 是 null" —— 三条路径的 log 口径必须一致。
-        brain_log(f"window/{kind}",
-                  {"label": label, "parsed": dict(d), "via": "episode",
-                   "usable": True, "menu": [m["name"] for m in menu],
-                   "context": context})
+        d["decision_id"] = brain_log(
+            f"window/{kind}",
+            {"label": label, "parsed": dict(d), "via": "episode",
+             "usable": True, "menu": [m["name"] for m in menu],
+             "context": context})
         return d
     picked = _brain_pick(llm, kind, menu, context)
     if picked:
@@ -802,10 +812,11 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
         if name in names:
             d = {"strategy": name, "via": "fallback",
                  "reason": "deterministic priority (brain reply unusable)"}
-            brain_log(f"window/{kind}",
-                      {"label": label, "parsed": dict(d), "via": "fallback",
-                       "usable": True, "menu": [m["name"] for m in menu],
-                       "context": context})
+            d["decision_id"] = brain_log(
+                f"window/{kind}",
+                {"label": label, "parsed": dict(d), "via": "fallback",
+                 "usable": True, "menu": [m["name"] for m in menu],
+                 "context": context})
             return d
     return {"strategy": "t2v", "via": "fallback", "reason": "empty menu guard"}
 
@@ -2122,6 +2133,19 @@ def generate_movie_windowed(
         )
         shot_results.append(res)
         best = res.clip
+
+        # S0(RL 数据管道):每镜结束记一条【结局】—— 数据集构建器按
+        # label 把本镜所有决策(条件/润色/图计划)连到这条结局上打标签;
+        # 修复决策另有逐条 repair/outcome(靠 decision_id 连接)。
+        brain_log("window/shot_outcome", {
+            "label": entry.label, "shot_idx": entry.shot_idx,
+            "converged": bool(res.converged),
+            "stop_reason": res.stop_reason,
+            "repair_turns": len(res.actions),
+            "gen_calls": res.gen_calls,
+            "condition_decision_id": d.get("decision_id"),
+            "decided_strategy": d["strategy"], "decided_via": d["via"],
+        })
 
         # 台账条件按【初选胜出者】归因(res.initial_winner):n_candidates>1 时
         # 各 seed 的条件可能不同(某个 seed 异常降级了),最终出镜的是锦标赛

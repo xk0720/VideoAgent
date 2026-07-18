@@ -362,7 +362,7 @@ class OrchestratorAgent:
             log.info("orchestrator REPLAY learned repair skill=%s step=%d tool=%s",
                      skill_decision["skill_id"], skill_decision["step_idx"],
                      skill_decision["tool"])
-            brain_log("repair/decide", {
+            skill_decision["decision_id"] = brain_log("repair/decide", {
                 "shot_idx": spec.shot_idx, "via": "skill",
                 "parsed": {k: skill_decision[k]
                            for k in ("tool", "args", "skill_id", "step_idx")
@@ -382,7 +382,8 @@ class OrchestratorAgent:
             + json.dumps(user_ctx, ensure_ascii=False, indent=2)
             + '\n\nRespond with STRICT JSON only: {"tool": ..., "args": {...}, "reason": ...}'
         )
-        # 落日志的 context 去掉 tools(菜单描述是静态长文,名单另记 menu)
+        # 落日志的 context 去掉 tools(菜单描述是静态长文,名单另记 menu;
+        # S0:完整菜单条目另记 tools_menu —— 数据集构建器重建 prompt 用)
         log_ctx = {k: v for k, v in user_ctx.items() if k != "tools"}
         reply = self.llm.complete(prompt)
         data = _extract_json(reply)
@@ -395,7 +396,8 @@ class OrchestratorAgent:
                 "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
                 "raw": reply, "parsed": data if isinstance(data, dict) else None,
                 "usable": False, "skill": "orchestrator",
-                "skill_chars": len(self._skill_prompt), "context": log_ctx})
+                "skill_chars": len(self._skill_prompt), "context": log_ctx,
+                "tools_menu": menu})
             self._log("decide", {"shot_idx": spec.shot_idx},
                       {"valid": False, "raw": (reply or "")[:200]})
             return dict(INVALID)
@@ -409,11 +411,11 @@ class OrchestratorAgent:
         log.info("orchestrator brain decided tool=%s reason=%s",
                  decision["tool"], decision["reason"])
         # debug 日志(2026-07-14 用户令):修复 brain 的 tool call 原文全量留底
-        brain_log("repair/decide", {
+        decision["decision_id"] = brain_log("repair/decide", {
             "shot_idx": spec.shot_idx, "menu": sorted(valid_names),
             "raw": reply, "parsed": dict(decision), "usable": True,
             "skill": "orchestrator", "skill_chars": len(self._skill_prompt),
-            "context": log_ctx})
+            "context": log_ctx, "tools_menu": menu})
         self._log("decide", {"shot_idx": spec.shot_idx},
                   {"valid": True, "via": "llm", "tool": decision["tool"],
                    "args": decision["args"], "reason": decision["reason"]})

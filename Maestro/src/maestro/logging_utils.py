@@ -41,12 +41,19 @@ def set_brain_log(path) -> None:
     _BRAIN_LOG_PATH = str(path) if path else None
 
 
-def brain_log(stage: str, record: dict) -> None:
+def brain_log(stage: str, record: dict) -> str:
     """记一条 brain 决策:终端 INFO 一行(紧凑)+ JSONL 一行(全量,含 raw)。
 
     record 约定字段:label/shot_idx(定位哪一镜)、menu(可选项名)、
     raw(LLM 原始回复,完整保留)、parsed(校验后的决策 dict 或 None)、
-    via(episode/llm/fallback/skill)。"""
+    via(episode/llm/fallback/skill)。
+
+    S0(RL 数据管道,2026-07-18):每条记录自动带 `decision_id`(uuid),
+    并把它返回给调用方 —— 决策与它的延迟结局(repair/outcome、
+    window/shot_outcome)靠这个 id 显式连接,训练数据不再靠时序猜。"""
+    import uuid
+
+    record.setdefault("decision_id", uuid.uuid4().hex[:16])
     log = get_logger("brain")
     try:
         compact = {k: v for k, v in record.items() if k != "raw"}
@@ -56,7 +63,7 @@ def brain_log(stage: str, record: dict) -> None:
         pass
     path = _BRAIN_LOG_PATH or os.getenv("MAESTRO_BRAIN_LOG")
     if not path:
-        return
+        return record["decision_id"]
     try:
         from pathlib import Path
 
@@ -67,3 +74,4 @@ def brain_log(stage: str, record: dict) -> None:
                                ensure_ascii=False, default=str) + "\n")
     except OSError as exc:
         log.warning("brain_log write failed (%s): %s", path, exc)
+    return record["decision_id"]

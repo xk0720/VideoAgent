@@ -60,7 +60,7 @@ from ..agents.refiner import RefinerAgent
 from ..agents.verifier import VerifierAgent
 from ..critics.board import ReviewBoard
 from ..critics.tournament import Tournament
-from ..logging_utils import get_logger
+from ..logging_utils import brain_log, get_logger
 from ..memory.lesson_library import LessonLibrary
 from ..memory.skill_library import SkillLibrary
 from ..models.image_edit import BaseImageEditClient, MockImageEditClient
@@ -965,6 +965,10 @@ def generate_shot_orchestrated(
                              consecutive_rejects, patience)
                     break
                 continue
+            brain_log("repair/outcome", {
+                "decision_id": decision.get("decision_id"),
+                "shot_idx": spec.shot_idx, "turn": turn,
+                "tool": "accept", "outcome": "stop"})
             actions.append({"tool": "accept", "args": {}, "outcome": "stop",
                             "reason": decision.get("reason", ""),
                             "defects": defect_report.to_brain_json(),
@@ -1025,6 +1029,16 @@ def generate_shot_orchestrated(
             decision["verifier_issues"] = _verdict.get("issues", [])
         brain_history.append((decision, outcome, round(new_total, 4)))
         history_scores.append(best.metric_scores.get("weighted_total", 0.0))
+        # S0(RL 数据管道):判决靠 decision_id 显式连回决策记录 ——
+        # verifier 的 accept/reject 是修复决策的天然训练标签。
+        brain_log("repair/outcome", {
+            "decision_id": decision.get("decision_id"),
+            "shot_idx": spec.shot_idx, "turn": turn,
+            "tool": decision.get("tool"), "outcome": outcome,
+            "new_total": round(new_total, 4),
+            "verifier_score": (_verdict or {}).get("score")
+            if _verdict is not None else None,
+        })
         actions.append({
             "tool": decision.get("tool"), "args": decision.get("args", {}),
             "reason": decision.get("reason", ""), "via": via,
