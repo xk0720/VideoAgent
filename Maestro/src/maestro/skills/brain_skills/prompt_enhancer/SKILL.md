@@ -27,15 +27,26 @@ never change WHAT happens in the shot.
   referenceable=false (FIRST_FRAME/LAST_FRAME/CONTINUATION_SOURCE/the
   reference video on the retired kling route) must NOT be @-referenced — describe the motion instead.
   State rows are the CUT HANDOFF facts. `cast` rows carry the
-  movie-wide CANONICAL appearance descriptor per character and a
-  `setting` row the canonical scene dressing+lighting — for every
-  character VISIBLE in this shot, restate its descriptor VERBATIM in the
-  prompt (video models have no cross-call memory; this is the only
-  identity carrier on unanchored routes and re-entries). Use ALL rows;
-  invent NONE.
+  movie-wide CANONICAL appearance contract per character in the form
+  "static: …; dynamic: …" and a `setting` row the canonical scene
+  dressing+lighting; each row carries a `note` telling you how THIS
+  route uses it — follow the note. Universal law: the labels "static:"/
+  "dynamic:" and the dynamic list are contract METADATA and NEVER appear
+  in a prompt — restate the static half as natural prose ("the small
+  orange-and-white shorthair cat with amber eyes and white paws"), full
+  on unanchored routes, one short clause on anchored ones (a
+  deterministic scrubber cleans verbatim leaks, but a paraphrased leak
+  is yours to prevent). Use ALL rows; invent NONE — never add a visual
+  specific (a color, a material, a pattern) that appears in no row.
   State roles:
   - `opening_state_actual` — what a VLM actually saw in the previous shot's
-    final frame. The prompt must OPEN from this exact state.
+    final frame. The prompt must OPEN from this exact state — but take
+    only its POSITION and MOTION facts. DRIFT IS NOT PERPETUATED
+    (2026-07-18): when its appearance details contradict the cast
+    contract or the identity reference (a collar the contract does not
+    have), the pixels have drifted — write the CONTRACT identity, never
+    copy the drifted detail into the prompt; the reviewer handles the
+    drift as a defect.
   - `previous_end_state_script` — what the script intended that cut to be
     (when it contradicts the actual, trust the ACTUAL).
   - `required_end_state` — the state THIS shot must end in. If it says the
@@ -46,6 +57,34 @@ never change WHAT happens in the shot.
 - `current_prompt` — the planner's draft (never empty: when the planner
   wrote none it falls back to the shot description, so a current_prompt
   identical to shot_description means "no draft yet").
+
+## ANCHORED-ROUTE PROMPT DIET (the law — field lesson 2026-07-18)
+
+An ANCHORED route is one whose opening is already decided by pixels:
+seedance_i2v, seedance_i2v_flf, seedance_extend, and seedance_t2v whenever
+the manifest's @Image1 row is the previous shot's final frame (the PIN).
+On these routes the prompt-level first-frame lock is SOFT — every fact you
+re-establish in text COMPETES with the anchor. A field run proved it: a
+~140-word prompt (scene sentence + full descriptor + appended fix) made
+the model ignore @Image1 and re-render the scene from text in a loop;
+trimming the SAME prompt to four parts fixed the SAME shot.
+
+On an anchored route the prompt is EXACTLY four parts, ≤70 words total:
+1. THE PIN (t2v pin route only): "The shot opens EXACTLY on @Image1 — the
+   final moment of the previous shot; do not alter its scene or layout."
+2. ONE identity clause tying the cast look to its reference ("@Image2
+   supplies the cat's appearance: a small orange-and-white shorthair").
+3. ONE action sentence — only what happens NEXT, nothing already visible
+   in the anchor.
+4. ONE preserve clause: "preserve the established scene, lighting and
+   camera" (this REPLACES any setting restatement).
+
+FORBIDDEN on anchored routes: a scene-establishing sentence (the setting
+words re-stated as prose — that is an instruction to BUILD a new scene);
+re-describing the opening layout or the subject's current position/facing
+(that is what @Image1 shows); more than one identity clause. The full
+setting/descriptor restatement rules below apply to UNANCHORED routes
+(fresh t2v scene cuts, re-entries) — there the text is the only carrier.
 
 ## FORMALIZE ASSET MENTIONS (your most important translation job)
 
@@ -79,26 +118,27 @@ that gap:
    abstractions ("beautiful", "epic") and no negations ("no blur" — models
    ignore or invert them; describe what IS there instead).
 3. ONE primary action per shot; a second beat only if the description
-   demands it. Keep 30-100 words.
+   demands it. Keep 30-100 words — but on anchored routes the DIET's
+   ≤70-word four-part shape overrides this budget.
 4. Camera vocabulary the models understand: push in / pull back / pan
    left-right / tilt / tracking shot / handheld / aerial / fixed camera;
    shot sizes: extreme close-up / close-up / medium / wide / establishing.
 5. Physics wording helps physics: name the causal chain ("rolls off the
    edge, drops, bounces once with a slight squash") — reviewers check it.
 6. English only. No frame numbers, no model parameters, no file paths.
-7. REDUNDANCY FOR PRECISION (ViMax-derived): repeating a critical visual
-   fact is a FEATURE, not a flaw — video models weight repeated tokens.
-   Restate the identity words of the key character, the KEY OBJECT's
-   look ("the clear drinking glass … the glass, still intact,") and the
-   load-bearing SPATIAL relation ("at the very edge of the table … still
-   at the table's edge") once more at the moment they matter most. Two
-   mentions of a critical fact beat one elegant mention; do not exceed
-   the word budget to do it.
-8. FRAME GEOGRAPHY (ViMax-derived): keep/add explicit in-frame position
-   and facing for each visible subject ("left of frame, facing right",
-   "back to camera") and, in close-ups, name exactly which body part or
-   region fills the frame. Never mention anything not visible in this
-   shot — describe only what the camera sees.
+7. REDUNDANCY FOR PRECISION (ViMax-derived — UNANCHORED routes only):
+   repeating a critical visual fact is a FEATURE on routes where text is
+   the only carrier — restate the key character's identity words, the
+   KEY OBJECT's look and the load-bearing SPATIAL relation once more at
+   the moment they matter most. On ANCHORED routes this rule is OFF: the
+   anchor already repeats every visual fact in pixels; extra text
+   restatement is the noise that breaks the pin (see the DIET above).
+8. FRAME GEOGRAPHY (ViMax-derived): explicit in-frame position and
+   facing ("left of frame, facing right") for each visible subject —
+   but on ANCHORED routes only for NEW positions the action creates,
+   never for the opening layout (that is what the anchor shows). In
+   close-ups, name exactly which body part or region fills the frame.
+   Never mention anything not visible in this shot.
 
 ## Family-specific syntax (get this wrong and the conditions are IGNORED)
 
@@ -115,7 +155,10 @@ that gap:
   OPEN the prompt with the explicit pin "The shot opens EXACTLY on
   @Image1 — the final moment of the previous shot; do not alter its scene
   or layout", then describe the motion that unfolds from it. A softer
-  mention ("consistent with @Image1") loses the frame lock.
+  mention ("consistent with @Image1") loses the frame lock — and so does
+  a NOISY prompt: this route is anchored, the DIET above is mandatory
+  (pin + one identity clause + one action + one preserve clause, ≤70
+  words; no scene sentence, no opening-layout description).
 
 ### seedance_i2v (image-to-video, first frame locked)
 - The first frame IS the opening state — do NOT re-describe its static

@@ -178,6 +178,60 @@ def _strip_markers(text: str) -> str:
     return _MARKER_RE.sub(r"\1", text or "")
 
 
+# 锚定路线(开场由像素锚 / @Image1 PIN 决定)。attempt3 实锤(2026-07-18):
+# 这些路线上 prompt 里的建景句(setting 整句重述)和开场布局重述会和锚
+# 竞争 —— t2v 会照文字重新搭场景,首帧软锁被稀释;瘦身法则由此而来。
+_ANCHORED_STRATEGIES = {"i2v_keyframe", "flf2v_own_pair", "flf2v_bridge",
+                        "ti2v_prev_last", "ti2v_prev_plus_keyframe",
+                        "extend_prev"}
+
+# 首帧强锁句(用户实测有效的原话;兜底模板与全修合成共用一处定义)
+_PIN_SENTENCE = ("The shot opens EXACTLY on @Image1 — the final moment of "
+                 "the previous shot; do not alter its scene or layout.")
+
+# cast 契约值的格式:static: X; dynamic: Y
+_CAST_SPLIT_RE = re.compile(r"static:\s*(.+?);\s*dynamic:.*",
+                            re.IGNORECASE | re.DOTALL)
+
+
+def _scrub_cast_labels(text: str, cast: Optional[dict] = None) -> str:
+    """"static: X; dynamic: Y" 是规划层契约格式,不是给生成模型看的
+    (attempt3:标签连同 dynamic 清单逐字进了 prompt)。精确清洗:cast
+    值整串出现 → 替换为 static 半句;残留的裸 "static:" 标签词剥掉;
+    "dynamic:" 还残留(brain 改写过,无法安全定界)→ 响亮告警,不盲动刀。"""
+    out = str(text or "")
+    for v in (cast or {}).values():
+        s = str(v or "").strip()
+        m = _CAST_SPLIT_RE.match(s)
+        if m and s in out:
+            out = out.replace(s, m.group(1).strip())
+    out = re.sub(r"\bstatic:\s*", "", out)
+    if re.search(r"\bdynamic:", out, re.IGNORECASE):
+        log.warning("cast label 'dynamic:' survived in an outgoing prompt "
+                    "(the writer paraphrased the contract) — passing "
+                    "through unmodified; fix the writer via skill")
+    return out
+
+
+def _regen_prompt(strategy: str, base: str, hint: str, slots: list) -> str:
+    """全修(regenerate)的 prompt 合成 —— P0-B(2026-07-18,attempt3):
+    hint 非空时【替换】原动作部分,绝不追加("base + Fix: hint" 让动作说
+    两遍、身份说三遍,越修越长,首帧软锁被稀释)。形状 = 用户实测成功的
+    裁剪版:PIN 句(仅 @Image1=上镜尾帧的策略)+ hint(评审给的动作+
+    preserve 句);漏提的可引用槽位由引用闸门自动补句。hint 引用了清单外
+    编号 → 回退原 base(错编号绝不出门)。"""
+    if not hint:
+        return base
+    pin = _PIN_SENTENCE if strategy == "ti2v_prev_plus_keyframe" else ""
+    prompt = f"{pin} {hint}".strip() if pin else hint
+    fixed, audit = validate_references(prompt, slots)
+    if not audit["ok"]:
+        log.warning("regen hint references unknown slots %s — falling back "
+                    "to the original prompt", audit["unknown"])
+        return base
+    return fixed
+
+
 def _cast_in_shot(description: str, cast: dict) -> dict:
     """按 <标记> 求本镜出场角色的 cast 子集(大小写不敏感全等匹配)。
     诚实降级:描述无任何标记(旧剧本/兜底层)或标记全都对不上 cast 键
@@ -681,8 +735,12 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
     if replay_hint and replay_hint in names:
         d = {"strategy": replay_hint, "via": "episode",
              "reason": "replaying a verified strategy from a similar past episode"}
-        brain_log(f"window/{kind}", {"label": label, "parsed": dict(d),
-                                     "via": "episode", "usable": True})
+        # attempt3 教训(2026-07-18):重放路径不记 context,排查时会误读
+        # 成"junction 是 null" —— 三条路径的 log 口径必须一致。
+        brain_log(f"window/{kind}",
+                  {"label": label, "parsed": dict(d), "via": "episode",
+                   "usable": True, "menu": [m["name"] for m in menu],
+                   "context": context})
         return d
     picked = _brain_pick(llm, kind, menu, context)
     if picked:
@@ -691,8 +749,10 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
         if name in names:
             d = {"strategy": name, "via": "fallback",
                  "reason": "deterministic priority (brain reply unusable)"}
-            brain_log(f"window/{kind}", {"label": label, "parsed": dict(d),
-                                         "via": "fallback", "usable": True})
+            brain_log(f"window/{kind}",
+                      {"label": label, "parsed": dict(d), "via": "fallback",
+                       "usable": True, "menu": [m["name"] for m in menu],
+                       "context": context})
             return d
     return {"strategy": "t2v", "via": "fallback", "reason": "empty menu guard"}
 
@@ -761,7 +821,8 @@ def _image_plan_menu(video_gen, asset_memory: Optional[AssetMemory]) -> list[dic
 
 def _execute_image_plan(decision: dict, entry, video_gen,
                         asset_memory: Optional[AssetMemory], retrieval,
-                        out_dir: Path) -> tuple[str, list, str]:
+                        out_dir: Path,
+                        cast: Optional[dict] = None) -> tuple[str, list, str]:
     """执行 Image Plan → (最终 plan, images 列表, degraded_from)。
 
     每张图独立按来源产出(Q-B 混搭);产不出的图【丢弃并降级计划】——
@@ -789,10 +850,11 @@ def _execute_image_plan(decision: dict, entry, video_gen,
     for i, role in enumerate(roles):
         spec_i = specs[i] if i < len(specs) else {}
         src = spec_i.get("source") or _default_source(video_gen, asset_memory)
-        # <角括号> 标记剥除:query 会成为 t2i prompt / 检索词,生成模型
-        # 不认识规划层标记(brain 抄写 shot 描述时可能连标记一起抄)。
-        query = _strip_markers(spec_i.get("description")
-                               or entry.description)
+        # 出口清洗:query 会成为 t2i prompt / 检索词 —— 剥 <标记>、洗
+        # cast 契约标签(brain 抄写描述/契约时可能原样带出)。
+        query = _scrub_cast_labels(
+            _strip_markers(spec_i.get("description") or entry.description),
+            cast)
         img, actual = None, ""
         try:
             img, actual = _make_keyframe(
@@ -1274,9 +1336,7 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
             # 裁决 1.2/G-2:@Image1 = 上镜尾帧,prompt 强锁开场(用户实测
             # t2v 的 @Image1 基本能固定首帧);本镜图/素材视频逐个带实况语义
             fallback_prompt = (
-                spec.prompt + ". The shot opens EXACTLY on @Image1 — the "
-                "final moment of the previous shot; do not alter its scene "
-                "or layout. "
+                spec.prompt + ". " + _PIN_SENTENCE + " "
                 + " ".join(_mention(entry, p_, i + 2)
                            for i, p_ in enumerate(own))
                 + "".join(f" @Video{i + 1} is the user's source video "
@@ -1497,13 +1557,32 @@ def _conditions_for_prompt(strategy: str, entry, prev,
     if own_end:
         conds.append({"kind": "state", "role": "required_end_state",
                       "description": own_end})
-    # 跨镜一致性描述符(2026-07-17):出现在本镜的角色,其官方外观描述
-    # 必须逐字进 prompt(视频模型跨调用零记忆,这是唯一载体)。
+    # 跨镜一致性描述符(2026-07-17;2026-07-18 attempt3 修订:按锚定/
+    # 无锚分流)。锚定路线上场景/身份已经在锚里 —— prompt 重述整句会诱导
+    # t2v 重新建景,稀释首帧软锁;注记直接写进条件行,不赌 skill 记忆。
+    anchored = strategy in _ANCHORED_STRATEGIES
     for name, desc in (cast or {}).items():
-        conds.append({"kind": "cast", "role": name, "description": desc})
+        conds.append({
+            "kind": "cast", "role": name, "description": desc,
+            "note": ("contract format — restate ONLY the static half as "
+                     "natural prose; the words 'static:'/'dynamic:' and "
+                     "the dynamic list never enter the prompt."
+                     + (" Anchored route: ONE short identity clause is "
+                        "enough — the anchor carries the look."
+                        if anchored else
+                        " Unanchored route: the full static half, woven "
+                        "as natural prose, is the only identity carrier."))})
     if setting:
-        conds.append({"kind": "setting", "role": "scene_setting",
-                      "description": setting})
+        conds.append({
+            "kind": "setting", "role": "scene_setting",
+            "description": setting,
+            "note": ("background contract — the anchor already carries the "
+                     "scene; do NOT restate this as a scene-establishing "
+                     "sentence, write only a short preserve clause like "
+                     "'preserve the established scene, lighting and camera'."
+                     if anchored else
+                     "unanchored route — weave these setting words into "
+                     "the prompt; they are the only scene carrier.")})
     return conds
 
 
@@ -1777,7 +1856,8 @@ def generate_movie_windowed(
         )
         decisions.append({"stage": "image_plan", "label": entry.label, **d})
         plan_final, images, degraded_from = _execute_image_plan(
-            d, entry, video_gen, asset_memory, retrieval, kf_dir)
+            d, entry, video_gen, asset_memory, retrieval, kf_dir,
+            cast=storyboard.cast)
         storyboard.set_image_plan(entry.shot_idx, plan_final, images,
                                   degraded_from=degraded_from)
         log.info("window: %s image-plan → %s (via=%s, %d image(s)%s)",
@@ -1850,9 +1930,10 @@ def generate_movie_windowed(
         cand_keyframes = ([Path(entry.keyframe_path)]
                           if entry.keyframe_path
                           and Path(entry.keyframe_path).exists() else [])
-        # brain 的上下文里 shot 描述带 <标记>,它写 prompt 时可能照抄 ——
-        # 出口一律剥标记(enhanced 同理,见下)。
-        brain_prompt = _strip_markers(d.get("video_prompt", ""))
+        # brain 的上下文里 shot 描述带 <标记>、cast 带契约标签,它写
+        # prompt 时可能照抄 —— 出口一律剥标记+清洗标签(enhanced 同理)。
+        brain_prompt = _scrub_cast_labels(
+            _strip_markers(d.get("video_prompt", "")), storyboard.cast)
         use_tail = bool(d.get("use_prev_tail_video", False))
         slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
                                source_videos=source_videos)
@@ -1870,7 +1951,8 @@ def generate_movie_windowed(
                 base_prompt=brain_prompt or spec.prompt,
                 label=entry.label)
             if enhanced:
-                brain_prompt = _strip_markers(enhanced)
+                brain_prompt = _scrub_cast_labels(_strip_markers(enhanced),
+                                                  storyboard.cast)
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
@@ -1946,16 +2028,20 @@ def generate_movie_windowed(
                             _strategy=d["strategy"], _bp=brain_prompt,
                             _entry=entry, _prev=prev, _spec=spec,
                             _ut=use_tail, _slots=slots,
-                            _dir=shot_dir):
-            base = _bp or _spec.prompt
-            prompt = base + (f" Fix: {hint}" if hint else "")
-            fixed, audit = validate_references(prompt, _slots)
+                            _dir=shot_dir, _cast=storyboard.cast):
+            # P0-B(2026-07-18):hint 替换原动作,不再 " Fix: " 追加 ——
+            # 合成逻辑在 _regen_prompt(可测);hint 过同一套出口清洗。
+            hint_ = _scrub_cast_labels(_strip_markers(hint), _cast)
+            prompt = _regen_prompt(_strategy, _bp or _spec.prompt,
+                                   hint_, _slots)
             v_path, r_cond = _generate_with_condition(
                 _strategy, _entry, _prev, _spec, video_gen, _dir,
                 seed=seed, fps=fps, window_tail_s=window_tail_s,
-                brain_prompt=(fixed if audit["ok"] else base),
+                brain_prompt=prompt,
                 use_prev_tail_video=_ut, source_videos=source_videos)
             r_cond["regen_of_original"] = True
+            r_cond["regen_prompt_mode"] = ("hint_replace" if hint_
+                                           else "base")
             return v_path, r_cond
 
         # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain 修复

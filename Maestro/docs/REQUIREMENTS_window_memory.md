@@ -493,3 +493,39 @@ extractor / script_enhancer 等)。P1 五项 + P2 两项全部采纳:
 
 测试:tests/unit/test_vimax_borrowings.py(10 条:标记剥除/出场过滤/
 诚实降级/词表校验/兜底底稿/出口收口)。全套 458 通过。
+
+---
+
+## 追加裁决(2026-07-18,已实现):attempt3 循环病因 —— 锚定路线 prompt 瘦身
+
+现场证据:shot3/4(ti2v_prev_plus_keyframe,@Image1 软锁)输出循环、不接
+上镜尾帧;用户手删 prompt 至「PIN + 身份 + 一句动作 + preserve 句」后同镜
+成功 —— 软锁经不起噪声稀释,重述的每个事实都在和锚竞争。三类噪声全部
+定位:setting 整句重述(被 t2v 当建景指令)、cast 契约连 "static:/dynamic:"
+标签逐字入 prompt、全修 " Fix: hint" 追加(动作×2、身份×3,越修越长)。
+shot1/2 同样带噪却成功 = i2v 通道级硬锁不吃 prompt 噪声,反证软锁病因。
+
+- **P0-A 瘦身法则**:锚定路线(i2v_keyframe / flf2v_own_pair / flf2v_bridge
+  / ti2v_prev_last / ti2v_prev_plus_keyframe / extend_prev,集合
+  `_ANCHORED_STRATEGIES`)prompt 固定四段式 ≤70 词:PIN + 一句身份 +
+  一句新动作 + 一句 preserve;禁建景句、禁开场布局重述。setting/cast 条件
+  行按锚定/无锚带确定性 `note`(_conditions_for_prompt),无锚路线维持
+  "逐字复述唯一载体"。redundancy/画面地理两条 ViMax 规则同步限定无锚。
+- **P0-B 全修合成**:`_regen_prompt(strategy, base, hint, slots)` —— hint
+  【替换】原动作,不追加;PIN 句仅 ti2v_prev_plus_keyframe 加(常量
+  `_PIN_SENTENCE`,与兜底模板同源);漏提槽位引用闸门自动补;hint 引用
+  未知编号 → 回退 base。台账记 `regen_prompt_mode`。
+- **P0-C 标签清洗**:`_scrub_cast_labels` —— cast 契约值整串出现 → 换成
+  static 半句;裸 "static:" 剥除;改写后的 "dynamic:" 残留无法安全定界 →
+  响亮告警不动刀。出口收口:brain video_prompt / enhanced / 全修 hint /
+  t2i query(_execute_image_plan 传 cast)。skill 同步:static 半句自然
+  语序,标签永不入 prompt(enhancer/window_generation/image_plan)。
+- **P1-D log 口径**:episode/fallback 决策 brain_log 补 context+menu ——
+  attempt3 排查曾误读 "junction 是 null",实为重放路径不记 context。
+- **P1-E 时长-密度法则**(scene_write):动作必须填满秒数;"继续 X" 型
+  过渡不成镜,并入所导向的镜(shot3 整镜 = 再跑一个身长 → 6 秒循环)。
+- **P2-F 漂移不延续**(enhancer):junction 实况只取位置/运动事实;外观
+  与 cast 契约矛盾(蓝项圈)写契约不抄漂移,漂移留给评审当缺陷;禁止
+  发明任何条件行里没有的视觉细节(blue-and-white bowl)。
+
+测试:tests/unit/test_prompt_diet_attempt3.py(11 条)。全套 469 通过。

@@ -41,6 +41,15 @@ strategy, review, repair) hangs off these entries.
    ceiling. Fewer, longer shots beat fragments — each shot runs 4-10 seconds
    (the fixed planning range; the executor maps it onto each generation
    model's own duration domain).
+   DURATION-DENSITY LAW (field lesson 2026-07-18): the described action
+   must FILL the declared seconds. A shot whose whole content is a thin
+   transitional beat ("continues trotting one more body length toward
+   the bowl") cannot fill even 3 seconds — the model has nothing left to
+   do and LOOPS. Never give a "continue X" transition its own shot:
+   merge it into the shot it leads into ("crosses the floor, reaches the
+   bowl, stops and starts eating" is ONE shot). If a beat deserves its
+   own shot, it contains a complete action arc; if it only bridges two
+   arcs, it belongs inside one of them.
 4. Time order IS generation order: the window loop walks the list strictly in
    order, and cross-shot continuity (previous shot's last frame / tail as the
    anchor) only holds between ADJACENT shots — put actions that must flow

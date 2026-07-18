@@ -74,8 +74,11 @@ decision covers three things at once:
 - t2i image descriptions must EMBED the canonical `cast` descriptor of any
   character in the image and the `setting` words (both provided in your
   context) — independently-worded t2i prompts are how the same character
-  gets two different looks. Use the STATIC half of a cast descriptor
-  verbatim; pick the dynamic half (pose/expression) to fit this frame.
+  gets two different looks. Use the STATIC half of a cast descriptor as
+  natural prose — the labels "static:"/"dynamic:" and the dynamic list
+  are contract metadata and never enter a t2i prompt (a deterministic
+  scrubber cleans verbatim leaks; paraphrased leaks are yours to
+  prevent); pick pose/expression from the dynamic half to fit this frame.
 - OPENING SNAPSHOT AS T2I BASE (ViMax-derived, 2026-07-17): when the
   shot's ledger line carries `opening_frame` (the script's purely static
   opening snapshot — first shot / scene cuts), build the first-frame

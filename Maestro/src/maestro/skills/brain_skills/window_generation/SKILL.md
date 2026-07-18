@@ -171,14 +171,25 @@ by the executor — do NOT output them.
 5. Only pick names present in the menu; output strict JSON, nothing else.
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
-7. CAST CONSISTENCY LAW (2026-07-17): the context field `cast` holds the
-   movie-wide canonical appearance descriptor per character and `setting`
-   the canonical scene dressing+lighting. Video models have NO memory
-   across calls — for EVERY character visible in this shot, your
-   `video_prompt` must restate its canonical descriptor VERBATIM (and the
-   setting words when the scene continues). This applies with extra force
-   on t2v (no pixel anchor at all) and whenever a character RE-ENTERS
-   after being absent — the descriptor is its only identity carrier.
+   ANCHORED-ROUTE DIET (field lesson 2026-07-18): on strategies whose
+   opening is pixel-decided (i2v_keyframe, flf2v_own_pair, flf2v_bridge,
+   ti2v_prev_last, ti2v_prev_plus_keyframe, extend_prev) keep the draft
+   LEAN — pin (where the syntax has one) + one identity clause + one
+   action sentence + one preserve clause, ≤70 words. Never restate the
+   setting as a scene-establishing sentence and never re-describe the
+   opening layout: the anchor already carries them, and a noisy prompt
+   makes t2v rebuild the scene from text instead of continuing from
+   @Image1 (this exact failure produced looping shots in the field).
+7. CAST CONSISTENCY LAW (2026-07-17; scoped 2026-07-18): the context
+   field `cast` holds the movie-wide appearance contract per character
+   ("static: …; dynamic: …") and `setting` the canonical scene
+   dressing+lighting. The labels "static:"/"dynamic:" and the dynamic
+   list are metadata and NEVER enter `video_prompt` — use the static
+   half as natural prose. On UNANCHORED routes (t2v/t2v_own_refs scene
+   cuts, re-entries after absence) the full static half is the only
+   identity carrier — weave it in completely, plus the setting words.
+   On ANCHORED routes one short identity clause suffices (the anchor
+   carries the look; see rule 6).
 8. JUNCTION RULES (motion continuity across the cut — the #1 cause of
    broken movies):
    - When `junction.prev_last_frame_actual` exists, your `video_prompt`
