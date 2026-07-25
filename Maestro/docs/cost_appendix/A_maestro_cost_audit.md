@@ -1,0 +1,44 @@
+# Maestro Cost Audit — pipeline call sites, measured runs, ranked leaks
+
+Root: `/Users/kevin/Desktop/Kevin/repositories/VideoAgent/Maestro` (all paths below relative to this root).
+
+## (a) Cost-model table — every paid call site
+
+| Call | Site | Fires | Multiplier |
+|---|---|---|---|
+| **t2v/i2v generate** | `src/maestro/models/video_gen_backends.py:175` (`generate`), submitted via `_run_task` :372 | 1× per shot per seed (initial candidates, `src/maestro/pipeline/window_loop.py:2049-2075`); again per full-regen repair (`regen_fn` closure `window_loop.py:2084-2108` → `src/maestro/agents/orchestrator.py:517-535`); again for `keyframe_edit` (:537-553) and `simulate_reference` (:610); once for baseline anchor (`window_loop.py:1699-1760`, `--baseline-anchor`) | `n_candidates` × repair turns (`max_turns`); **+1 hidden call**: exception during a conditioned strategy silently re-generates the same seed as plain t2v (`window_loop.py:2058-2070`) |
+| **flf2v `frame_to_frame`** | `video_gen_backends.py:462` | segment repair interior/tail spans (`src/maestro/pipeline/timeline.py:313` `propagate_repair`, cascade-free since 53afe61), `flf2v_bridge` strategy | per repair turn; legacy i2v+cascade fallback (up to `max_cascade=4` extra calls, `timeline.py:322`) still live when backend lacks flf2v |
+| **`extend`** | `video_gen_backends.py:595` | `extend_prev` strategy + `extend_clip` repair; billed only new segment (:611-612) | per turn |
+| **`edit_video`/depth/style** | `video_gen_backends.py:504-593` | `edit_clip`/`depth_edit`/`style_edit` repairs | per turn; **billed input+output seconds** (`docs/research/wavespeed_api_reference_2026_07.md:15`) ⇒ ~2× per second, menu doesn't weight this |
+| **`multi_image_to_video`** (kling) | `video_gen_backends.py:272` | `multi_image_fusion` strategy | per seed |
+| **`text_to_image`** (flux) | `video_gen_backends.py:439` | keyframe stage when image-plan picks t2i | per shot planned |
+| **image edit** (seedream-v4) | `src/maestro/models/image_edit.py:48-108` | `keyframe_edit`/`keyframe_edit_propagate` repairs | per turn; **never logged** — no `call_log` support; built bare at `scripts/test_window_movie.py:224` |
+| **Gemini `review_shot`** | `src/maestro/models/mllm_backends.py:757` | 1 per NEW candidate clip (initial seeds + every repair output, `generate_loop.py:817-828`, orchestrator `execute` tail :666); cached per (path,mtime) :773 so semantic+physics critics share one call | (n_candidates + repair turns) × shots; payload = whole clip inline base64 (≤18 MB, :568) + condition images + optional reference video, sampled at **5 fps = 5× Gemini's 1-fps default token cost** (`configs/basic.yaml` `video_fps: 5`, `mllm_backends.py:585-587`); ×3 retries on failure (:636-655) |
+| **Gemini `verify_pair`** | `mllm_backends.py:963` | 1 per surviving repair candidate (`src/maestro/agents/verifier.py:44,63-64`) | per turn; **2 full videos inline per call**, baseline re-uploaded every turn (no Files-API reuse) |
+| **Gemini `compare`** | `mllm_backends.py:937` | tournament when n_candidates>1 | **2 calls per pair** (bidirectional, `src/maestro/critics/tournament.py:24-27`) |
+| **Gemini junction/caption** | `describe_junction` :1094, `caption_image` :1051, `caption_video` :1066 | 1 image call per shot with predecessor (`window_loop.py:1545`); 1 per description-less asset at startup (`window_loop.py:307-390`) | per shot / per asset |
+| **LLM brain** (gpt-5.6-sol, `configs/basic.yaml`; max_tokens 4096 for reasoning models `llm_backends.py:93-94`) | `window_loop.py:615` outline; `_decide` :778 (image-plan + condition, per shot; episode replay skips); `prompt_enhancer` `src/maestro/agents/prompt_enhancer.py:112` (up to 2 attempts/shot); `orchestrator.decide` :346 (per turn); **unlogged** summarizer polish `src/maestro/agents/review_summarizer.py:268` (per turn); anchor prompt | ~5-6 calls/shot + 2/turn; skills of 6-15 KB re-injected每 call (`brain_calls.jsonl` `skill_chars`) |
+
+Defaults actually used: `test_window_movie.py:72-82` — `max_turns=3`, `n_candidates=1` (overrides config's `compose.n_candidates: 2`), `patience=2`, `quality_bar=None` (off), `repair_severity=0.0` (off); `basic.yaml` `resolution: "480p"`.
+
+## (b) Measured runs (`outputs/*/wavespeed_calls.jsonl`, all completed, 0 API failures)
+
+| Run | Video calls | First-attempt | Repair/regen | Billed video-s | Final movie | Overhead |
+|---|---|---|---|---|---|---|
+| attempt1 (07-15, cascades) | 18 (+1 t2i) | 4 (3 shots+anchor) | **14 (78%)** | ≈77 s | 15 s (3 shots) | **5.1×** |
+| attempt2 (07-16) | 14 | 3+anchor | **11 (79%)** | ≈69 s | 20 s | 3.5× |
+| attempt3 (07-17, cascade-free) | 11 | 4+anchor | **6 (55%)** | ≈69 s | 27 s (4 shots) | **2.56×** |
+
+attempt3 detail (storyboard.json cross-check): anchor 5s; shot000: 8s first + 4s accepted segment fix **immediately superseded** by an 8s full regen next turn; shot001: 7s first + 7s regen **rejected** (verifier −2, pure waste; the chosen `regenerate_segment` produced no candidate at all — verifier_score=None); shot002: segment repair again returned None, 6s full regen accepted at score **+1** while metric **fell** 0.772→0.761; shot003: two consecutive 6s full regens both "accepted" while metric fell 0.761→0.7531. Near-duplicates: shot003's 3 calls and shot001's 2 calls share identical prompt bodies (only hint/seed differ). Waste share of repair spend: 7s strictly rejected + ~10s superseded-accepted ≈ **46% of the 37 repair-seconds**; all 4 shots still ended `generated_with_defects`. Zero of 4 `regenerate_segment` decisions in shots 2-3 produced output.
+
+## (c) Ranked leak list
+
+1. **Full-shot regens dominate because segment repair is structurally unavailable on head spans.** `timeline.py:313` head spans need a `first_frame`-role anchor (`orchestrator.py:481-489`); the t2v-continuation strategies (`ti2v_prev_plus_keyframe` etc.) attach prev-last-frame as *reference*, so `propagate_repair` honestly returns None, burning a turn + pushing brain to `regenerate` (whole-duration re-bill). Evidence: attempt3 shots 2-3. Also `orchestrator.py:246-257` routes coverage ≥0.9 to full regen with no cost term.
+2. **Verifier accepts marginal wins at full-clip price; no cost-aware stop.** score=+1 acceptances with declining metric (shot002/003); accepted work superseded next turn (shot000). `repair_severity` (the "don't fix 0.5-severity nits" fuse, `test_window_movie.py:80`) and `quality_bar` both **off by default**.
+3. **No budget cap, no cost ledger anywhere.** No dollar/seconds ceiling in `window_loop.py`/`generate_loop.py`/configs; `wavespeed_calls.jsonl` has params but no cost field; seedream image edits and all Gemini/LLM calls are unmetered (image_edit has no call_log at all).
+4. **No cross-run generation cache.** Only a per-process upload cache (`video_gen_backends.py:158-173`); identical (model, prompt, seed, params) submissions re-bill — attempt2/attempt3 re-generated the same cat film from scratch.
+5. **No draft ladder / fast tier / audio-off-by-default is the only economy.** Single `resolution` constant used for every call incl. throwaway repair candidates (`video_gen_backends.py:105`); no seedance fast/lite variant configured (no "fast" in the backend; `enable_fast_mode` only documented for wan-vace, `docs/research/wavespeed_api_reference_2026_07.md:75`); `_snap_duration` rounds up (:139-156).
+6. **Money before validation.** (i) attempt3 shot000's 2×8s calls carried the raw cast-register text "the static: … dynamic: expression, pose, movement, and eating wakes curled" — script metadata leaked verbatim; the only prompt gate is slot-ref validation (`window_loop.py:2040-2064` `validate_references`), no text-sanity/consistency check. (ii) "blue-collared cat" (not in canonical cast) baked into shots 3-4 prompts → 18s generated continuing a drift a free text check would catch. (iii) enhancer failure (attempt3 brain_calls line 11, `usable: False`) silently falls back to the weaker prompt — that shot (shot001) then wasted its entire repair budget. (iv) baseline anchor is the run's first paid call from a one-shot LLM prompt, pre-any validation (`window_loop.py:1699`).
+7. **Exception fallback double-bills a seed** (`window_loop.py:2058-2070`): failed conditioned call → immediate second t2v call, both paid.
+8. **Gemini side multipliers:** `video_fps: 5` = 5× token sampling on every video part; `verify_pair` re-inlines the unchanged baseline each turn; ×3 retry loop; `n_candidates=2` (config default) would add 2 compare calls/pair + double first-attempt generation.
+9. **Legacy cascade path still reachable** (`timeline.py` i2v+`max_cascade=4` when flf2v unavailable) — the exact mechanism that made attempt1 78% repair spend.
