@@ -1091,6 +1091,22 @@ class GeminiVLM(OpenAICompatVLM):
             "text."}])
         return (reply or "").strip()
 
+    def describe_junction_video(self, video_path) -> str:
+        """接点实况·视频版(2026-07-28 用户裁决):看上一镜的【末尾片段】
+        —— 单帧只能靠运动模糊猜"动没动",片段才有真实的运动信息(方向/
+        快慢/是否仍在动)。失败/桩文件 → ""(调用方回退单帧,绝不编)。"""
+        from ..physics.track_extractor_backends import _looks_like_video
+
+        p = Path(str(video_path))
+        if not p.is_file() or not _looks_like_video(p):
+            return ""
+        got = self._video_part("THE FINAL SECONDS OF THE PREVIOUS SHOT", p)
+        if not got:
+            return ""
+        self._require_key()
+        reply = self._generate(got + [{"text": _JUNCTION_VIDEO_INSTRUCTION}])
+        return (reply or "").strip()
+
     def describe_junction(self, image_path) -> str:
         """接点实况(2026-07-15 需求 ②):看上一镜的【真实尾帧】,一句话
         说清续接状态 —— 每个关键主体在哪、看起来是动是停、朝什么方向。
@@ -1104,6 +1120,16 @@ class GeminiVLM(OpenAICompatVLM):
 
 
 # 接点实况的共用指令(GeminiVLM 与 LocalQwenVLM 同一份 —— 两种模式同语义)
+_JUNCTION_VIDEO_INSTRUCTION = (
+    "This is the FINAL few seconds of a video shot. Describe the state at "
+    "its VERY LAST MOMENT for continuity into the next shot, in ONE "
+    "factual sentence: each key subject's position in the frame, whether "
+    "it is MOVING or AT REST — judge from the actual motion across the "
+    "clip, not from blur — its direction and pace if moving, and the "
+    "camera's own motion if any. Only what is visible — no speculation. "
+    "No other text."
+)
+
 _JUNCTION_INSTRUCTION = (
     "This is the FINAL frame of a video shot. Describe its state for "
     "continuity into the next shot in ONE factual sentence: each key "

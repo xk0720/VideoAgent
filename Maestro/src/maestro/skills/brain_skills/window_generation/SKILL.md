@@ -28,8 +28,12 @@ condition strategy from the gated `menu` and write the video prompt for it.
                        with the recorded failure `reason` — a weighted warning
                        to reason about, NOT an automatic ban (see rule 2).
 - `junction`         — the CUT HANDOFF facts:
-                       `prev_last_frame_actual` = what a VLM actually SAW in
-                       the previous shot's final frame (ground truth pixels);
+                       `prev_last_frame_actual` = what a VLM actually SAW at
+                       the END of the previous shot — judged from its final
+                       seconds of VIDEO, so the motion state (moving vs at
+                       rest, direction, pace) is real, not guessed from blur
+                       (single-frame fallback when video reading is
+                       unavailable);
                        `prev_end_state_script` = what the script SAID that
                        shot should end as; `required_end_state` = the state
                        THIS shot must end in. See the junction rules below.

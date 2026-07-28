@@ -39,8 +39,9 @@ never change WHAT happens in the shot.
   is yours to prevent). Use ALL rows; invent NONE — never add a visual
   specific (a color, a material, a pattern) that appears in no row.
   State roles:
-  - `opening_state_actual` — what a VLM actually saw in the previous shot's
-    final frame. The prompt must OPEN from this exact state — but take
+  - `opening_state_actual` — what a VLM actually saw at the END of the
+    previous shot (from its final seconds of video — true position AND
+    motion). The prompt must OPEN from this exact state — but take
     only its POSITION and MOTION facts. DRIFT IS NOT PERPETUATED
     (2026-07-18): when its appearance details contradict the cast
     contract or the identity reference (a collar the contract does not
