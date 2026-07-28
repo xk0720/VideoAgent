@@ -1542,38 +1542,56 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
 _JUNCTION_CACHE: dict = {}
 
 
-def _junction_state(mllm, prev, cache_dir: Path) -> str:
-    """需求 ②(2026-07-15):看上一镜的【真实尾帧】,出一句续接实况
-    ("the apple is at rest at the center of the floor")。写 prompt 的人
-    从实况起笔,不再照剧本想象。
+def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0) -> str:
+    """需求 ②(2026-07-15;2026-07-28 升级为看片段):出一句续接实况
+    ("the cat is trotting right, camera tracking")。写 prompt 的人从
+    实况起笔,不再照剧本想象。
 
-    诚实链:无上一镜 / 无 VLM / 尾帧抽不出 / VLM 失败 → ""(跳过,不编)。
-    VLM 双模式(用户裁决):describe_junction 由 GeminiVLM(API)和
-    LocalQwenVLM(本地)同名实现,models.mllm.name 切换。"""
+    升级理由(用户裁决):单帧只能靠运动模糊【猜】"动没动",上一镜
+    末尾约 2 秒的片段才能真判断运动状态。诚实链:VLM 支持视频
+    (describe_junction_video,GeminiVLM)→ 看尾段;不支持(LocalQwen)
+    / 尾段裁不出 / 视频路失败 → 回退单帧 describe_junction;仍不行 →
+    ""(跳过,不编)。"""
     if prev is None or not getattr(prev, "video_path", None) or mllm is None:
         return ""
-    fn = getattr(mllm, "describe_junction", None)         or getattr(mllm, "caption_image", None)
+
+    def _cached(media: Path, call) -> str:
+        try:
+            key = (str(media.resolve()), media.stat().st_mtime_ns)
+        except OSError:
+            return ""
+        if key not in _JUNCTION_CACHE:
+            try:
+                _JUNCTION_CACHE[key] = str(call(media) or "").strip()
+            except Exception as exc:
+                log.warning("junction caption failed: %s — trying the next "
+                            "fallback", exc)
+                _JUNCTION_CACHE[key] = ""
+            if _JUNCTION_CACHE[key]:
+                log.info("junction state: %s", _JUNCTION_CACHE[key][:160])
+        return _JUNCTION_CACHE[key]
+
+    # 首选:末尾片段(真实运动信息)
+    vfn = getattr(mllm, "describe_junction_video", None)
+    if vfn is not None:
+        tail = _cut_tail(Path(prev.video_path), tail_s,
+                         Path(cache_dir) / "junction_prev_tail.mp4")
+        if tail is not None:
+            got = _cached(Path(tail), vfn)
+            if got:
+                return got
+            log.warning("junction: video-tail reading failed/empty — "
+                        "falling back to the single last frame")
+    # 回退:单帧(旧行为,LocalQwen 等无视频通道的后端走这里)
+    fn = getattr(mllm, "describe_junction", None) \
+        or getattr(mllm, "caption_image", None)
     if fn is None:
         return ""
     frame = _last_frame(Path(prev.video_path),
                         Path(cache_dir) / "junction_prev_last.png")
     if frame is None:
         return ""
-    fp = Path(frame)
-    try:
-        key = (str(fp.resolve()), fp.stat().st_mtime_ns)
-    except OSError:
-        return ""
-    if key not in _JUNCTION_CACHE:
-        try:
-            _JUNCTION_CACHE[key] = str(fn(fp) or "").strip()
-        except Exception as exc:
-            log.warning("junction caption failed: %s — proceeding without "
-                        "the actual-state hint", exc)
-            _JUNCTION_CACHE[key] = ""
-        if _JUNCTION_CACHE[key]:
-            log.info("junction state: %s", _JUNCTION_CACHE[key][:160])
-    return _JUNCTION_CACHE[key]
+    return _cached(Path(frame), fn)
 
 
 def _conditions_for_prompt(strategy: str, entry, prev,
@@ -1934,7 +1952,8 @@ def generate_movie_windowed(
         # 交接棒(上一镜 end_state / 本镜 end_state)一起进 brain 上下文,
         # prompt 从实况起笔,不照剧本想象。
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
-        junction_actual = _junction_state(mllm, prev, shot_dir)
+        junction_actual = _junction_state(mllm, prev, shot_dir,
+                                          tail_s=window_tail_s)
         junction_ctx = {
             "prev_last_frame_actual": junction_actual or None,
             "prev_end_state_script": (getattr(prev, "end_state", "") or None)

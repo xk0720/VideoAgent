@@ -520,3 +520,61 @@ def test_cast_and_setting_flow_end_to_end(tmp_path, monkeypatch):
     assert "CANONICAL CAST" in text
     assert "orange-and-white cat" in text
     assert "CANONICAL SETTING" in text
+
+
+def test_junction_prefers_video_tail_then_falls_back(tmp_path, monkeypatch):
+    """2026-07-28 用户裁决:接点实况首选看【末尾片段】(单帧靠运动模糊
+    猜"动没动"不可靠);视频路失败 → 诚实回退单帧,不返回空。"""
+    import maestro.pipeline.window_loop as wl
+
+    class _Prev:
+        video_path = str(tmp_path / "prev.mp4")
+
+    tail = tmp_path / "tail.mp4"
+    tail.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32)
+    monkeypatch.setattr(wl, "_cut_tail", lambda v, s, o: tail)
+
+    class _VideoVLM:
+        def __init__(self):
+            self.video_calls = 0
+            self.image_calls = 0
+
+        def describe_junction_video(self, path):
+            self.video_calls += 1
+            assert str(path) == str(tail)          # 看到的是尾段不是帧
+            return "the cat is trotting right, camera tracking alongside"
+
+        def describe_junction(self, path):
+            self.image_calls += 1
+            return "frame-level fallback description"
+
+    wl._JUNCTION_CACHE.clear()
+    vlm = _VideoVLM()
+    got = wl._junction_state(vlm, _Prev(), tmp_path, tail_s=1.5)
+    assert "trotting" in got
+    assert (vlm.video_calls, vlm.image_calls) == (1, 0)   # 视频优先,单帧未动
+    assert wl._junction_state(vlm, _Prev(), tmp_path) == got
+    assert vlm.video_calls == 1                            # 缓存命中
+
+    # 视频路抛异常 → 回退单帧(降级可见于 warning,结果仍是真实况)
+    class _BrokenVideo(_VideoVLM):
+        def describe_junction_video(self, path):
+            raise RuntimeError("no video channel")
+
+    wl._JUNCTION_CACHE.clear()
+    frame = tmp_path / "f.png"
+    frame.write_bytes(b"\x89PNG\r\n")
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: frame)
+    got2 = wl._junction_state(_BrokenVideo(), _Prev(), tmp_path)
+    assert got2 == "frame-level fallback description"
+    wl._JUNCTION_CACHE.clear()
+
+
+def test_gemini_junction_video_honest_on_stub_file(tmp_path, monkeypatch):
+    """魔术字节闸:桩文件(不是真视频)→ "",绝不送 API、绝不编。"""
+    from maestro.models.mllm_backends import GeminiVLM
+
+    vlm = GeminiVLM("gemini", {"api_key": "k"})
+    fake = tmp_path / "fake.mp4"
+    fake.write_bytes(b"not a real video")
+    assert vlm.describe_junction_video(fake) == ""
