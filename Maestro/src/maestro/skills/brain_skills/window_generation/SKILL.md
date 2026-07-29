@@ -173,6 +173,11 @@ by the executor — do NOT output them.
    anchor tends to under-deliver big change. `medium`/empty = neutral.
    It is a HINT to weigh, not a gate — continuity rules above still win.
 5. Only pick names present in the menu; output strict JSON, nothing else.
+   DIALOGUE shots (ledger field `dialogue`, 2026-07-29): do NOT write the
+   spoken line or any audio direction into `video_prompt` — the executor
+   appends the lip-sync clause deterministically. Prefer framings at
+   medium close-up or closer for these shots (lip precision needs face
+   resolution).
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
    ANCHORED-ROUTE DIET (field lesson 2026-07-18): on strategies whose

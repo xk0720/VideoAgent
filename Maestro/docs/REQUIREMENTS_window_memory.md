@@ -557,3 +557,37 @@ shot1/2 同样带噪却成功 = i2v 通道级硬锁不吃 prompt 噪声,反证�
   仍是不合格 hint。
 
 测试:test_prompt_diet_attempt3.py 增至 21 条。全套 474 通过。
+
+---
+
+## 追加需求(2026-07-29,dev-music,已实现):音频线两条极简策略入核心
+
+用户批准的两条(playground 实验版先行,现入管线;`--audio` 总开关):
+
+- **对白音画同步(prompt-only,零加价)**:剧本逐镜可选 `dialogue`
+  (≤6 词,仅角色近景开口时;skill 明确禁旁白滥用)→ ShotEntry.dialogue
+  入台账/to_brain_line/conditioning。执行器出口**确定性追加**口型子句
+  (`_with_dialogue`:引号台词 + "嘴随词动" + **压制背景音**话术 ——
+  生成端只出人声,BGM 由 §F 统一配,两层不打架;引号串去重防重复);
+  该镜生成调用临时开 `generate_audio`(try/finally 还原,非对白镜保持
+  静音即经济);全修闭包同款(hint 替换正文后子句重追加,修复不丢对白)。
+  brain/enhancer 均不写台词(三处 skill 注明,防重复冲突)。
+- **scene 级 BGM(一 scene 一曲,曲内自洽 = 跨段一致性的构造性解法)**:
+  剧本新输出 `music_plan`("scene N" → 情绪+流派+BPM 一句;缺省=刻意
+  静场),归一化后存 StoryboardMemory.music_plan(持久化)。新模块
+  `pipeline/audio_stage.py`:§E concat 前音轨统一(对白镜有声、静音镜
+  补无声 AAC 轨,否则 -c copy 拼接出坏文件)→ §F `add_music`(逐 scene
+  text-to-music(sonilo 首选/ace_step 备选,走 `_run_task` 自动进调用
+  日志)→ 按 scene 起止铺音乐床 → 有人声 sidechain 闪避(0.02/9/
+  200ms/500ms)→ 两遍 loudnorm -14 LUFS → movie_scored.mp4)。诚实链:
+  计划空 → 响亮记录静音片;任一步失败 → 保留无配乐正片,增强层绝不毁片。
+
+对抗审查修正(提交前专项审查,6 处):对白镜异常兜底 t2v 补口型子句
+(否则音频开着台词丢了);口型子句移到引用闸门之后(闸门丢 prompt 不再
+陪葬子句);scene 号无标注时**沿用上一镜**(旧"归 1"会把续接镜错标、
+音乐床错位);逐镜时长探测失败 → 拒绝配乐(不铺错位的床);终混人声轨
+apad + duration=longest + -t 收口(防截掉画面尾巴);两遍 loudnorm 测量
+脆断 → 单遍兜底。ffmpeg ≥ 4.4 依赖已注明。
+
+测试:tests/unit/test_audio_line.py(9 条:解析/持久化/子句去重/scene
+跨度/逐 scene 生曲与偏移/诚实静音)。全套 485 通过。

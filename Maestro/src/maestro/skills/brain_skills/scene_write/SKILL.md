@@ -122,11 +122,17 @@ strategy, review, repair) hangs off these entries.
             "variation": "large|medium|small",
             "opening_frame": "<first shot & scene cuts ONLY: one purely
              STATIC opening snapshot — layout, subjects' positions, NO
-             ongoing action; omit for continuing shots>"},
+             ongoing action; omit for continuing shots>",
+            "dialogue": "<ONE spoken line, at most 6 words, ONLY when a
+             cast character visibly speaks at medium close-up or closer;
+             omit otherwise>"},
            {"description": "Shot 2: <detailed filmable description>",
             "duration_s": <int 4-10>,
             "end_state": "...",
-            "variation": "..."}, ...]}
+            "variation": "..."}, ...],
+ "music_plan": {"scene 1": "<one music description per scene: mood +
+                genre + tempo/BPM; omit a scene (or the field) for
+                deliberate silence>"}}
 
 - `cast` + `setting` are the CROSS-SHOT CONSISTENCY CONTRACT (video models
   have NO memory across calls): one canonical appearance descriptor per
@@ -192,6 +198,21 @@ strategy, review, repair) hangs off these entries.
   it becomes the base for a generated opening still. CONTINUING shots must
   OMIT it (their opening IS the previous end_state; restating it invites
   contradictions).
+- `dialogue` (audio line, 2026-07-29) — ONE spoken line of AT MOST 6
+  words, ONLY when a cast character visibly speaks on screen at medium
+  close-up or closer (lip-sync needs face resolution; a wide shot gets
+  imprecise lips). Omit the field for shots with no on-screen speech —
+  never narrate through it. The executor turns it into the lip-sync
+  clause and enables native audio for that shot; do NOT write the line
+  into the description itself.
+- `music_plan` (film-level, 2026-07-29) — one music description PER
+  SCENE ("scene 1": "warm playful orchestral, light pizzicato, 95bpm").
+  All shots in a scene share ONE generated track (one track cannot
+  disagree with itself — that is how cross-segment music consistency is
+  achieved). State mood + genre + tempo; mark deliberate silence by
+  omitting the scene. Music is mixed in AFTER assembly and ducks under
+  dialogue automatically — do not mention music inside shot
+  descriptions or prompts.
 - YOU decide the shot count — it is never preset. Read it off the story's
   beats, informed by `episode_guidance.past_task_shapes` (how many shots
   similar past tasks used and whether they succeeded). `max_shots` is ONLY a
