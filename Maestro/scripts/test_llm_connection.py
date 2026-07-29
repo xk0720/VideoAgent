@@ -48,16 +48,32 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--config",
                     default=str(REPO_ROOT / "configs" / "basic.yaml"))
+    ap.add_argument("--provider", default="config",
+                    choices=["config", "gemini"],
+                    help="config=按 yaml;gemini=走 Google 的 OpenAI 兼容"
+                         "端点测 Gemini 文本模型($GEMINI_API_KEY)")
     ap.add_argument("--model", default="", help="覆盖 config 里的模型名")
     ap.add_argument("--base-url", default="", help="覆盖 base_url")
     ap.add_argument("--prompt", default="Reply with exactly: pong")
     ap.add_argument("--timeout", type=float, default=60)
     args = ap.parse_args()
 
-    cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    llm_cfg = dict((cfg.get("models") or {}).get("llm") or {})
-    if args.model:
-        llm_cfg["model"] = args.model
+    if args.provider == "gemini":
+        # Google 官方的 OpenAI 兼容层 —— 管线同一个 OpenAICompatLLM 直接
+        # 可用,key 复用评审已在用的 $GEMINI_API_KEY。默认指向最强文本档
+        # (gemini-3.5-pro);②步会列出你 key 下实际在列的型号供校对。
+        llm_cfg = {
+            "name": "openai-compat",
+            "base_url": "https://generativelanguage.googleapis.com"
+                        "/v1beta/openai",
+            "model": args.model or "gemini-3.5-pro",
+            "api_key": os.getenv("GEMINI_API_KEY", ""),
+        }
+    else:
+        cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+        llm_cfg = dict((cfg.get("models") or {}).get("llm") or {})
+        if args.model:
+            llm_cfg["model"] = args.model
     if args.base_url:
         llm_cfg["base_url"] = args.base_url
 
@@ -70,12 +86,16 @@ def main() -> int:
     reasoning = _is_reasoning_model(getattr(llm, "model", ""))
     print(f"   模型族       = {'gpt-5/o 系(max_completion_tokens,无 temperature)' if reasoning else '经典(max_tokens + temperature)'}")
     key = getattr(llm, "api_key", None)
-    src = ("config.api_key" if llm_cfg.get("api_key")
+    src = ("$GEMINI_API_KEY" if args.provider == "gemini"
+           else "config.api_key" if llm_cfg.get("api_key")
            else "$OPENAI_API_KEY" if os.getenv("OPENAI_API_KEY")
            else "$LLM_API_KEY" if os.getenv("LLM_API_KEY") else "无")
     print(f"   api_key     = {_mask(key)}  来源: {src}")
     if not key:
-        print("   ✗ 没有 key —— 先解决这个(export OPENAI_API_KEY=... 或 .env)")
+        need = ("GEMINI_API_KEY" if args.provider == "gemini"
+                else "OPENAI_API_KEY")
+        print(f"   ✗ 没有 key —— 先解决这个(export {need}=... 或在 .env "
+              f"里填上;本仓 .env 存在该行但值为空同样算缺)")
         return 1
 
     import requests
@@ -97,7 +117,10 @@ def main() -> int:
             print(f"   模型列表 {len(ids)} 个;目标模型"
                   f"{'在列 ✓' if hit else ' 不在列 ✗(检查模型名/账号权限)'}")
             if not hit:
-                near = [i for i in ids if "5.6" in i or "gpt-5" in i][:5]
+                pat = ("pro",) if args.provider == "gemini" \
+                    else ("5.6", "gpt-5")
+                near = [i for i in ids
+                        if any(t in i for t in pat)][:8]
                 if near:
                     print(f"   相近可用: {near}")
     except requests.exceptions.RequestException as exc:
