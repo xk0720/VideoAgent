@@ -59,16 +59,13 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.provider == "gemini":
-        # Google 官方的 OpenAI 兼容层 —— 管线同一个 OpenAICompatLLM 直接
-        # 可用,key 复用评审已在用的 $GEMINI_API_KEY。默认指向最强文本档
-        # (gemini-3.5-pro);②步会列出你 key 下实际在列的型号供校对。
-        llm_cfg = {
-            "name": "openai-compat",
-            "base_url": "https://generativelanguage.googleapis.com"
-                        "/v1beta/openai",
-            "model": args.model or "gemini-3.5-pro",
-            "api_key": os.getenv("GEMINI_API_KEY", ""),
-        }
+        # 原生 generateContent 后端(用户指示 2026-07-29):与 GeminiVLM
+        # 同端点形状/同 key/同 $GEMINI_BASE_URL(自定义中转同样生效)——
+        # 评审走得通的网络路,brain 就走得通。默认 gemini-3.5-pro
+        # (Pro=文本最强档),$GEMINI_TEXT_MODEL / --model 可覆盖。
+        llm_cfg = {"name": "gemini"}
+        if args.model:
+            llm_cfg["model"] = args.model
     else:
         cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
         llm_cfg = dict((cfg.get("models") or {}).get("llm") or {})
@@ -101,18 +98,28 @@ def main() -> int:
     import requests
 
     # ── ② 端点可达(与模型名无关的网络/认证探针)──────────────────────
-    print("── ② 端点可达性  GET {base}/models")
+    if args.provider == "gemini":
+        probe_url = f"{llm.base_url}/v1beta/models"
+        probe_headers = {"x-goog-api-key": key}
+    else:
+        probe_url = f"{llm.base_url}/models"
+        probe_headers = {"Authorization": f"Bearer {key}"}
+    print(f"── ② 端点可达性  GET {probe_url}")
     t0 = time.time()
     try:
-        r = requests.get(f"{llm.base_url}/models",
-                         headers={"Authorization": f"Bearer {key}"},
+        r = requests.get(probe_url, headers=probe_headers,
                          timeout=args.timeout)
         print(f"   HTTP {r.status_code}  ({time.time() - t0:.1f}s)")
         if r.status_code == 401:
             print("   ✗ 认证失败 —— key 无效或过期")
             return 1
         if r.status_code == 200:
-            ids = [m.get("id", "") for m in r.json().get("data", [])]
+            body = r.json()
+            if args.provider == "gemini":     # 原生:{"models":[{"name":"models/…"}]}
+                ids = [str(m.get("name", "")).removeprefix("models/")
+                       for m in body.get("models", [])]
+            else:                              # OpenAI 形:{"data":[{"id":…}]}
+                ids = [m.get("id", "") for m in body.get("data", [])]
             hit = getattr(llm, "model", "") in ids
             print(f"   模型列表 {len(ids)} 个;目标模型"
                   f"{'在列 ✓' if hit else ' 不在列 ✗(检查模型名/账号权限)'}")
@@ -148,6 +155,11 @@ def main() -> int:
         return 1
     except requests.exceptions.RequestException as exc:
         print(f"   ✗ 网络层失败({time.time() - t0:.1f}s): {exc}")
+        return 1
+    except RuntimeError as exc:
+        print(f"   ✗ {exc}")
+        print("   → GeminiLLM 的报错自带 HTTP 状态与响应体前 500 字,"
+              "按 body 提示排查(模型名/权限/配额)")
         return 1
     except Exception as exc:
         print(f"   ✗ {type(exc).__name__}: {exc}")
