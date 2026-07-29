@@ -448,21 +448,41 @@ def _cut_tail(video: Path, seconds: float, out_path: Path) -> Optional[Path]:
 def _trim_head(video: Path, seconds: float, out_path: Path) -> Optional[Path]:
     """裁掉视频开头 `seconds` 秒(video-extend 的输出 = 输入片段+续段拼接,
     官方页原文 "the original and new segment are concatenated" —— 裁头后才
-    是纯续段)。ffmpeg 缺失/失败 → None(调用方带痕降级用未裁版本)。"""
+    是纯续段)。
+
+    2026-07-29 现场事故修正(movie_20260729_150307 接缝闪烁的根因):
+    旧实现 `-ss` 前置 + `-c copy` 是流拷贝,只能在关键帧处下刀 —— AI
+    生成短片常常整段只有一个关键帧,结果【一帧没裁】,只把容器时长
+    元数据改小;帧数与时长不符的文件进 concat 后按错误时长排偏移,
+    接缝处两镜的帧交错播放 = 画面闪烁。改为解码级精确裁(`-ss` 后置 +
+    重编码,音轨一并裁齐),并加【裁后自检】:输出时长 ≉ 原时长-裁量
+    → None(诚实降级,坏文件永远到不了拼接台)。
+    ffmpeg 缺失/失败 → None(调用方带痕降级用未裁版本)。"""
     if not shutil.which("ffmpeg"):
         return None
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    src_dur = _probe_seconds(video)
     try:
         r = subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{max(0.0, seconds):.2f}",
-             "-i", str(video), "-c", "copy", str(out_path)],
-            capture_output=True, timeout=120,
+            ["ffmpeg", "-y", "-i", str(video),
+             "-ss", f"{max(0.0, seconds):.3f}",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+             "-avoid_negative_ts", "make_zero", str(out_path)],
+            capture_output=True, timeout=300,
         )
     except Exception:
         return None
     if r.returncode != 0 or not out_path.exists()             or out_path.stat().st_size == 0:
         return None
+    if src_dur > 0:
+        got = _probe_seconds(out_path)
+        if abs(got - max(0.0, src_dur - seconds)) > 0.6:
+            log.warning("trim_head self-check failed (src=%.2fs cut=%.2fs "
+                        "got=%.2fs) — refusing the trimmed file",
+                        src_dur, seconds, got)
+            return None
     return out_path
 
 
