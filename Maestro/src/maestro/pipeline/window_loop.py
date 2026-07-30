@@ -299,22 +299,43 @@ def _first_last_mad(prev_video: Path, video: Path,
         b.unlink(missing_ok=True)
 
 
-def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
-    """§E 第一步(用户规矩 2026-07-30):
-    ① 终版路径【确定并核验】:台账 video_path 是唯一权威 —— 逐镜打印
-       "label → 文件 [策略]" 清单;文件缺失响亮告警 + 记 decisions 后
-       跳过,绝不静默拼错片。
-    ② 接缝按策略分诊:extend_prev 生成时已裁头(裁后自检把关,此处
-       不再动);_PREV_FRAME_LOCKED(首帧=上一镜尾帧)的镜,实测首帧
-       与上一镜末帧确为重复(MAD < 阈值)才裁掉第 0 帧,量不出/不像
-       → 不裁。裁用 _trim_head(解码级 + 自检)。
-    → (拼装文件列表, decisions 记录)。"""
+def _drop_first_frame(video: Path, cond: dict, *,
+                      measured_prev: Optional[Path] = None) -> Path:
+    """接缝去重帧(用户规矩 2026-07-30:"首帧的时候直接切掉首帧",
+    改在【生成时】完成,下游评审/修复/拼装看到的都是切好的版本):
+    - 硬锁路线(measured_prev=None):首帧由 API 通道锁死在上一镜尾帧
+      上(ti2v_prev_last 的 first_frame 参数 / flf2v_bridge 的首锚),
+      重复是 API 保证的 → 无条件切一帧;
+    - 软锁路线(传 measured_prev):prompt 话术锁不保证服从 —— 先量
+      (上一镜末帧 vs 本镜首帧 MAD < 阈值)证实确为重复才切;没服从时
+      首帧是真内容,切了丢帧还毁掉评审要抓的"未按 @Image1 开场"证据。
+    切割走 _trim_head(解码级 + 裁后自检);任何环节失败 → 原样返回。
+    一切结果如实记入 cond(dedup_first_frame / junction_mad)。"""
     from .timeline import _probe_fps
 
+    if measured_prev is not None:
+        mad = _first_last_mad(measured_prev, video, video.parent)
+        cond["junction_mad"] = (round(mad, 2) if mad is not None else None)
+        if mad is None or mad >= _DUP_FRAME_MAD:
+            cond["dedup_first_frame"] = False
+            return video
+    fps_ = _probe_fps(video) or 24.0
+    t = _trim_head(video, 1.0 / max(1.0, fps_),
+                   video.with_name(video.stem + "_dedup.mp4"))
+    cond["dedup_first_frame"] = bool(t)
+    return Path(t) if t else video
+
+
+def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
+    """§E 第一步(用户规矩 2026-07-30):终版路径【确定并核验】——
+    台账 video_path 是唯一权威;逐镜打印 "label → 文件 [策略]" 清单;
+    文件缺失响亮告警 + 记 decisions 后跳过,绝不静默拼错片。
+
+    接缝切割不在这里做(2026-07-30 二次简化,按用户提议前移):
+    extend 裁头与首帧去重都发生在【生成时】(_generate_with_condition
+    的 extend/_drop_first_frame),下游全链看到的已是切好的版本。"""
     out: list = []
     notes: list[dict] = []
-    dedup_dir = cache_dir / "assemble_dedup"
-    prev_path: Optional[Path] = None
     for e in storyboard.entries:
         p = Path(e.video_path) if e.video_path else None
         strat = str(((e.condition or {}).get("strategy")) or "")
@@ -326,27 +347,7 @@ def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
                           "path": str(e.video_path)})
             continue
         log.info("assemble: %s → %s [%s]", e.label, p.name, strat or "?")
-        use: Path = p
-        if prev_path is not None and strat in _PREV_FRAME_LOCKED:
-            mad = _first_last_mad(prev_path, p, dedup_dir)
-            if mad is not None and mad < _DUP_FRAME_MAD:
-                fps_ = _probe_fps(p) or 24.0
-                trimmed = _trim_head(p, 1.0 / max(1.0, fps_),
-                                     dedup_dir / f"{p.stem}_dedup.mp4")
-                if trimmed is not None:
-                    use = Path(trimmed)
-                    log.info("assemble: %s first frame duplicates prev "
-                             "tail (mad=%.2f) — dropped 1 frame",
-                             e.label, mad)
-                    notes.append({"stage": "assemble", "label": e.label,
-                                  "action": "dedup_first_frame",
-                                  "mad": round(mad, 2)})
-            elif mad is not None:
-                notes.append({"stage": "assemble", "label": e.label,
-                              "action": "dedup_not_needed",
-                              "mad": round(mad, 2)})
-        out.append(use)
-        prev_path = p     # 接缝比较永远用上一镜【原片】末帧
+        out.append(p)
     return out, notes
 
 
@@ -1520,10 +1521,12 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         anchor_img = pl if pl is not None else kf
         if last is not None and anchor_img is not None:
             cond.update(first_anchor=str(last), last_anchor=str(anchor_img))
-            return Path(video_gen.frame_to_frame(
+            outp = Path(video_gen.frame_to_frame(
                 prompt=brain_prompt or spec.prompt, first_frame=last,
                 last_frame=anchor_img,
-                out_path=out, duration=spec.duration, seed=seed)), cond
+                out_path=out, duration=spec.duration, seed=seed))
+            # 首锚 = 上一镜尾帧(通道级保证)→ 首帧必重复,直接切
+            return _drop_first_frame(outp, cond), cond
         strategy = "ti2v_prev_last"      # 尾帧抽不出来 → 逐级降级(如实改写)
         cond = {"strategy": strategy, "degraded_from": "flf2v_bridge"}
 
@@ -1549,11 +1552,14 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                 + "".join(f" @Video{i + 1} is the user's source video "
                           f"({cap}) — keep its subject consistent."
                           for i, (_v, cap) in enumerate(source_videos or [])))
-            return Path(video_gen.generate(
+            outp = Path(video_gen.generate(
                 prompt=brain_prompt or fallback_prompt,
                 duration=spec.duration, out_path=out, fps=fps,
                 reference_images=all_refs, seed=seed,
-                reference_video=(src_vids or None))), cond
+                reference_video=(src_vids or None)))
+            # 软锁(@Image1 话术):先量证实服从了锁才切(见 helper 注释)
+            return _drop_first_frame(
+                outp, cond, measured_prev=Path(prev.video_path)), cond
         # 尾帧抽不出来 → 还有自己的图可用。降级取向:有首帧角色图(含兼容
         # 模式的 keyframe)优先硬锚 i2v;纯参考角色图(从未打算当首帧)才
         # 降到 t2v_own_refs —— 角色语义在降级里也不许错配。
@@ -1670,10 +1676,12 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                            cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
         if last is not None:
             cond.update(first_frame=str(last))
-            return Path(video_gen.generate(
+            outp = Path(video_gen.generate(
                 prompt=brain_prompt or spec.prompt, duration=spec.duration,
                 out_path=out,
-                fps=fps, first_frame=last, seed=seed)), cond
+                fps=fps, first_frame=last, seed=seed))
+            # 首帧参数 = 上一镜尾帧(通道级保证)→ 首帧必重复,直接切
+            return _drop_first_frame(outp, cond), cond
         strategy = "i2v_keyframe" if kf is not None else "t2v"
         cond = {"strategy": strategy, "degraded_from": "ti2v_prev_last"}
 

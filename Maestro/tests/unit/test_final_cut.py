@@ -1,14 +1,15 @@
-"""§E 终版清单与接缝分诊回归(2026-07-30 用户规矩):
-① 终版路径以台账为唯一权威,缺失响亮跳过并留痕;
-② extend 镜生成时已裁头,此处不动;首帧锁上一镜尾帧的策略
-   (_PREV_FRAME_LOCKED)只有实测确为重复帧(MAD<阈值)才裁第 0 帧,
-   量不出/不像 → 不裁。全部离线(测量与裁剪打桩)。"""
+"""§E 终版清单 + 生成时接缝去重回归(2026-07-30 用户规矩,二次简化:
+切割全部前移到生成时 —— extend 裁头(既有)+ 首帧去重(_drop_first_
+frame:硬锁无条件切、软锁先量后切);拼装层只留"终版路径确定并核验"
+的清单。全部离线。"""
 
 from pathlib import Path
 
 import maestro.pipeline.window_loop as wl
 from maestro.memory.storyboard import StoryboardMemory
 
+
+# ── 拼装清单:台账权威 + 缺失响亮跳过 ────────────────────────────────
 
 def _board(tmp_path, strategies, missing=()):
     sb = StoryboardMemory.from_outline(
@@ -32,52 +33,80 @@ def test_manifest_skips_missing_with_note(tmp_path):
                       "path": sb.entries[1].video_path}]
 
 
-def test_dedup_only_for_prev_locked_and_duplicate(tmp_path, monkeypatch):
-    sb = _board(tmp_path, ["i2v_keyframe", "ti2v_prev_plus_keyframe",
-                           "extend_prev", "ti2v_prev_last"])
-    mads = {"s1.mp4": 5.0, "s3.mp4": 20.0}      # 镜2重复;镜4不像
-    monkeypatch.setattr(
-        wl, "_first_last_mad",
-        lambda prev, cur, wd: mads.get(Path(cur).name))
-    trimmed = []
+def test_manifest_passes_files_through_untouched(tmp_path):
+    # 切割已前移到生成时 —— 拼装清单绝不再动文件
+    sb = _board(tmp_path, ["ti2v_prev_last", "ti2v_prev_plus_keyframe"])
+    clips, notes = wl._final_cut(sb, tmp_path)
+    assert [c.name for c in clips] == ["s0.mp4", "s1.mp4"]
+    assert notes == []
 
-    def _fake_trim(video, seconds, out):
-        trimmed.append((Path(video).name, round(seconds, 4)))
+
+# ── 生成时去重:_drop_first_frame ────────────────────────────────────
+
+def _stub_trim(monkeypatch, record, succeed=True):
+    def _fake(video, seconds, out):
+        record.append((Path(video).name, round(seconds, 4)))
+        if not succeed:
+            return None
         out = Path(out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"\x00" * 2048)
         return out
-    monkeypatch.setattr(wl, "_trim_head", _fake_trim)
+    monkeypatch.setattr(wl, "_trim_head", _fake)
     import maestro.pipeline.timeline as tl
     monkeypatch.setattr(tl, "_probe_fps", lambda p: 24.0)
 
-    clips, notes = wl._final_cut(sb, tmp_path)
-    # 只有镜2(prev-locked 且 MAD<8)被裁一帧(1/24s);extend/i2v/不像的都不动
-    assert trimmed == [("s1.mp4", round(1 / 24, 4))]
-    assert clips[0].name == "s0.mp4"
-    assert clips[1].name == "s1_dedup.mp4"
-    assert clips[2].name == "s2.mp4" and clips[3].name == "s3.mp4"
-    acts = {n["label"]: n["action"] for n in notes}
-    assert acts == {"scene 1 shot 2": "dedup_first_frame",
-                    "scene 1 shot 4": "dedup_not_needed"}
 
-
-def test_first_shot_never_deduped(tmp_path, monkeypatch):
-    sb = _board(tmp_path, ["ti2v_prev_last"])          # 首镜即便策略同名
-    called = []
+def test_hard_lock_cuts_unconditionally(tmp_path, monkeypatch):
+    # 硬锁(ti2v_prev_last / flf2v_bridge):不量,直接切一帧(API 保证重复)
+    calls = []
+    _stub_trim(monkeypatch, calls)
     monkeypatch.setattr(wl, "_first_last_mad",
-                        lambda *a: called.append(1) or 0.0)
-    clips, notes = wl._final_cut(sb, tmp_path)
-    assert not called and notes == []
-    assert clips[0].name == "s0.mp4"
+                        lambda *a: (_ for _ in ()).throw(AssertionError(
+                            "hard lock must not measure")))
+    v = tmp_path / "clip.mp4"
+    v.write_bytes(b"\x00" * 2048)
+    cond = {}
+    out = wl._drop_first_frame(v, cond)
+    assert calls == [("clip.mp4", round(1 / 24, 4))]
+    assert out.name == "clip_dedup.mp4"
+    assert cond["dedup_first_frame"] is True
 
 
-def test_unmeasurable_mad_keeps_original(tmp_path, monkeypatch):
-    sb = _board(tmp_path, ["i2v_keyframe", "flf2v_bridge"])
+def test_soft_lock_measures_then_cuts_or_keeps(tmp_path, monkeypatch):
+    calls = []
+    _stub_trim(monkeypatch, calls)
+    v = tmp_path / "clip.mp4"
+    v.write_bytes(b"\x00" * 2048)
+    prev = tmp_path / "prev.mp4"
+
+    # 服从了锁(MAD 5 < 8)→ 切
+    monkeypatch.setattr(wl, "_first_last_mad", lambda *a: 5.0)
+    cond = {}
+    out = wl._drop_first_frame(v, cond, measured_prev=prev)
+    assert out.name == "clip_dedup.mp4"
+    assert cond == {"junction_mad": 5.0, "dedup_first_frame": True}
+
+    # 没服从(MAD 20)→ 不切,首帧是真内容,证据留给评审
+    monkeypatch.setattr(wl, "_first_last_mad", lambda *a: 20.0)
+    cond = {}
+    out = wl._drop_first_frame(v, cond, measured_prev=prev)
+    assert out == v
+    assert cond == {"junction_mad": 20.0, "dedup_first_frame": False}
+
+    # 量不出 → 不切(不猜)
     monkeypatch.setattr(wl, "_first_last_mad", lambda *a: None)
-    trimmed = []
-    monkeypatch.setattr(wl, "_trim_head",
-                        lambda *a: trimmed.append(1))
-    clips, notes = wl._final_cut(sb, tmp_path)
-    assert not trimmed and notes == []                 # 量不出 → 不裁不记
-    assert [c.name for c in clips] == ["s0.mp4", "s1.mp4"]
+    cond = {}
+    out = wl._drop_first_frame(v, cond, measured_prev=prev)
+    assert out == v
+    assert cond == {"junction_mad": None, "dedup_first_frame": False}
+
+
+def test_trim_failure_keeps_original_honestly(tmp_path, monkeypatch):
+    calls = []
+    _stub_trim(monkeypatch, calls, succeed=False)
+    v = tmp_path / "clip.mp4"
+    v.write_bytes(b"\x00" * 2048)
+    cond = {}
+    out = wl._drop_first_frame(v, cond)
+    assert out == v and cond["dedup_first_frame"] is False

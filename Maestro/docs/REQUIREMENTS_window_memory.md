@@ -640,5 +640,13 @@ apad + duration=longest + -t 收口(防截掉画面尾巴);两遍 loudnorm 测�
   ②裁用 `_trim_head`(解码级 + 裁后自检)。首镜永不裁;接缝比较永远
   用上一镜【原片】末帧。
 
-回归:tests/unit/test_final_cut.py(4 条:缺失跳过留痕/策略与阈值
-双门控/首镜豁免/量不出不动)。全套 499 通过。
+二次简化(同日,用户提议):切割全部前移到【生成时】——
+`_drop_first_frame` 在 _generate_with_condition 内完成:硬锁路线
+(ti2v_prev_last / flf2v_bridge,首帧由 API 参数锁死在上一镜尾帧)
+**无条件切一帧**;软锁路线(ti2v_prev_plus_keyframe)先量后切
+(junction_mad 记入 cond);extend 裁头维持生成时既有。下游评审/修复/
+拼装看到的都是切好的版本;拼装层 `_final_cut` 只留"终版路径确定并
+核验"清单,不再动文件。
+
+回归:tests/unit/test_final_cut.py(5 条:清单缺失跳过/清单不动文件/
+硬锁不量直切/软锁量后分流/裁失败诚实保留)。全套 500 通过。
