@@ -253,6 +253,102 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
 
 _PRESERVE_CLAUSE = "Preserve the established scene, lighting and camera."
 
+# 首帧锁定在【上一镜尾帧】上的策略:它们的第 0 帧 ≈ 上一镜最后一帧,
+# 直接拼接会让同一画面连续出现两次(约 42ms 的微顿/轻闪)。拼装时裁掉
+# 重复帧 —— 但必须先量证实(用户 2026-07-30:"剪掉首帧不就行了";
+# 检查由我加:量不出/不相似就不裁,绝不凭策略名瞎剪真帧)。
+_PREV_FRAME_LOCKED = {"ti2v_prev_last", "ti2v_prev_plus_keyframe",
+                      "flf2v_bridge"}
+# 平均像素差阈值(/255):实测"同帧不同质"≈5-6,镜内正常相邻帧≈1-1.5,
+# 真不同帧 >12(movie_20260729_150307 三组实测)。
+_DUP_FRAME_MAD = 8.0
+
+
+def _first_last_mad(prev_video: Path, video: Path,
+                    work_dir: Path) -> Optional[float]:
+    """上一镜末帧 vs 本镜首帧的平均像素差(/255);任何环节算不出 →
+    None(不猜,调用方不裁)。"""
+    if not shutil.which("ffmpeg"):
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    work_dir.mkdir(parents=True, exist_ok=True)
+    a, b = work_dir / "_prev_last.rgb", work_dir / "_cur_first.rgb"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-y", "-sseof", "-0.05",
+             "-i", str(prev_video), "-frames:v", "1", "-f", "rawvideo",
+             "-pix_fmt", "rgb24", str(a)],
+            check=True, capture_output=True, timeout=60)
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-y", "-i", str(video),
+             "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
+             str(b)],
+            check=True, capture_output=True, timeout=60)
+        x = np.fromfile(a, dtype=np.uint8).astype(np.float32)
+        y = np.fromfile(b, dtype=np.uint8).astype(np.float32)
+        if x.size == 0 or x.size != y.size:
+            return None
+        return float(np.abs(x - y).mean())
+    except Exception:
+        return None
+    finally:
+        a.unlink(missing_ok=True)
+        b.unlink(missing_ok=True)
+
+
+def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
+    """§E 第一步(用户规矩 2026-07-30):
+    ① 终版路径【确定并核验】:台账 video_path 是唯一权威 —— 逐镜打印
+       "label → 文件 [策略]" 清单;文件缺失响亮告警 + 记 decisions 后
+       跳过,绝不静默拼错片。
+    ② 接缝按策略分诊:extend_prev 生成时已裁头(裁后自检把关,此处
+       不再动);_PREV_FRAME_LOCKED(首帧=上一镜尾帧)的镜,实测首帧
+       与上一镜末帧确为重复(MAD < 阈值)才裁掉第 0 帧,量不出/不像
+       → 不裁。裁用 _trim_head(解码级 + 自检)。
+    → (拼装文件列表, decisions 记录)。"""
+    from .timeline import _probe_fps
+
+    out: list = []
+    notes: list[dict] = []
+    dedup_dir = cache_dir / "assemble_dedup"
+    prev_path: Optional[Path] = None
+    for e in storyboard.entries:
+        p = Path(e.video_path) if e.video_path else None
+        strat = str(((e.condition or {}).get("strategy")) or "")
+        if p is None or not p.exists():
+            log.warning("assemble: %s final video MISSING (%s) — skipped",
+                        e.label, e.video_path)
+            notes.append({"stage": "assemble", "label": e.label,
+                          "action": "skip_missing",
+                          "path": str(e.video_path)})
+            continue
+        log.info("assemble: %s → %s [%s]", e.label, p.name, strat or "?")
+        use: Path = p
+        if prev_path is not None and strat in _PREV_FRAME_LOCKED:
+            mad = _first_last_mad(prev_path, p, dedup_dir)
+            if mad is not None and mad < _DUP_FRAME_MAD:
+                fps_ = _probe_fps(p) or 24.0
+                trimmed = _trim_head(p, 1.0 / max(1.0, fps_),
+                                     dedup_dir / f"{p.stem}_dedup.mp4")
+                if trimmed is not None:
+                    use = Path(trimmed)
+                    log.info("assemble: %s first frame duplicates prev "
+                             "tail (mad=%.2f) — dropped 1 frame",
+                             e.label, mad)
+                    notes.append({"stage": "assemble", "label": e.label,
+                                  "action": "dedup_first_frame",
+                                  "mad": round(mad, 2)})
+            elif mad is not None:
+                notes.append({"stage": "assemble", "label": e.label,
+                              "action": "dedup_not_needed",
+                              "mad": round(mad, 2)})
+        out.append(use)
+        prev_path = p     # 接缝比较永远用上一镜【原片】末帧
+    return out, notes
+
 
 def _with_dialogue(prompt: str, entry, cast: dict) -> str:
     """对白镜的口型子句(2026-07-29 音频线):确定性追加在最终 prompt 尾,
@@ -2298,7 +2394,8 @@ def generate_movie_windowed(
 
     # ── §E 合成:时间顺序 concat ────────────────────────────────────────────
     final: Optional[Path] = None
-    clips = [e.video_path for e in storyboard.entries if e.video_path]
+    clips, assemble_notes = _final_cut(storyboard, cache_dir)
+    decisions.extend(assemble_notes)
     if clips:
         try:
             from ..tools.video_concat import VideoConcatTool
