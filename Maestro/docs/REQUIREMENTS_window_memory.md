@@ -650,3 +650,25 @@ apad + duration=longest + -t 收口(防截掉画面尾巴);两遍 loudnorm 测�
 
 回归:tests/unit/test_final_cut.py(5 条:清单缺失跳过/清单不动文件/
 硬锁不量直切/软锁量后分流/裁失败诚实保留)。全套 500 通过。
+
+---
+
+## 追加需求(2026-07-30,用户批准,已实现):运镜衔接 + 音画同步评审
+
+- **运镜交接(镜头也是运动物体)**:① scene_write 新增 CAMERA HANDOFF
+  LAW —— 每镜 end_state 必须带镜头状态("camera: static / slowly
+  pushing in / tracking right at walking pace"),切点上镜头运动只许
+  延续或静止,**禁止方向反转**(推近收尾接拉远开场 = 跳切感头号来源);
+  剧本 STRICT JSON 指令同步(window_loop);例子三处补镜头状态。
+  ② window_generation junction 规则加 CAMERA HANDOFF(开场延续实况
+  报告的镜头运动);③ prompt_enhancer 的 opening_state_actual 消费面
+  从"位置+运动"扩到"+镜头运动"。④ 评审(mllm_backends):实况/交接棒
+  文本含 camera 时自动注入"开场运镜是否延续,方向反转即败"检查项
+  (无据不查)。场记的视频版指令本就要求报告镜头运动 —— 至此闭环。
+- **音画同步入评审**:有台词的镜(conditioning.dialogue 非空),评审
+  指令自动注入三查:台词说了且与剧本一致 / 口型与语音同步 / 人声之外
+  干净(生成端压制了背景音,评审验证压制生效;BGM 由 §F 统一混)。
+  Gemini 原生视频输入自带音轨,零额外成本。
+
+回归:test_audio_line.py 增至 11 条(运镜检查注入与无据不注入、
+台词三查注入与无台词不注入)。全套 502 通过。

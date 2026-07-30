@@ -185,6 +185,15 @@ strategy, review, repair) hangs off these entries.
      suspended one-off action ("mid-air", "mid-fall", "mid-impact").
      Complete the jump/fall inside its own shot first (COMPLETE-ACTION
      LAW above).
+  5. CAMERA HANDOFF LAW (2026-07-30): the camera is a moving subject
+     too. Every end_state ALSO states the camera's own state at the cut
+     ("camera: static" / "camera: slowly pushing in" / "camera: tracking
+     right at walking pace"). The next shot's opening must CONTINUE that
+     camera state or open from a settled camera; NEVER reverse the
+     camera's direction across a cut — ending on a push-in and opening
+     on a pull-back is the #1 source of jump-cut feel. A junction reader
+     watches the previous shot's final seconds and reports the actual
+     camera motion; the reviewer checks the handoff.
 - `variation` (ViMax-derived) = how much the LAST frame differs from the
   FIRST frame of this shot: `small` (same composition, minor motion — a
   glass rocking), `medium` (subject moved / pose changed inside the same
@@ -233,14 +242,14 @@ boy comes and collects all shards, leaves happily"
  "setting": "a warm daylit kitchen with a wooden table, beige tile floor and a window over the sink",
  "shots": [
   {"description": "Shot 1: scene 1 — a clear drinking glass teeters at the very edge of the wooden kitchen table, right of frame, rocking further with each wobble, warm daylight, eye-level close-up slowly pushing in", "duration_s": 5,
-   "end_state": "the glass rocks at maximum lean on the table edge, still in motion, camera pushing in",
+   "end_state": "the glass rocks at maximum lean on the table edge, still in motion; camera: still pushing in slowly",
    "variation": "small",
    "opening_frame": "a clear drinking glass stands at the very edge of a wooden kitchen table, right of frame, warm window daylight, eye-level close-up"},
   {"description": "Shot 2: scene 1 — taking over from the rocking glass, it tips past the edge, FALLS and SHATTERS on the beige tile floor, shards scattering outward, low floor-level angle, shallow depth of field", "duration_s": 4,
-   "end_state": "shards lie scattered and at rest on the tile floor around the impact point",
+   "end_state": "shards lie scattered and at rest on the tile floor around the impact point; camera: static at floor level",
    "variation": "large"},
   {"description": "Shot 3: scene 1 — <the boy> kneels down beside the scattered shards, facing camera, carefully collects them into his hand, then stands up and walks away smiling, medium shot, same floor-level area as shot 2", "duration_s": 8,
-   "end_state": "the boy is walking away from camera, shards in hand, floor clear",
+   "end_state": "the boy is walking away from camera, shards in hand, floor clear; camera: static",
    "variation": "large"}
 ]}
 

@@ -807,6 +807,30 @@ class GeminiVLM(OpenAICompatVLM):
                 f'The script requires this shot to END in this state: '
                 f'"{end_state}". Judge the FINAL moment against it (moving '
                 f'vs at rest matters) — add one check for it.')
+        # 运镜衔接(2026-07-30 用户令):镜头自身也是"运动物体"——
+        # 实况/交接棒里提到 camera 时,追加一条"开场运镜是否延续"检查。
+        if "camera" in (prev_actual + " " + end_state).lower():
+            junction_lines.append(
+                "CAMERA CONTINUITY: the states above include the camera's "
+                "own motion. Add one check: does this shot OPEN by "
+                "continuing that camera state (same move direction and "
+                "pace, or a settled camera)? A REVERSED camera direction "
+                "at the cut (e.g. push-in ending, pull-back opening) is a "
+                "failed check.")
+        # 音画同步(2026-07-30 用户令):有台词的镜,评审必须【听】——
+        # 台词内容 / 口型同步 / 人声之外是否干净(生成时压制了背景音,
+        # 这里正好验证压制话术是否生效;BGM 由后期统一混)。
+        dialogue = str(cond.get("dialogue") or "").strip()
+        if dialogue:
+            junction_lines.append(
+                f'This shot has scripted DIALOGUE: "{dialogue}". The video '
+                "part includes its AUDIO track — listen to it. Add three "
+                "checks: (1) the line is audibly spoken and matches the "
+                "script; (2) the speaker's mouth movement is synchronized "
+                "with the speech (lip sync); (3) apart from the voice the "
+                "audio is clean — no background music or ambience (they "
+                "are suppressed at generation and mixed in later; hearing "
+                "them here is a defect).")
         # 跨镜一致性(2026-07-17 审计):官方外观描述符 = 一致性标尺。
         # 只对本镜画面里出现的角色判;每个出场角色出一条 check。
         cast = cond.get("cast") or {}

@@ -215,6 +215,13 @@ by the executor — do NOT output them.
      instruction like "the apple is still rolling as the shot ends — it
      does not slow down or settle". Video models kill motion at clip end
      unless told not to; an unwanted settle breaks the NEXT shot's opening.
+   - CAMERA HANDOFF (2026-07-30): `prev_last_frame_actual` also reports
+     the CAMERA's own motion (the junction reader watches the final
+     seconds of video). Your `video_prompt`'s opening must CONTINUE that
+     camera state — same move, same direction, similar pace — or state
+     that the camera has settled. NEVER reverse the camera's direction
+     across the cut (push-in ending → pull-back opening reads as a jump
+     cut); the reviewer checks this handoff.
 
 ### Example 1 — scene continues, both anchors exist
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}

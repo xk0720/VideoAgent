@@ -40,9 +40,11 @@ never change WHAT happens in the shot.
   specific (a color, a material, a pattern) that appears in no row.
   State roles:
   - `opening_state_actual` — what a VLM actually saw at the END of the
-    previous shot (from its final seconds of video — true position AND
-    motion). The prompt must OPEN from this exact state — but take
-    only its POSITION and MOTION facts. DRIFT IS NOT PERPETUATED
+    previous shot (from its final seconds of video — true position,
+    motion, AND the camera's own motion). The prompt must OPEN from this
+    exact state — take its POSITION, MOTION and CAMERA-MOTION facts;
+    the opening camera move must CONTINUE the reported one (or a settled
+    camera), never reverse its direction across the cut. DRIFT IS NOT PERPETUATED
     (2026-07-18): when its appearance details contradict the cast
     contract or the identity reference (a collar the contract does not
     have), the pixels have drifted — write the CONTRACT identity, never

@@ -160,3 +160,49 @@ def test_add_music_scene_without_desc_left_silent(monkeypatch, tmp_path):
     audio_stage.add_music(tmp_path / "m.mp4", sb, None,
                           tmp_path / "s.mp4", music_fn=_music)
     assert calls == ["tense drums"]
+
+
+# ── 2026-07-30:评审新增检查 —— 运镜衔接 + 音画同步 ──────────────────
+
+def _review_text(tmp_path, monkeypatch, conditioning):
+    """跑一次 review_shot(打桩 _generate),返回评审指令全文。"""
+    import json as _json
+
+    from maestro.models.mllm_backends import GeminiVLM
+    from maestro.types import CandidateClip, ShotSpec
+
+    vlm = GeminiVLM("gemini", {"api_key": "k"})
+    captured = []
+
+    def _fake(parts, **kw):
+        captured.append(parts)
+        return _json.dumps({"checks": [], "issues": [], "summary": "ok"})
+    monkeypatch.setattr(vlm, "_generate", _fake)
+    v = tmp_path / "s.mp4"
+    v.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+    clip = CandidateClip(shot_idx=0, video_path=v)
+    clip.conditioning = {"video_prompt": "p", "images": [], **conditioning}
+    vlm.review_shot(clip, ShotSpec(shot_idx=0, duration=5.0, prompt="p"))
+    return " ".join(x.get("text", "") for x in captured[0] if "text" in x)
+
+
+def test_review_adds_camera_continuity_check(tmp_path, monkeypatch):
+    text = _review_text(tmp_path, monkeypatch, {
+        "junction_prev_actual": "the cat trots right, camera tracking "
+                                "alongside at walking pace"})
+    assert "CAMERA CONTINUITY" in text
+    assert "REVERSED camera direction" in text
+    # 实况没提镜头 → 不注入(不查无据的东西)
+    text2 = _review_text(tmp_path, monkeypatch, {
+        "junction_prev_actual": "the cat sits still at the bowl"})
+    assert "CAMERA CONTINUITY" not in text2
+
+
+def test_review_adds_dialogue_sync_checks(tmp_path, monkeypatch):
+    text = _review_text(tmp_path, monkeypatch, {"dialogue": "快画完了"})
+    assert 'DIALOGUE: "快画完了"' in text
+    assert "synchronized" in text          # 口型同步
+    assert "no background music" in text   # 人声之外须干净
+    # 无台词 → 不注入
+    text2 = _review_text(tmp_path, monkeypatch, {})
+    assert "DIALOGUE" not in text2
