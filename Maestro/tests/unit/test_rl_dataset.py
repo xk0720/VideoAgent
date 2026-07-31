@@ -207,3 +207,22 @@ def test_eval_replay_scores_with_stub_model(tmp_path):
     res_bad = er.run_eval(samples, lambda p: "not json", k=2)
     st_bad = res_bad["per_stage"]["condition"]
     assert st_bad["parse_ok"] == 0.0 and st_bad["pass_k"] == 0.0
+
+
+def test_synthetic_runs_feed_builder(tmp_path):
+    """合成日志生成器与数据构建器闭环:非空 sft/kto/dpo,格式齐。"""
+    import random
+
+    msr = _load_script("make_synthetic_runs")
+    bd = _load_script("build_dataset")
+    rng = random.Random(1)
+    n = msr.make_run(tmp_path / "run_00", rng, n_shots=4)
+    assert n > 10
+    got = bd.build_run(tmp_path / "run_00")
+    labels = [s["label"] for s in got["samples"]]
+    assert True in labels and False in labels          # 好坏都有
+    kinds = {p["meta"]["kind"] for p in got["pairs"]}
+    assert kinds == {"enhancer_retry", "repair_reject_then_accept"}
+    s0 = got["samples"][0]
+    assert s0["prompt"][0]["role"] == "user"
+    assert s0["completion"][0]["role"] == "assistant"

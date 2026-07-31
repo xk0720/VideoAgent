@@ -699,3 +699,20 @@ apad + duration=longest + -t 收口(防截掉画面尾巴);两遍 loudnorm 测�
 
 回归:test_audio_line.py 增至 11 条(运镜检查注入与无据不注入、
 台词三查注入与无台词不注入)。全套 502 通过。
+
+---
+
+## 追加进展(2026-07-31,dev-rl,已实现):S1 训练三件套 + 合成冒烟数据
+
+- dev-music 全量合并入 dev-rl(闪烁修复/音频线/运镜交接均在,508→509)。
+- `make_synthetic_runs.py`:按 S0 真实格式伪造 run 日志(条件/润色/修复
+  决策 + 结局记录,好坏齐备)——训练链路冒烟专用,不用于真实收益;
+  6 run × 4 shot 实测产出 38 KTO / 18 SFT / 15 DPO 对 / 6 holdout。
+- 训练脚本(训练机运行,依赖 requirements-rl.txt,不进包依赖):
+  `train_sft.py`(completion_only_loss)→ `train_kto.py`(权重自动配平
+  1:1~4:3,batch≥4)→ `train_dpo.py`(rpo_alpha=1.0 防 chosen 坍缩,
+  label_smoothing 可调);统一 `train_config.yaml`(Qwen3-8B + QLoRA
+  全线性层;max_prompt 6144 / completion 512;truncation keep_end)。
+- **token mask 口径写入 README**:单步转移 → 题干整体不计损失、只训
+  completion;无 ReAct 式观测 mask 需求;长程唯一手动项 = 从左截断
+  (keep_end)保住 THIS TURN JSON;信用分配在标签层不在 token 层。

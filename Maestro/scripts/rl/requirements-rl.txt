@@ -1,0 +1,9 @@
+# RL 训练依赖(只装在训练机,不进 maestro 包依赖)
+# torch 按平台自装:https://pytorch.org/get-started/locally/
+trl>=0.17
+transformers>=4.51
+peft>=0.15
+accelerate>=1.6
+datasets>=3.5
+bitsandbytes>=0.45; platform_system == "Linux"   # 4bit 量化(QLoRA)
+pyyaml

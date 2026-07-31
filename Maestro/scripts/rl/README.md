@@ -46,3 +46,46 @@
 
 标签规则(v1 保守,"不怪它的失败不进它的坏样本")与成对样本的挖法
 见 `build_dataset.py` 模块 docstring。
+
+## S1 训练三件套(2026-07-31)
+
+```bash
+# 0) 训练机装依赖(torch 按平台自装)
+pip install -r scripts/rl/requirements-rl.txt
+
+# 1) 数据:真实 run 优先;管道冒烟用合成
+python scripts/rl/make_synthetic_runs.py --runs 6 --shots 4
+python scripts/rl/build_dataset.py data/rl/synthetic_runs/run_* \
+    --out data/rl --holdout run_05
+
+# 2) 三连训(每步接上一步的 adapter)
+python scripts/rl/train_sft.py
+python scripts/rl/train_kto.py --adapter outputs/rl_adapters/sft
+python scripts/rl/train_dpo.py --adapter outputs/rl_adapters/kto
+
+# 3) 零成本评估(对照三基线:原始底座 / 仅 SFT / 全链)
+python scripts/rl/eval_replay.py data/rl/eval_holdout.jsonl \
+    --base-url http://localhost:8000/v1 --model <merged-or-adapter-served>
+```
+
+## 长程轨迹的 token mask(设计说明)
+
+我们把长程轨迹**拆成了单步转移**(历史写进题干),mask 因此简单且严格:
+
+1. **题干(prompt)整体不计损失**——skill 全文 + THIS TURN JSON,实测
+   2-4k token;**只有 completion(决策 JSON,<300 token)计损失**。
+   TRL 对 {prompt, completion} 结构自动如此:SFT 开
+   `completion_only_loss=True`;KTO/DPO 天生只在 completion 上算
+   logprob,无需手写 mask。
+2. **为什么不需要 ReAct 式观测 mask**:ReAct 长轨迹在 assistant 序列
+   【内部】穿插工具输出,必须逐段 mask 观测 token(Search-R1/ReTool
+   的教训);我们的观测全部折进题干,completion 是纯决策 —— 无中段
+   可 mask。
+3. **长程真正要手动定的是截断方向**:题干超长时必须**从左截**
+   (`truncation_mode: keep_end`),保住紧贴决策的 THIS TURN JSON
+   (菜单/槽位/实况);从右截会把决策依据截掉,样本作废。
+4. **信用分配 ≠ token mask**:"长程里哪一步背锅"由标签规则(不怪它
+   的失败不进它的坏样本)、修复对、(将来的)AWR 解决,不在 token 层。
+5. **若未来做多轮拼接训练**(S3 / verl):改用 chat-template 的
+   assistant-token mask(或 verl 的 loss_mask),且思考段是否计损失
+   要显式决定(Qwen3 非思考模式可回避)。

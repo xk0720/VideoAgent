@@ -1,0 +1,54 @@
+# ── RL 训练统一配置(train_sft.py / train_kto.py / train_dpo.py 共用)──
+model:
+  base: "Qwen/Qwen3-8B"        # 开源底座;8B 起步,plateau 再上 14B
+  load_in_4bit: true           # QLoRA:单张 24G 可跑;有 48G+ 可关
+  bf16: true
+
+lora:                          # LoRA Without Regret:RL 场景 LoRA≈全参
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  target_modules: "all-linear" # 全线性层(含 MLP),不是只打 attention
+
+# ── 序列长度与 token mask(长程轨迹的核心设定,详见 README)────────
+# 我们的样本 = 单步转移:题干(skill 全文 + THIS TURN JSON,实测 2-4k
+# token)+ 短 completion(决策 JSON,<300 token)。
+# mask 规则:题干整体不计损失,只有 completion 计 —— TRL 对
+# prompt/completion 结构自动处理(SFT 用 completion_only_loss;
+# KTO/DPO 天生只在 completion 上算 logprob),无需手写 mask。
+# 长程唯一要手动定的:题干超长时【从左截断】(truncation_mode:
+# keep_end)—— 保住紧贴决策的 THIS TURN JSON,牺牲 skill 文本开头;
+# 反向截断会把菜单/槽位清单截掉,样本直接作废。
+seq:
+  max_prompt_length: 6144
+  max_completion_length: 512
+  truncation_mode: "keep_end"
+
+sft:
+  learning_rate: 1.0e-4        # LoRA 版 SFT 常用量级
+  num_train_epochs: 2
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+
+kto:
+  beta: 0.1
+  learning_rate: 5.0e-6        # KTO 文档硬约束:5e-7 ~ 5e-6
+  num_train_epochs: 1
+  per_device_train_batch_size: 4   # ≥4:KL 项要批内估
+  gradient_accumulation_steps: 4
+  # desirable/undesirable 权重由脚本按数据比例自动配平(1:1~4:3)
+
+dpo:
+  beta: 0.1
+  learning_rate: 1.0e-5
+  num_train_epochs: 1
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 8
+  rpo_alpha: 1.0               # chosen 上加 NLL 项 —— 防 chosen 似然
+                               # 坍缩(短结构化 JSON 上坍缩来得快)
+  label_smoothing: 0.0         # 我们的对来自确定性闸门/盲测,近零噪声;
+                               # 未来混入 VLM 判官产的对时改 0.1
+
+data_dir: "data/rl"
+output_dir: "outputs/rl_adapters"
+seed: 42
