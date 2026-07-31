@@ -716,3 +716,36 @@ apad + duration=longest + -t 收口(防截掉画面尾巴);两遍 loudnorm 测�
 - **token mask 口径写入 README**:单步转移 → 题干整体不计损失、只训
   completion;无 ReAct 式观测 mask 需求;长程唯一手动项 = 从左截断
   (keep_end)保住 THIS TURN JSON;信用分配在标签层不在 token 层。
+
+---
+
+## 追加需求(2026-07-31,用户裁决 1-4,已实现):角色视觉锚 + episode 降级
+
+现场取证先行:movie_20260729 的坏 keyframe **不是** episode 继承所致
+(该 run 图计划 via=llm)——真凶是 brain 用中文写了 t2i prompt(模型
+I/O 英文法度无运行时闸)。两案并修:
+
+- **裁决 1:episode 记忆只作 guidance,绝不直接继承**。_decide 的
+  via="episode" 短路整体废除:replay 命中改为 `episode_recommendation`
+  注入上下文(策略名 + "past task 建议,本次条件优先"),决策一律由
+  brain 做;window_generation skill 规则 1 同步改写(可跟可推翻,
+  reason 里说明)。三条旧契约测试改写为新契约。
+- **裁决 2(第一版)+ 3(不固定 seed)+ 4(跨片库现在做):角色官方
+  肖像(单视图视觉锚)**。新 §A' 阶段 `_ensure_cast_portraits`:逐 cast
+  角色按 用户素材(描述符词重叠≥0.5)> 跨片库 > t2i 取像;t2i prompt =
+  static 半句逐字 + 全片 setting/光线(不学 ViMax 白底,免重打光);
+  产物三处登记 —— storyboard.portraits(持久化)/ asset_memory
+  (identity 前缀 portrait:,媒体目录与检索即刻可见)/ 跨片库
+  `memory/character_library.py`(目录 + index.json;命中 = 同名 且
+  描述符词重叠 ≥0.6,同名不同长相绝不误配;uses 台账)。
+- **肖像流入三处**:参考通道策略(t2v_own_refs / ti2v_prev_plus_
+  keyframe)自动追加 @ImageN 肖像槽位(清单编号与装配顺序严格一致,
+  出场角色子集);conditioning 带 role=identity_portrait → 评审收
+  "IDENTITY PORTRAIT(外观按此判)"图证 —— 外观检查从对文字升级为
+  对图;window_generation skill 新增 portraits 节。
+- **英文法度落闸**:决策 prompt 后缀加 "ALL output text in ENGLISH";
+  image_plan skill 明写(含 field bug 注记);t2i/检索词含 CJK →
+  运行时响亮告警。
+
+回归:test_character_portraits.py(6 条)+ 三条 episode 契约测试改写。
+全套 515 通过。

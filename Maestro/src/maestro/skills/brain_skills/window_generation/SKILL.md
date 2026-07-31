@@ -94,6 +94,16 @@ You output SEMANTIC fields only. Mechanical payload fields (aspect_ratio,
 duration, keep_original_sound, image upload URLs) are filled deterministically
 by the executor — do NOT output them.
 
+## Character portraits (2026-07-31 identity anchors)
+
+Cast members may have OFFICIAL PORTRAITS (generated at film start, or the
+user's own photo, or reused from the cross-film library). On
+reference-channel strategies (t2v_own_refs / ti2v_prev_plus_keyframe)
+they are auto-attached as extra @ImageN slots labeled "official portrait
+of <name>" — mention each one for its purpose ("@Image3 fixes the cat's
+appearance") like any other slot. They are the character's visual
+identity contract; the reviewer judges appearance against them.
+
 ## Reference syntax per model family (get this right or the images are ignored)
 
 - seedance routes (`t2v_own_refs`, `ti2v_prev_plus_keyframe`): mention images
@@ -133,8 +143,12 @@ by the executor — do NOT output them.
   onto the windowsill". A bare "@Image2" steers nothing — never write one.
 
 ## Decision rules
-1. Adopt a `replay_hints` strategy for the same shot label unless the ledger
-   shows this run's conditions differ (e.g. no image was produced this time).
+1. `episode_recommendation` (when present) is ADVICE, not an order
+   (2026-07-31 ruling — episode memory is guidance-only, never inherited
+   directly): a strategy verified on a similar PAST task is a strong
+   prior, but THIS run's conditions win — check the ledger (was an image
+   actually produced this time? does the junction match?) before
+   following it, and say in `reason` whether you followed or overrode it.
 2. Read each `avoid` entry's `reason` and judge WHOSE fault the failure was
    (soft constraint — a past failure does not doom this run):
    - Skip the strategy only when the reason implicates the CONDITIONING

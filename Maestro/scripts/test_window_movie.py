@@ -133,6 +133,7 @@ def main() -> int:
     video_gen = build_video_gen(vg_cfg)
     # debug:brain 每次决策的原始输出 + 解析结果(核对策略→模型映射用)
     from maestro.logging_utils import set_brain_log
+    from maestro.memory.character_library import CharacterLibrary
     set_brain_log(run_dir / "brain_calls.jsonl")
     print(f"配置: {args.config}")
     print(f"  brain LLM = {getattr(llm, 'model', '?')}  |  评审 VLM = "
@@ -254,6 +255,8 @@ def main() -> int:
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,
         enable_audio=args.audio,
+        character_library=CharacterLibrary(REPO_ROOT / "data"
+                                           / "character_library"),
         mllm=mllm)   # 需求 ②:接点实况 VLM(gemini API / qwen-local 本地)
 
     _section("brain 决策流水(§B keyframe + §C 条件;via=episode/llm/fallback)")

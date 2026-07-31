@@ -111,7 +111,10 @@ decision covers three things at once:
 - For pair_first_last the two descriptions MUST read as the opening moment
   and the closing moment of the same scene.
 - A `t2i` description is a COMPLETE image-generation prompt (subject + setting
-  + lighting + style), never a single word.
+  + lighting + style), never a single word — and ALWAYS in ENGLISH
+  regardless of the user's language (2026-07-31 field bug: a Chinese t2i
+  prompt reached the image model and produced a wrong keyframe; a
+  deterministic gate now warns, but writing English is YOUR job).
 
 ### Example 1 — pure generation, opening shot
 {"strategy": "single_first_frame", "images": [{"source": "t2i", "description": "a glass of water standing near the edge of a wooden kitchen table, warm morning light, photorealistic, eye-level close-up"}], "reason": "opening shot sets the look; the video must start exactly on this framing"}

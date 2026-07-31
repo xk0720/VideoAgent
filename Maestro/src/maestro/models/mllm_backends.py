@@ -736,7 +736,10 @@ class GeminiVLM(OpenAICompatVLM):
         role_names = {"first_frame": "FIRST-FRAME image (the shot must open on it)",
                       "first": "FIRST-FRAME image (the shot must open on it)",
                       "last": "LAST-FRAME image (the shot must end on it)",
-                      "reference": "REFERENCE image (subject/scene to stay consistent with)"}
+                      "reference": "REFERENCE image (subject/scene to stay consistent with)",
+                      "identity_portrait": "IDENTITY PORTRAIT (the character's "
+                      "OFFICIAL look — appearance in the shot must match this "
+                      "portrait; judge the cast checks against it)"}
         for i, im in enumerate(cond.get("images") or []):
             label = (f"CONDITION {len(labels) + 1}: "
                      + role_names.get(im.get("role", ""), "REFERENCE image"))

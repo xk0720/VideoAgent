@@ -164,13 +164,21 @@ def test_keyframe_menu_gating():
 
 def test_decide_three_layer_fallback():
     menu = [{"name": "flf2v_bridge"}, {"name": "t2v"}]
-    # 1) episode replay 命中 → via=episode,LLM 根本不被咨询
-    class _Boom(BaseLLMClient):
+    # 1) 2026-07-31 用户裁决:episode 命中【不再短路】—— 只作建议注入
+    # 上下文,LLM 照常被咨询并可以选别的
+    class _Capture(BaseLLMClient):
+        def __init__(self):
+            self.prompts = []
+
         def complete(self, prompt, **kw):
-            raise AssertionError("must not be called")
-    d = _decide(_Boom(), "condition", menu, {}, replay_hint="flf2v_bridge",
+            self.prompts.append(prompt)
+            return '{"strategy": "t2v", "reason": "advice weighed, t2v"}'
+    cap = _Capture()
+    d = _decide(cap, "condition", menu, {}, replay_hint="flf2v_bridge",
                 priority=["flf2v_bridge", "t2v"])
-    assert d["strategy"] == "flf2v_bridge" and d["via"] == "episode"
+    assert d["via"] == "llm" and d["strategy"] == "t2v"   # LLM 说了算
+    assert "episode_recommendation" in cap.prompts[0]     # 建议在场
+    assert "flf2v_bridge" in cap.prompts[0]
     # 2) LLM 严格 JSON → via=llm
     d = _decide(_JsonLLM(condition="t2v"), "condition", menu, {},
                 replay_hint=None, priority=["flf2v_bridge", "t2v"])
@@ -185,8 +193,8 @@ def test_decide_three_layer_fallback():
 
 
 def test_replay_adoption_from_episode_memory(tmp_path, monkeypatch):
-    """长期记忆的可执行化:历史 good episode 的 per-shot 策略在相似新任务上被
-    【直接采纳】(via=episode,LLM 不被咨询)——检索即执行。"""
+    """2026-07-31 用户裁决:episode 记忆只作 guidance —— 历史策略作为
+    episode_recommendation 注入上下文,LLM 照常决策,绝不直接继承。"""
     import maestro.pipeline.window_loop as wl
     from maestro.memory.storyboard import StoryboardMemory
     monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
@@ -218,17 +226,16 @@ def test_replay_adoption_from_episode_memory(tmp_path, monkeypatch):
         "the glass falls off the table again", cache_dir=tmp_path / "run2",
         llm=boom, max_turns=1, n_candidates=1, episode_memory=em,
         **_components(_WindowVideoGen()))
-    # 剧本层每次任务都该新写(不重放),它可以咨询 LLM;但 image_plan 和
-    # condition 两个决策阶段命中历史 → 全部 via=episode,零 LLM 消耗。
+    # 裁决后:episode 命中不再产生 via=episode —— LLM 被咨询(_Boom 的
+    # 回复不可解析 → 确定性兜底),且咨询的 prompt 里带着历史建议。
     via = {d["via"] for d in res2.decisions
            if d["stage"] in ("image_plan", "condition")}
-    assert via == {"episode"}, res2.decisions           # 检索即执行
-    assert all("Image Plan" not in pr[:200] and "Window Generation"
-               not in pr[:200] for pr in boom.prompts)  # 只有剧本层碰过 LLM
-    # 采纳的正是历史策略
-    assert all(e.keyframe_source == "t2i" for e in res2.storyboard.entries)
-    assert all(e.condition["strategy"] == "i2v_keyframe"
-               for e in res2.storyboard.entries)
+    assert "episode" not in via, res2.decisions          # 短路已废除
+    rec_prompts = [pr for pr in boom.prompts
+                   if "episode_recommendation" in pr]
+    assert rec_prompts, "历史建议必须注入 LLM 上下文"
+    assert any("i2v_keyframe" in pr or "single_first_frame" in pr
+               for pr in rec_prompts)                    # 建议内容在场
 
 
 # ── 诚实性修复回归(对抗审查确认的 2 个 bug)──────────────────────────────

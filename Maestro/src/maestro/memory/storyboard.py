@@ -149,6 +149,9 @@ class StoryboardMemory:
         self.setting: str = ""
         # scene 号(int)→ 音乐描述;空 = 无配乐(诚实静音)
         self.music_plan: dict = {}
+        # 角色官方肖像(2026-07-31 视觉锚):角色名 → 肖像图路径。
+        # 生成角色的唯一视觉身份载体;来源 = 用户素材/跨片库/开工 t2i。
+        self.portraits: dict = {}
         self._rev = 0                    # 单调更新计数(每次写 +1,可审计)
 
     # ── 构建 ──────────────────────────────────────────────────────────────
@@ -281,6 +284,7 @@ class StoryboardMemory:
         payload = {"rev": self._rev,
                    "cast": self.cast, "setting": self.setting,
                    "music_plan": self.music_plan,
+                   "portraits": self.portraits,
                    "entries": [asdict(e) for e in self.entries]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -296,6 +300,9 @@ class StoryboardMemory:
         sb.music_plan = {int(k): str(v) for k, v in
                          (data.get("music_plan") or {}).items()
                          if str(v).strip()}
+        sb.portraits = {str(k): str(v) for k, v in
+                        (data.get("portraits") or {}).items()
+                        if str(v).strip()}
         sb.setting = str(data.get("setting", "") or "")
         sb.entries = [ShotEntry(**e) for e in data.get("entries", [])]
         return sb

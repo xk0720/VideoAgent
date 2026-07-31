@@ -134,6 +134,8 @@ def test_setting_note_unanchored_requires_weaving():
 # ── P1-D:重放/兜底决策 log 带 context(观测口径一致)─────────────────
 
 def test_decide_replay_and_fallback_log_context(tmp_path):
+    """2026-07-31 修订:episode 命中不再短路 —— 建议注入上下文后照常走
+    LLM/兜底;log 口径仍须带 context(观测诚实)。"""
     from maestro.logging_utils import set_brain_log
 
     logf = tmp_path / "brain.jsonl"
@@ -142,17 +144,22 @@ def test_decide_replay_and_fallback_log_context(tmp_path):
         menu = [{"name": "t2v"}, {"name": "ti2v_prev_last"}]
         ctx = {"shot": {"label": "scene 1 shot 3"},
                "junction": {"prev_last_frame_actual": "cat at bowl"}}
+        # llm=None → _brain_pick 失败 → 确定性兜底;建议应已注入 context
         d = _decide(None, "generation-condition", menu, ctx,
                     replay_hint="ti2v_prev_last", priority=["t2v"])
-        assert d["via"] == "episode"
+        assert d["via"] == "fallback"
         d = _decide(None, "generation-condition", menu, ctx,
                     replay_hint=None, priority=["t2v"])
         assert d["via"] == "fallback"
     finally:
         set_brain_log(None)
     recs = [json.loads(l) for l in logf.read_text().splitlines()]
-    assert len(recs) == 2
-    for r in recs:
+    fb = [r for r in recs if r.get("via") == "fallback"]
+    assert len(fb) == 2
+    # 第一条(有 replay_hint)的 context 必须带 episode_recommendation
+    assert fb[0]["context"]["episode_recommendation"]["strategy"] == \
+        "ti2v_prev_last"
+    for r in fb:
         assert r["context"]["junction"]["prev_last_frame_actual"] == \
             "cat at bowl"
         assert r["menu"] == ["t2v", "ti2v_prev_last"]

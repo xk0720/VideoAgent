@@ -326,6 +326,86 @@ def _drop_first_frame(video: Path, cond: dict, *,
     return Path(t) if t else video
 
 
+def _ensure_cast_portraits(storyboard, asset_memory, video_gen,
+                           cache_dir: Path, library=None) -> list[dict]:
+    """§A' 角色官方肖像(2026-07-31 用户批准的视觉锚,ViMax 肖像库
+    嫁接我们的记忆体系;单视图,不固定 seed):
+
+    对每个 cast 角色,按优先级取像:
+      ① 用户素材命中(描述符与素材语义词重叠 ≥0.5)→ 用户照片即肖像;
+      ② 跨片角色库命中(同名 + 描述符重叠 ≥0.6)→ 复用历史肖像;
+      ③ t2i 生成:static 半句逐字 + 全片 setting/光线(吸取 ViMax 白底
+        重打光之坑 —— 肖像直接生成在影片风格里),入库供下部片复用。
+    产物写进 storyboard.portraits(持久化)并注册进 asset_memory
+    (identity 前缀 portrait:),媒体目录/检索链即刻可见。
+    诚实链:t2i 失败 → 该角色无肖像,文字契约照旧兜底,响亮记录。"""
+    notes: list[dict] = []
+    if not getattr(storyboard, "cast", None):
+        return notes
+    pdir = cache_dir / "portraits"
+    for name, desc in storyboard.cast.items():
+        if name in (storyboard.portraits or {}):
+            continue
+        m = _CAST_SPLIT_RE.match(str(desc or "").strip())
+        static = (m.group(1).strip() if m else str(desc or "").strip())
+        got, src = None, ""
+        # ① 用户素材
+        for ident in (getattr(asset_memory, "identity_anchors", None)
+                      or {}).values():
+            a_desc = str(getattr(ident, "description", "") or "")
+            a_path = Path(str(getattr(ident, "source", "") or ""))
+            if not a_path.is_file() or a_path.suffix.lower() not in (
+                    ".png", ".jpg", ".jpeg", ".webp"):
+                continue
+            wa, wb = set(re_words(static)), set(re_words(a_desc))
+            if wa and wb and len(wa & wb) / min(len(wa), len(wb)) >= 0.5:
+                got, src = a_path, "user_asset"
+                break
+        # ② 跨片库
+        if got is None and library is not None:
+            hit = library.lookup(name, static)
+            if hit is not None:
+                got, src = Path(hit), "library"
+        # ③ t2i 生成(不固定 seed,用户裁决)
+        if got is None and video_gen is not None                 and hasattr(video_gen, "text_to_image"):
+            pdir.mkdir(parents=True, exist_ok=True)
+            slug = "".join(c if c.isalnum() else "_" for c in name)[:40]
+            prompt = (f"full-body portrait of {name}: {static}. Standing, "
+                      f"natural pose, facing the camera, whole figure "
+                      f"visible. Setting and lighting consistent with: "
+                      f"{storyboard.setting or 'the film scene'}. "
+                      f"cinematic still, high detail")
+            try:
+                got = Path(video_gen.text_to_image(
+                    prompt, pdir / f"{slug}.png"))
+                src = "t2i"
+                if library is not None:
+                    library.add(name, static, got)
+            except Exception as exc:
+                log.warning("portrait for %s failed (%s) — text contract "
+                            "remains the only identity carrier", name, exc)
+        if got is not None:
+            storyboard.portraits[name] = str(got)
+            try:
+                from ..types import Identity
+
+                asset_memory.identity_anchors[f"portrait:{name}"] = Identity(
+                    identity_id=f"portrait:{name}", name=name,
+                    source=str(got),
+                    description=f"character: official portrait of {name} — "
+                                f"{static}")
+            except Exception:
+                pass
+            log.info("portrait: %s ← %s (%s)", name, Path(got).name, src)
+            notes.append({"stage": "cast_portrait", "name": name,
+                          "via": src, "path": str(got)})
+        else:
+            notes.append({"stage": "cast_portrait", "name": name,
+                          "via": "none"})
+    storyboard._save()
+    return notes
+
+
 def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
     """§E 第一步(用户规矩 2026-07-30):终版路径【确定并核验】——
     台账 video_path 是唯一权威;逐镜打印 "label → 文件 [策略]" 清单;
@@ -647,6 +727,8 @@ def decision_prompt(skill_text: str, menu: list, context: dict) -> str:
         + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
           '"reason": "<one short sentence>", ... optional semantic fields '
           "per the skill above (images / video_prompt / use_prev_tail_video)}"
+          " ALL output text (reason / video_prompt / image descriptions)"
+          " must be in ENGLISH, regardless of the user's language."
     )
 
 
@@ -952,16 +1034,14 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
     label = (context.get("shot", {}).get("label")
              if isinstance(context.get("shot"), dict) else None)
     if replay_hint and replay_hint in names:
-        d = {"strategy": replay_hint, "via": "episode",
-             "reason": "replaying a verified strategy from a similar past episode"}
-        # attempt3 教训(2026-07-18):重放路径不记 context,排查时会误读
-        # 成"junction 是 null" —— 三条路径的 log 口径必须一致。
-        d["decision_id"] = brain_log(
-            f"window/{kind}",
-            {"label": label, "parsed": dict(d), "via": "episode",
-             "usable": True, "menu": [m["name"] for m in menu],
-             "context": context})
-        return d
+        # 2026-07-31 用户裁决:episode 记忆【不再直接继承】—— 只作建议
+        # 注入上下文,决策仍由 brain 做(旧 via="episode" 短路废除:
+        # 历史策略/图计划可能与本次上下文错配,直接照抄会拿到不对的
+        # keyframe)。
+        context = {**context, "episode_recommendation": {
+            "strategy": replay_hint,
+            "note": "verified on a similar PAST task — weigh it as "
+                    "advice; current-run conditions win"}}
     picked = _brain_pick(llm, kind, menu, context)
     if picked:
         return {**picked, "via": "llm"}
@@ -1076,6 +1156,10 @@ def _execute_image_plan(decision: dict, entry, video_gen,
         query = _scrub_cast_labels(
             _strip_markers(spec_i.get("description") or entry.description),
             cast)
+        if re.search(r"[\u4e00-\u9fff]", query):
+            log.warning("image plan: t2i/retrieval query contains CJK "
+                        "text (%.60s...) — model I/O must be English; "
+                        "generation quality will suffer", query)
         img, actual = None, ""
         try:
             img, actual = _make_keyframe(
@@ -1279,8 +1363,8 @@ def _prepared_source_videos(asset_memory, cache_dir: Path) -> list[tuple]:
 
 
 def _slot_manifest(strategy: str, entry, prev,
-                   use_prev_tail: bool = False,
-                   source_videos: Optional[list] = None) -> list[dict]:
+                   use_prev_tail: bool = True,
+                   source_videos=None, portraits=None) -> list[dict]:
     """方案 A(2026-07-16 裁决):【槽位清单】—— 执行器将要装配的引用槽位,
     在写 prompt 之前算出来,发给写 prompt 的人(brain / enhancer)。编号
     从"brain 要遵守的规则"变成"brain 拿到的数据",错无可猜。
@@ -1319,6 +1403,13 @@ def _slot_manifest(strategy: str, entry, prev,
         rows = [{"slot": f"@Image{i + 1}", "referenceable": True,
                  "content": _c(p, "a planned reference image")}
                 for i, p in enumerate(refs)]
+        # 角色官方肖像(2026-07-31 视觉锚):排在自有图之后,编号与
+        # _generate_with_condition 的装配顺序严格一致。
+        rows += [{"slot": f"@Image{len(refs) + j + 1}",
+                  "referenceable": True,
+                  "content": f"official portrait of {n} "
+                             f"(identity reference)"}
+                 for j, n in enumerate(sorted(portraits or {}))]
         rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
                   "content": f"user asset: {cap}"}
                  for i, (_v, cap) in enumerate(source_videos or [])]
@@ -1339,6 +1430,11 @@ def _slot_manifest(strategy: str, entry, prev,
         rows += [{"slot": f"@Image{i + 2}", "referenceable": True,
                   "content": _c(p, "a planned image (target look)")}
                  for i, p in enumerate(own)]
+        rows += [{"slot": f"@Image{len(own) + j + 2}",
+                  "referenceable": True,
+                  "content": f"official portrait of {n} "
+                             f"(identity reference)"}
+                 for j, n in enumerate(sorted(portraits or {}))]
         rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
                   "content": f"user asset: {cap}"}
                  for i, (_v, cap) in enumerate(source_videos or [])]
@@ -1472,7 +1568,7 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                              brain_prompt: str = "",
                              use_prev_tail_video: bool = False,
                              source_videos: Optional[list] = None
-                             ) -> tuple[Path, dict]:
+                             , portraits=None) -> tuple[Path, dict]:
     """执行 §C 策略 → (视频路径, 实际用到的条件记录)。条件记录进台账,
     保证"这镜是怎么搭条件生成的"可审计。
 
@@ -1509,6 +1605,8 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         # 2026-07-17 G-1:用户源视频同乘 reference_videos(@VideoN)。
         if refs:
             src_vids = [v for (v, _c_) in (source_videos or [])]
+            p_paths = [Path(portraits[n]) for n in sorted(portraits or {})]
+            refs = list(refs) + p_paths
             cond.update(reference_images=[str(p) for p in refs],
                         reference_videos=([str(v) for v in src_vids] or None),
                         anchoring="soft_t2v_refs")
@@ -1551,7 +1649,8 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                            cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
         own = refs if refs else ([kf] if kf is not None else [])
         if last is not None and own:
-            all_refs = [last] + own
+            p_paths = [Path(portraits[n]) for n in sorted(portraits or {})]
+            all_refs = [last] + own + p_paths
             src_vids = [v for (v, _c_) in (source_videos or [])]
             cond.update(reference_images=[str(p) for p in all_refs],
                         reference_videos=([str(v) for v in src_vids] or None),
@@ -1991,6 +2090,7 @@ def generate_movie_windowed(
     quality_bar: Optional[float] = None,  # 小循环:达标即停(None 关闭)
     repair_severity: float = 0.0,       # 最坏缺陷低于此值不修(0 关闭,荐 0.6)
     enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
+    character_library=None,             # 跨片角色肖像库(2026-07-31)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -2077,6 +2177,11 @@ def generate_movie_windowed(
     # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)
     storyboard.cast = dict(script_meta.get("cast", {}))
     storyboard.music_plan = dict(script_meta.get("music_plan", {}))
+
+    # §A' 角色官方肖像(2026-07-31 视觉锚):用户素材 > 跨片库 > t2i
+    decisions.extend(_ensure_cast_portraits(
+        storyboard, asset_memory, video_gen, cache_dir,
+        library=character_library))
     storyboard.setting = str(script_meta.get("setting", ""))
     if storyboard.cast:
         log.info("window: cast canon — %s",
@@ -2143,6 +2248,8 @@ def generate_movie_windowed(
         # P1-1(ViMax 借鉴):按 <标记> 确定性解析本镜出场角色 ——
         # cast 注入与评审 check 都只对出场者,不再靠 LLM 自判。
         shot_cast = _cast_in_shot(entry.description, storyboard.cast)
+        shot_portraits = {n: storyboard.portraits[n] for n in shot_cast
+                          if n in (storyboard.portraits or {})}
 
         # §C brain 选条件策略(episode → llm → 兜底 三层)。
         # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
@@ -2151,7 +2258,8 @@ def generate_movie_windowed(
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
-                                      source_videos=source_videos)
+                                      source_videos=source_videos,
+                                      portraits=shot_portraits)
             for m in menu}
         d = _decide(
             llm, "generation-condition", menu,
@@ -2189,7 +2297,8 @@ def generate_movie_windowed(
             storyboard.setting, d["strategy"])
         use_tail = bool(d.get("use_prev_tail_video", False))
         slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
-                               source_videos=source_videos)
+                               source_videos=source_videos,
+                               portraits=shot_portraits)
         # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
         # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
         if prompt_enhancer is not None:
@@ -2255,7 +2364,7 @@ def generate_movie_windowed(
                     d["strategy"], entry, prev, spec, video_gen,
                     shot_dir, seed=s, fps=fps, window_tail_s=window_tail_s,
                     brain_prompt=brain_prompt, use_prev_tail_video=use_tail,
-                    source_videos=source_videos)
+                    source_videos=source_videos, portraits=shot_portraits)
             except Exception as exc:
                 log.info("window: conditioned generation failed (%s): %s — "
                          "falling back to plain t2v for this seed",
@@ -2291,9 +2400,12 @@ def generate_movie_windowed(
                 "cast": (shot_cast or None),
                 "dialogue": (entry.dialogue or None),
                 "setting": (storyboard.setting or None),
-                "images": [{"path": im.get("path"), "role": im.get("role")}
-                           for im in entry.images
-                           if im.get("path") and Path(im["path"]).exists()],
+                "images": ([{"path": im.get("path"), "role": im.get("role")}
+                            for im in entry.images
+                            if im.get("path") and Path(im["path"]).exists()]
+                           + [{"path": pp, "role": "identity_portrait"}
+                              for pp in shot_portraits.values()
+                              if Path(pp).exists()]),
                 "reference_video": (cond.get("reference_video")
                                     or cond.get("video")),
             }
@@ -2307,7 +2419,8 @@ def generate_movie_windowed(
                             _entry=entry, _prev=prev, _spec=spec,
                             _ut=use_tail, _slots=slots,
                             _dir=shot_dir, _cast=storyboard.cast,
-                            _setting=storyboard.setting):
+                            _setting=storyboard.setting,
+                            _portraits=shot_portraits):
             # P0-B(2026-07-18):hint 替换原动作,不再 " Fix: " 追加 ——
             # 合成逻辑在 _regen_prompt(可测);剧本动作锚保证 motion
             # 永远在场;hint 过同一套出口清洗(标签+建景句)。
@@ -2330,7 +2443,8 @@ def generate_movie_windowed(
                     _strategy, _entry, _prev, _spec, video_gen, _dir,
                     seed=seed, fps=fps, window_tail_s=window_tail_s,
                     brain_prompt=prompt,
-                    use_prev_tail_video=_ut, source_videos=source_videos)
+                    use_prev_tail_video=_ut, source_videos=source_videos,
+                    portraits=_portraits)
             finally:
                 video_gen.generate_audio = _old_ga2
             r_cond["regen_of_original"] = True
