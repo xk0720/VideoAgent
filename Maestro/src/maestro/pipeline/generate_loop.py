@@ -909,7 +909,8 @@ def generate_shot_orchestrated(
             log.info("shot %d turn%d review-brief: %s",
                      spec.shot_idx, turn, review_brief["headline"])
         menu = orchestrator.available_actions(
-            video_gen=generator.video_gen, asset_memory=asset_memory
+            video_gen=generator.video_gen, asset_memory=asset_memory,
+            clip=best,
         )
         decision = orchestrator.decide(
             best, spec, menu, brain_history, defect_report=defect_report,

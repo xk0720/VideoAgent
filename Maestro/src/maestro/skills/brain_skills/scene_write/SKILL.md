@@ -105,6 +105,13 @@ strategy, review, repair) hangs off these entries.
    spatial layout across cuts for free. Say it explicitly: "same
    framing/angle as shot 1". Change the angle only when the story needs
    it (a reveal, a new subject, an axis change).
+10. LANGUAGE LAW (field bug 2026-07-31): cast descriptors, setting, shot
+   descriptions, end_state, variation and opening_frame MUST be written in
+   ENGLISH no matter what language the user's task is in — these fields
+   feed image/video models directly, and a Chinese descriptor reached the
+   portrait generator verbatim and produced a wrong character in a wrong
+   scene. Entity NAMES (cast keys, used inside <angle markers>) and
+   `dialogue` lines (spoken on screen) may stay in the user's language.
 
 ## Output format (STRICT JSON — output this and nothing else)
 

@@ -749,3 +749,44 @@ I/O 英文法度无运行时闸)。两案并修:
 
 回归:test_character_portraits.py(6 条)+ 三条 episode 契约测试改写。
 全套 515 通过。
+
+## 2026-07-31(下午)肖像双大 bug 修复 + 裁决:ViMax 式关键帧替换修复
+
+事故(outputs/movie_20260731_144652 实锤):
+1. shot2 起所有镜的首帧成了肖像照,人物又和肖像对不上 —— image_plan 把
+   官方肖像当素材检索回来做本镜图:同一张图双通道进引用列表(计划图 +
+   自动附挂),正面全身像支配开场构图;
+2. 肖像本身背景全错(影棚白布 + 错误服装)—— 三因叠加:§A' 生肖像时
+   storyboard.setting 还没赋值(拿到空场景,掉进 "the film scene" 空话
+   兜底);中文全角分号";"绕过 static/dynamic 拆分器,契约标签原文进
+   t2i;scene_write 输出了中文描述符(语言律没管到这层)。
+
+修法(全部落地 + 525 测试全绿):
+- 肖像专用通道封死:_asset_catalog/_media_catalog 排除 portrait: 前缀;
+  _execute_image_plan 出口按路径守卫(撞肖像 → 响亮丢弃如实降级);
+  image_plan skill 明写"肖像自动附挂,绝不自己计划";
+- own 图为空但有肖像 → 参考路线照常(菜单肖像感知;t2v_own_refs /
+  ti2v_prev_plus_keyframe 装配 [尾帧]+肖像,编号与槽位清单一致,兜底
+  模板肖像槽位写"match appearance, do not copy pose/framing");
+- 肖像质量链:setting 赋值移到 §A' 之前;_static_half 全角兼容 + 关键词
+  兜底(标签绝不外漏);肖像背景 = 影片 setting 具体词(空则响亮告警 +
+  中性底,空话兜底废除);scene_write 增 LANGUAGE LAW(视觉字段必须英文,
+  名字/台词可留用户语言)+ 解析层 CJK 确定性告警;
+- 角色库消污:data/character_library 两条坏条目隔离进 quarantine_20260731,
+  index 清空(不清会同名命中复用坏图);
+- 【裁决 1】人物漂移 → ViMax 肖像替换:repair_keyframe_identity 进修复
+  菜单(三重门控:编辑客户端 + 关键帧 + 官方肖像),执行 = seedream-v4
+  多图编辑(images[0]=关键帧, images[1]=肖像)→ 修好的帧正式顶替台账
+  首帧(replaced_from 留痕)→ 原条件重跑;image_edit.edit 增 references
+  参数,size 按被编辑图宽高比推导(写死方幅会逼模型重构图)。
+
+真 API 验证(scripts/playground/portrait_fix_validation.py,三轮迭代):
+- 新肖像 ✅ 背景即影片场景(雨天街角面包店);
+- 肖像替换指令迭代出三条铁律(单一事实源 identity_repair_instruction):
+  显式绑定"第一张=底片、第二张=参考"(缺了 → 模型自由发挥成 3D 卡通);
+  钉住 photographic live-action photorealistic(防风格漂移);
+  full-bleed no borders(防胶片边框装饰)。第三轮:换人保景完全成功。
+
+另:frame-2 瞬移实锤(shot000_w_s301 帧 1→2 MAD 13.58,正常 1~1.5)——
+i2v 钉帧只服从约两帧后按文字先验重画人+景;钉帧完整性 MAD 闸门已列入
+待裁决方案(骨架 §G),本轮未实现。

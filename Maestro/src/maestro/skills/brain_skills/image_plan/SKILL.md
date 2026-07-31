@@ -90,6 +90,15 @@ decision covers three things at once:
 - `asset_catalog` entries carry kind + a description. When you pick
   asset_image, put the retrieval query into that image's `description`
   (retrieval scores by keyword overlap with asset descriptions).
+- OFFICIAL PORTRAITS ARE NOT YOURS TO PLAN (2026-07-31 field bug): each
+  cast character's official portrait AUTO-ATTACHES to the reference
+  channel of every shot the character appears in — you never see them in
+  `asset_catalog`, never plan them as asset_image, and never re-describe
+  them as a t2i image. Planning a portrait as this shot's own image put
+  the same picture into the reference list TWICE and made a full-body
+  facing-camera portrait dominate the opening frame of every shot. A shot
+  whose only consistency need is "the character must look right" needs
+  **none** — the portrait channel already covers it.
 - COHERENCE with the condition stage (do not waste money): an image you plan
   here is only useful if the NEXT stage (window_generation) will pick a
   strategy that consumes it. Check `episode_guidance.avoid` for this shot's

@@ -121,6 +121,11 @@ def _asset_catalog(asset_memory: Optional[AssetMemory]) -> list[dict]:
     if asset_memory is None:
         return out
     for a in asset_memory.identity_anchors.values():
+        # 官方肖像(portrait: 前缀)只走 §C 自动附挂专用通道,绝不进检索/
+        # 计划目录 —— 2026-07-31 实锤:image_plan 把肖像检索回来当本镜图,
+        # 同一张图从两条通道各进一次引用列表,正面全身像支配了开场构图。
+        if str(getattr(a, "identity_id", "") or "").startswith("portrait:"):
+            continue
         p = Path(a.source or "")
         if a.source and p.exists():
             out.append({"kind": "identity", "name": a.name or a.identity_id,
@@ -189,9 +194,24 @@ _ANCHORED_STRATEGIES = {"i2v_keyframe", "flf2v_own_pair", "flf2v_bridge",
 _PIN_SENTENCE = ("The shot opens EXACTLY on @Image1 — the final moment of "
                  "the previous shot; do not alter its scene or layout.")
 
-# cast 契约值的格式:static: X; dynamic: Y
-_CAST_SPLIT_RE = re.compile(r"static:\s*(.+?);\s*dynamic:.*",
+# cast 契约值的格式:static: X; dynamic: Y。全角分号/冒号同样合法 ——
+# 2026-07-31 实锤:中文描述符用";"绕过了拆分器,static:/dynamic: 标签
+# 原文进了肖像 t2i prompt。
+_CAST_SPLIT_RE = re.compile(r"static[::]\s*(.+?)\s*[;;,]\s*dynamic[::].*",
                             re.IGNORECASE | re.DOTALL)
+
+
+def _static_half(desc: str) -> str:
+    """cast 契约值 → static 半句(无标签)。正则不中但 dynamic 标签在
+    (brain 写了变体格式)→ 关键词兜底切分 —— 契约标签绝不许漏进任何
+    模型 prompt;两个标签都没有 → 原文即静态描述。"""
+    s = str(desc or "").strip()
+    m = _CAST_SPLIT_RE.match(s)
+    if m:
+        return m.group(1).strip()
+    cut = re.split(r"dynamic[::]", s, maxsplit=1, flags=re.IGNORECASE)[0]
+    cut = re.sub(r"^\s*static[::]\s*", "", cut, flags=re.IGNORECASE)
+    return cut.strip().rstrip(";;,. ").strip()
 
 
 def _scrub_cast_labels(text: str, cast: Optional[dict] = None) -> str:
@@ -205,8 +225,8 @@ def _scrub_cast_labels(text: str, cast: Optional[dict] = None) -> str:
         m = _CAST_SPLIT_RE.match(s)
         if m and s in out:
             out = out.replace(s, m.group(1).strip())
-    out = re.sub(r"\bstatic:\s*", "", out)
-    if re.search(r"\bdynamic:", out, re.IGNORECASE):
+    out = re.sub(r"\bstatic[::]\s*", "", out)
+    if re.search(r"\bdynamic[::]", out, re.IGNORECASE):
         log.warning("cast label 'dynamic:' survived in an outgoing prompt "
                     "(the writer paraphrased the contract) — passing "
                     "through unmodified; fix the writer via skill")
@@ -346,8 +366,7 @@ def _ensure_cast_portraits(storyboard, asset_memory, video_gen,
     for name, desc in storyboard.cast.items():
         if name in (storyboard.portraits or {}):
             continue
-        m = _CAST_SPLIT_RE.match(str(desc or "").strip())
-        static = (m.group(1).strip() if m else str(desc or "").strip())
+        static = _static_half(desc)
         got, src = None, ""
         # ① 用户素材
         for ident in (getattr(asset_memory, "identity_anchors", None)
@@ -370,11 +389,27 @@ def _ensure_cast_portraits(storyboard, asset_memory, video_gen,
         if got is None and video_gen is not None                 and hasattr(video_gen, "text_to_image"):
             pdir.mkdir(parents=True, exist_ok=True)
             slug = "".join(c if c.isalnum() else "_" for c in name)[:40]
+            # 背景必须是影片场景本身(2026-07-31 用户裁决:肖像背景按
+            # 场景描述来)—— setting 为空说明 §A 时序被破坏,响亮告警,
+            # 诚实退到中性底,绝不写 "the film scene" 这类空话给模型。
+            setting = str(getattr(storyboard, "setting", "") or "").strip()
+            if not setting:
+                log.warning("portrait for %s: storyboard.setting is EMPTY — "
+                            "portrait background cannot follow the film "
+                            "scene (check §A ordering); using a neutral "
+                            "backdrop honestly", name)
+            bg = (f"Background: {setting} — the character stands inside "
+                  f"this exact scene, lit by its natural light."
+                  if setting else
+                  "Background: plain neutral backdrop, soft even light.")
             prompt = (f"full-body portrait of {name}: {static}. Standing, "
                       f"natural pose, facing the camera, whole figure "
-                      f"visible. Setting and lighting consistent with: "
-                      f"{storyboard.setting or 'the film scene'}. "
-                      f"cinematic still, high detail")
+                      f"visible. {bg} cinematic still, high detail")
+            if re.search(r"[一-鿿]", static + setting):
+                log.warning("portrait for %s: cast descriptor / setting "
+                            "contain CJK text — model I/O must be ENGLISH "
+                            "(scene_write must emit English descriptors); "
+                            "portrait quality will suffer", name)
             try:
                 got = Path(video_gen.text_to_image(
                     prompt, pdir / f"{slug}.png"))
@@ -900,7 +935,13 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               "end_state exactly (position AND motion); to hand motion to "
               "the next shot, do NOT let the mover stop before the cut; a "
               "resting object may only move again if a NEW force/event acts "
-              "on it (write that event into the description)."
+              "on it (write that event into the description). LANGUAGE LAW: "
+              "cast descriptors, setting, descriptions, end_state, "
+              "variation and opening_frame MUST be ENGLISH regardless of "
+              "the user's language (they feed image/video models directly; "
+              "2026-07-31 field bug: Chinese descriptors produced broken "
+              "portraits). Entity NAMES in cast keys and dialogue lines may "
+              "stay in the user's language."
         )
         raw = ""
         try:
@@ -961,6 +1002,17 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                      if str(v).strip()}
                     if isinstance(data.get("cast"), dict) else {})
             setting = str(data.get("setting", "") or "").strip()
+            # LANGUAGE LAW 确定性检查(2026-07-31):描述符/setting 直喂
+            # 图像模型,必须英文;名字(cast 键)不查 —— 名字可保留原语言。
+            cjk_bad = [k for k, v in cast.items()
+                       if re.search(r"[一-鿿]", v)]
+            if re.search(r"[一-鿿]", setting):
+                cjk_bad.append("<setting>")
+            if cjk_bad:
+                log.warning("scene_write: cast descriptor/setting in CJK "
+                            "for %s — LANGUAGE LAW violated (must be "
+                            "English); portraits and prompts will degrade",
+                            cjk_bad)
             if shots:
                 # 修正 A(2026-07-16):素材白给检测(警告不阻断)——
                 # 用户给了素材,但没有任何分镜描述提及任一素材关键词。
@@ -1123,7 +1175,9 @@ def _image_plan_menu(video_gen, asset_memory: Optional[AssetMemory]) -> list[dic
 def _execute_image_plan(decision: dict, entry, video_gen,
                         asset_memory: Optional[AssetMemory], retrieval,
                         out_dir: Path,
-                        cast: Optional[dict] = None) -> tuple[str, list, str]:
+                        cast: Optional[dict] = None,
+                        portrait_paths: Optional[set] = None
+                        ) -> tuple[str, list, str]:
     """执行 Image Plan → (最终 plan, images 列表, degraded_from)。
 
     每张图独立按来源产出(Q-B 混搭);产不出的图【丢弃并降级计划】——
@@ -1180,6 +1234,25 @@ def _execute_image_plan(decision: dict, entry, video_gen,
         else:
             log.info("image plan: slot %d (%s) produced no image — dropped",
                      i, role)
+    # 肖像专用通道守卫(2026-07-31 bug ②a):官方肖像只许经 §C 自动附挂
+    # 进引用列表;计划图撞上肖像路径(检索误中/LLM 点名)→ 响亮丢弃,
+    # 后续按剩余图正常降级。没有这道闸,同一张肖像会双通道进引用、
+    # 甚至被钉成首帧 —— shot2 起整片开场全是肖像照。
+    if portrait_paths and produced:
+        kept = []
+        for row in produced:
+            try:
+                rp = str(Path(row["path"]).resolve())
+            except Exception:
+                rp = str(row["path"])
+            if rp in portrait_paths:
+                log.warning("image plan: %s planned the OFFICIAL PORTRAIT "
+                            "as its own image — dropped (portraits ride the "
+                            "dedicated auto-attach channel only)",
+                            entry.label)
+                continue
+            kept.append(row)
+        produced = kept
     if len(produced) == len(roles):
         return plan, produced, ""
     # 诚实降级:按剩余图的角色改写计划
@@ -1483,11 +1556,16 @@ def _slot_manifest(strategy: str, entry, prev,
     return rows
 
 
-def _condition_menu(entry, prev, video_gen) -> list[dict]:
-    """当前 shot 可用的条件策略(Image Plan 角色 + 存在性 + 能力三重门控)。"""
+def _condition_menu(entry, prev, video_gen, portraits=None) -> list[dict]:
+    """当前 shot 可用的条件策略(Image Plan 角色 + 存在性 + 能力三重门控)。
+
+    2026-07-31 bug ②a 补:官方肖像走自动附挂通道,本镜没有自己计划的图
+    时参考路线依然可用(肖像即引用)—— 否则封掉"肖像当计划图"后,
+    身份锚在无图镜上会整体失联。"""
     caps = video_gen.capabilities() if video_gen is not None else set()
     ff, refs, pf, pl = _entry_images(entry)
     has_kf = ff is not None
+    has_portraits = bool(portraits)
     has_prev = prev is not None and prev.video_path is not None
     menu = [{"name": "t2v", "description": "Text only — no visual anchor. Use "
              "when nothing else is available or the shot is a hard scene cut."}]
@@ -1507,7 +1585,7 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
                                     "describing the motion BETWEEN the two "
                                     "frames."})
     # reference 角色图(无需上镜也能用)→ seedance t2v @refs 路线
-    if refs and "ref_images" in caps:
+    if (refs or has_portraits) and "ref_images" in caps:
         menu.append({"name": "t2v_own_refs",
                      "description": "This shot's planned REFERENCE image(s) "
                                     "ride the seedance t2v reference channel "
@@ -1542,7 +1620,7 @@ def _condition_menu(entry, prev, video_gen) -> list[dict]:
                                         "already happened. A planned "
                                         "'last'-role image (if any) becomes "
                                         "the target final frame."})
-        if (has_kf or refs) and "ref_images" in caps:
+        if (has_kf or refs or has_portraits) and "ref_images" in caps:
             menu.append({"name": "ti2v_prev_plus_keyframe",
                          "description": "THE route when continuing from the "
                                         "previous shot WHILE carrying "
@@ -1603,16 +1681,26 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
     if strategy == "t2v_own_refs":
         # Image Plan reference 角色图 → seedance t2v @refs(无需上镜)。
         # 2026-07-17 G-1:用户源视频同乘 reference_videos(@VideoN)。
-        if refs:
+        # 2026-07-31 bug ②a:肖像走自动附挂 —— own 图为空但有肖像时本
+        # 路线照常成立(肖像即引用),不再降级丢身份锚。
+        p_names = sorted(portraits or {})
+        p_paths = [Path(portraits[n]) for n in p_names]
+        if refs or p_paths:
             src_vids = [v for (v, _c_) in (source_videos or [])]
-            p_paths = [Path(portraits[n]) for n in sorted(portraits or {})]
-            refs = list(refs) + p_paths
+            own_refs = list(refs)
+            refs = own_refs + p_paths
             cond.update(reference_images=[str(p) for p in refs],
                         reference_videos=([str(v) for v in src_vids] or None),
                         anchoring="soft_t2v_refs")
-            # 裁决 1.2:引用必须带内容 —— 每个 @ImageN 说清它实际是什么
+            # 裁决 1.2:引用必须带内容 —— 每个 @ImageN 说清它实际是什么;
+            # 肖像槽位 = 身份参考,绝不是要复刻的画面。
             fallback_prompt = (spec.prompt + ". " + " ".join(
-                _mention(entry, p_, i + 1) for i, p_ in enumerate(refs))
+                _mention(entry, p_, i + 1) for i, p_ in enumerate(own_refs))
+                + "".join(
+                    f" @Image{len(own_refs) + j + 1} is the official "
+                    f"portrait of {n} — match the character's appearance "
+                    f"to it; do not copy its pose or framing."
+                    for j, n in enumerate(p_names))
                 + "".join(f" @Video{i + 1} is the user's source video "
                           f"({cap}) — keep its subject consistent."
                           for i, (_v, cap) in enumerate(source_videos or [])))
@@ -1648,8 +1736,11 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         last = _last_frame(Path(prev.video_path),
                            cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
         own = refs if refs else ([kf] if kf is not None else [])
-        if last is not None and own:
-            p_paths = [Path(portraits[n]) for n in sorted(portraits or {})]
+        # 2026-07-31 bug ②a:own 为空但有肖像 → 路线照常([尾帧]+肖像),
+        # 编号与 _slot_manifest 一致(肖像永远排在 own 之后)。
+        p_names = sorted(portraits or {})
+        p_paths = [Path(portraits[n]) for n in p_names]
+        if last is not None and (own or p_paths):
             all_refs = [last] + own + p_paths
             src_vids = [v for (v, _c_) in (source_videos or [])]
             cond.update(reference_images=[str(p) for p in all_refs],
@@ -1661,6 +1752,11 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                 spec.prompt + ". " + _PIN_SENTENCE + " "
                 + " ".join(_mention(entry, p_, i + 2)
                            for i, p_ in enumerate(own))
+                + "".join(
+                    f" @Image{len(own) + j + 2} is the official portrait "
+                    f"of {n} — match the character's appearance to it; do "
+                    f"not copy its pose or framing."
+                    for j, n in enumerate(p_names))
                 + "".join(f" @Video{i + 1} is the user's source video "
                           f"({cap}) — keep its subject consistent."
                           for i, (_v, cap) in enumerate(source_videos or [])))
@@ -1676,15 +1772,17 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         # 模式的 keyframe)优先硬锚 i2v;纯参考角色图(从未打算当首帧)才
         # 降到 t2v_own_refs —— 角色语义在降级里也不许错配。
         strategy = ("i2v_keyframe" if kf is not None
-                    else "t2v_own_refs" if refs else "t2v")
+                    else "t2v_own_refs" if (refs or p_paths) else "t2v")
         cond = {"strategy": strategy,
                 "degraded_from": "ti2v_prev_plus_keyframe"}
         if strategy == "t2v_own_refs":
-            cond.update(reference_images=[str(p) for p in refs],
+            d_refs = list(refs) + p_paths     # 肖像照常附挂(降级不丢身份锚)
+            cond.update(reference_images=[str(p) for p in d_refs],
                         anchoring="soft_t2v_refs")
             return Path(video_gen.generate(
                 prompt=brain_prompt or spec.prompt, duration=spec.duration,
-                out_path=out, fps=fps, reference_images=refs, seed=seed)), cond
+                out_path=out, fps=fps, reference_images=d_refs,
+                seed=seed)), cond
 
     if strategy == "multi_image_fusion":
         # kling-video-o1 参考路线:[上镜尾帧?] + 本镜图(≤7;带 video 时后端
@@ -2174,15 +2272,17 @@ def generate_movie_windowed(
         entry_.variation = vars_[i_] if i_ < len(vars_) else ""
         entry_.opening_frame = opens_[i_] if i_ < len(opens_) else ""
         entry_.dialogue = dlgs_[i_] if i_ < len(dlgs_) else ""
-    # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)
+    # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)。setting 必须
+    # 在 §A' 之前就位 —— 2026-07-31 实锤:原顺序里肖像先生成、setting 后
+    # 赋值,肖像 prompt 拿到空场景,背景全错。
     storyboard.cast = dict(script_meta.get("cast", {}))
     storyboard.music_plan = dict(script_meta.get("music_plan", {}))
+    storyboard.setting = str(script_meta.get("setting", ""))
 
     # §A' 角色官方肖像(2026-07-31 视觉锚):用户素材 > 跨片库 > t2i
     decisions.extend(_ensure_cast_portraits(
         storyboard, asset_memory, video_gen, cache_dir,
         library=character_library))
-    storyboard.setting = str(script_meta.get("setting", ""))
     if storyboard.cast:
         log.info("window: cast canon — %s",
                  "; ".join(f"{k}: {v[:60]}" for k, v in
@@ -2197,6 +2297,12 @@ def generate_movie_windowed(
     #     决策,不写死"背景图=首帧"这类规则)。──────────────────────────────
     kf_dir = cache_dir / "keyframes"
     asset_catalog = _media_catalog(asset_memory)
+    portrait_paths: set = set()
+    for _pp in (storyboard.portraits or {}).values():
+        try:
+            portrait_paths.add(str(Path(_pp).resolve()))
+        except Exception:
+            portrait_paths.add(str(_pp))
     for entry, spec in zip(storyboard.entries, specs):
         menu = _image_plan_menu(video_gen, asset_memory)
         d = _decide(
@@ -2212,7 +2318,7 @@ def generate_movie_windowed(
         decisions.append({"stage": "image_plan", "label": entry.label, **d})
         plan_final, images, degraded_from = _execute_image_plan(
             d, entry, video_gen, asset_memory, retrieval, kf_dir,
-            cast=storyboard.cast)
+            cast=storyboard.cast, portrait_paths=portrait_paths)
         storyboard.set_image_plan(entry.shot_idx, plan_final, images,
                                   degraded_from=degraded_from)
         log.info("window: %s image-plan → %s (via=%s, %d image(s)%s)",
@@ -2254,7 +2360,8 @@ def generate_movie_windowed(
         # §C brain 选条件策略(episode → llm → 兜底 三层)。
         # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
         # —— 它写 video_prompt 时引用编号只许照抄所选策略的清单,不许猜。
-        menu = _condition_menu(entry, prev, video_gen)
+        menu = _condition_menu(entry, prev, video_gen,
+                               portraits=shot_portraits)
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
@@ -2403,8 +2510,9 @@ def generate_movie_windowed(
                 "images": ([{"path": im.get("path"), "role": im.get("role")}
                             for im in entry.images
                             if im.get("path") and Path(im["path"]).exists()]
-                           + [{"path": pp, "role": "identity_portrait"}
-                              for pp in shot_portraits.values()
+                           + [{"path": pp, "role": "identity_portrait",
+                               "name": n}
+                              for n, pp in shot_portraits.items()
                               if Path(pp).exists()]),
                 "reference_video": (cond.get("reference_video")
                                     or cond.get("video")),
@@ -2414,7 +2522,7 @@ def generate_movie_windowed(
         # R-1(2026-07-17 裁决):全修闭包 —— "regenerate" 严格按该镜的
         # 【原始条件方法】重生成(同策略/同条件/同底 prompt + hint;引用
         # 闸门复用,漏提的槽位自动补句)。非窗口管线无此闭包,保持旧行为。
-        def _regen_original(seed: int, hint: str = "",
+        def _regen_original(seed: int, hint: str = "", first_frame=None,
                             _strategy=d["strategy"], _bp=brain_prompt,
                             _entry=entry, _prev=prev, _spec=spec,
                             _ut=use_tail, _slots=slots,
@@ -2424,6 +2532,25 @@ def generate_movie_windowed(
             # P0-B(2026-07-18):hint 替换原动作,不再 " Fix: " 追加 ——
             # 合成逻辑在 _regen_prompt(可测);剧本动作锚保证 motion
             # 永远在场;hint 过同一套出口清洗(标签+建景句)。
+            # 2026-07-31 裁决 1(ViMax 肖像替换):first_frame = 修好的
+            # 关键帧 —— 正式顶替台账里的首帧图(坏帧就是病根,修好的
+            # 才是本镜官方关键帧;replaced_from 留痕),再按原条件重跑。
+            if first_frame is not None and Path(first_frame).exists():
+                _swapped = False
+                for _im in (_entry.images or []):
+                    if _im.get("role") in ("first", "first_frame"):
+                        _im["replaced_from"] = _im.get("path")
+                        _im["path"] = str(first_frame)
+                        _swapped = True
+                        break
+                if not _swapped:
+                    _entry.images = list(_entry.images or []) + [{
+                        "path": str(first_frame), "role": "first_frame",
+                        "source": "repair_edit",
+                        "description": "identity-repaired keyframe "
+                                       "(portrait replacement)"}]
+                if getattr(_entry, "keyframe_path", None):
+                    _entry.keyframe_path = str(first_frame)
             hint_ = _scrub_cast_labels(_strip_markers(hint), _cast)
             prompt = _regen_prompt(_strategy, _bp or _spec.prompt,
                                    hint_, _slots,
@@ -2450,6 +2577,8 @@ def generate_movie_windowed(
             r_cond["regen_of_original"] = True
             r_cond["regen_prompt_mode"] = ("hint_replace" if hint_
                                            else "base")
+            if first_frame is not None:
+                r_cond["keyframe_replaced"] = str(first_frame)
             if _wa:
                 r_cond["generate_audio"] = True
             return v_path, r_cond

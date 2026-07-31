@@ -44,6 +44,37 @@ log = get_logger(__name__)
 INVALID = {"tool": "__invalid__", "args": {}, "reason": "brain reply unusable"}
 
 
+def identity_repair_instruction(who: str) -> str:
+    """ViMax 肖像替换的编辑指令(单一事实源:修复 handler 与 playground
+    验证共用)。2026-07-31 真 API 迭代实测:必须【显式绑定】"第一张=被
+    编辑的帧、第二张=参考肖像",并钉住摄影写实风格与画幅 —— 缺任一,
+    seedream 会自由发挥(把写实关键帧画成了 3D 卡通、方幅重构图)。"""
+    return (
+        f"Two images are provided. The FIRST image is a film frame to "
+        f"edit. The SECOND image is the official portrait of {who}. "
+        f"Replace the person in the first image with the person from the "
+        f"second image — copy that person's face, hair, build and "
+        f"wardrobe exactly. Keep everything else in the first image "
+        f"EXACTLY unchanged: background, scene layout, camera framing, "
+        f"body pose, lighting, and the original photographic live-action "
+        f"photorealistic style. Do NOT stylize, do NOT repaint the "
+        f"scene, do NOT change the composition. Output a clean full-bleed "
+        f"frame: no borders, no film-strip frames, no letterboxing, no "
+        f"decorative edges.")
+
+
+def _clip_portraits(clip) -> dict:
+    """clip.conditioning 里的官方肖像 {角色名: 路径}(窗口层在 conditioning
+    images 里带 role=identity_portrait + name)。没有 → {}。"""
+    out: dict = {}
+    for im in ((getattr(clip, "conditioning", None) or {}).get("images")
+               or []):
+        if im.get("role") == "identity_portrait" and im.get("path"):
+            out[str(im.get("name") or f"character{len(out) + 1}")] = \
+                str(im["path"])
+    return out
+
+
 class OrchestratorAgent:
     """The LLM orchestrator: reads the review, decides ONE tool call, executes it.
 
@@ -105,14 +136,16 @@ class OrchestratorAgent:
     # ─────────────────────────────────────────────────────────────────────
     # Tool MENU — the brain's registry, gated by real capabilities + assets.
     # ─────────────────────────────────────────────────────────────────────
-    def available_actions(self, video_gen=None, asset_memory=None) -> list[dict]:
+    def available_actions(self, video_gen=None, asset_memory=None,
+                          clip=None) -> list[dict]:
         """The tool menu as JSON-schema-ish dicts {name, description, args}.
 
-        `regenerate`, `keyframe_edit` and `accept` are ALWAYS offered.
-        `edit_clip` / `extend_clip` appear only if the backend declares the
-        matching capability; `retrieve_replace` only if AssetMemory holds
-        source shots. This is the brain's tool registry — it can only call
-        what is actually executable, so an honest decision is always possible.
+        `regenerate` and `accept` are ALWAYS offered. Everything else is
+        gated by real capabilities / assets / the clip's own conditioning —
+        the brain can only call what is actually executable, so an honest
+        decision is always possible. `clip` (the current best candidate)
+        gates the identity-repair tool: it needs a keyframe to edit and an
+        official portrait to copy from.
         """
         vg = video_gen or self.video_gen
         caps = vg.capabilities() if vg is not None else set()
@@ -134,6 +167,31 @@ class OrchestratorAgent:
                 "args": {"hint": "str — anti-defect instruction to append"},
             },
         ]
+        # ── ViMax 式身份修复(2026-07-31 用户裁决 1):人物漂移 → 在图像层
+        # 改关键帧(把人替换回官方肖像,背景/构图/光线不动)→ 按原条件
+        # 重跑视频。改一张图比重掷一条视频便宜一个量级,且修的是病根
+        # (喂进去的首帧)不是骰子。三重门控:编辑客户端在、该镜有关键帧、
+        # conditioning 里带官方肖像。──────────────────────────────────────
+        if (self.image_edit is not None and clip is not None
+                and getattr(clip, "keyframes", None) and _clip_portraits(clip)):
+            menu.insert(0, {
+                "name": "repair_keyframe_identity",
+                "description": "IDENTITY repair at the IMAGE layer (portrait "
+                "replacement): this shot's keyframe is EDITED — the character "
+                "is replaced with the person from their OFFICIAL PORTRAIT "
+                "while background, scene layout, pose, framing and lighting "
+                "stay untouched — then the shot re-runs its ORIGINAL "
+                "condition method from the fixed keyframe. PREFER this over "
+                "'regenerate' when the defect is a character NOT matching "
+                "their official portrait (wrong face/build/wardrobe): an "
+                "image edit is ~10x cheaper than re-rolling video and fixes "
+                "the cause.",
+                "args": {"character": "str — cast name whose identity is "
+                                      "wrong (must have an official "
+                                      "portrait)",
+                         "hint": "str — optional extra instruction for the "
+                                 "video re-run"},
+            })
         # ── LOCALIZED, propagated tools (v0.4) ──────────────────────────────
         # All three route through pipeline.timeline.propagate_repair: repair the
         # segment the defect overlaps, then re-anchor downstream segments until
@@ -535,6 +593,49 @@ class OrchestratorAgent:
                     spec, cache_dir, revision=r, seed=300 + r,
                     extra_prompt=hint, fps=fps,
                 )
+
+        elif tool == "repair_keyframe_identity":
+            # 2026-07-31 用户裁决 1(ViMax):改关键帧(肖像替换)→ 重跑。
+            portraits = _clip_portraits(best)
+            kfs = list(getattr(best, "keyframes", None) or [])
+            if self.image_edit is None or not kfs or not portraits:
+                return None
+            who = str(args.get("character", "")).strip()
+            p_path = portraits.get(who)
+            if p_path is None and len(portraits) == 1:
+                # brain 写了别名/译名而肖像只有一位 → 唯一肖像即所指
+                who, p_path = next(iter(portraits.items()))
+            if p_path is None or not Path(p_path).exists():
+                self._log("repair_keyframe_identity_skip",
+                          {"character": who},
+                          {"reason": "no matching official portrait",
+                           "portraits": sorted(portraits)})
+                return None
+            instruction = identity_repair_instruction(who)
+            edited = self.image_edit.edit(
+                kfs[0], instruction,
+                cache_dir / f"shot{spec.shot_idx:03d}_r{r}_kf_identity.png",
+                references=[Path(p_path)])
+            hint = str(args.get("hint", "")) or (
+                f"{who}'s appearance in the opening frame now matches the "
+                f"official portrait — keep it consistent through the shot")
+            if regen_fn is not None:
+                video_path, rcond = regen_fn(seed=500 + r, hint=hint,
+                                             first_frame=Path(edited))
+                cand = CandidateClip(shot_idx=spec.shot_idx,
+                                     video_path=Path(video_path), revision=r)
+                cand.keyframes = [Path(edited)]
+                self._log("repair_keyframe_identity",
+                          {"shot_idx": spec.shot_idx, "character": who,
+                           "keyframe": str(kfs[0])},
+                          {"edited_keyframe": str(edited),
+                           "cond": {k: v for k, v in (rcond or {}).items()
+                                    if k != "reference_images"}})
+            else:
+                cand = self.generator.run(
+                    spec, cache_dir, revision=r, seed=500 + r,
+                    extra_prompt=hint, first_frame=Path(edited), fps=fps)
+                cand.keyframes = [Path(edited)]
 
         elif tool == "keyframe_edit":
             try:

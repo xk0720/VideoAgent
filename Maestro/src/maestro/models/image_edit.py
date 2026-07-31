@@ -24,7 +24,13 @@ from typing import Optional
 
 class BaseImageEditClient(ABC):
     @abstractmethod
-    def edit(self, keyframe: Path, instruction: str, out_path: Path) -> Path:
+    def edit(self, keyframe: Path, instruction: str, out_path: Path,
+             references: Optional[list] = None) -> Path:
+        """`references`: extra image(s) the edit must follow (2026-07-31
+        ViMax portrait replacement — the official portrait rides along so
+        the model can COPY the person's look instead of imagining it).
+        seedream-v4/edit natively takes a list: images[0] is the frame to
+        edit, images[1:] are the references."""
         ...
 
 
@@ -32,12 +38,20 @@ class MockImageEditClient(BaseImageEditClient):
     def __init__(self, name: str = "mock-image-edit"):
         self.name = name
 
-    def edit(self, keyframe: Path, instruction: str, out_path: Path) -> Path:
+    def edit(self, keyframe: Path, instruction: str, out_path: Path,
+             references: Optional[list] = None) -> Path:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        src = Path(keyframe).read_text(encoding="utf-8") if Path(keyframe).exists() else ""
+        src = ""
+        kfp = Path(keyframe)
+        if kfp.exists():
+            try:
+                src = kfp.read_text(encoding="utf-8")
+            except UnicodeDecodeError:      # 真图片(二进制)也要能过 mock
+                src = f"<binary image {kfp.stat().st_size}B>"
         out_path.write_text(
             f"MOCK EDITED KEYFRAME\nfrom={keyframe}\ninstruction={instruction}\n"
+            f"references={[str(p) for p in (references or [])]}\n"
             f"prev={src[:120]}\n",
             encoding="utf-8",
         )
@@ -63,9 +77,26 @@ class WaveSpeedImageEditClient(BaseImageEditClient):
         self.config = config or {}
         self.api_key = self.config.get("api_key") or os.getenv("WAVESPEED_API_KEY")
         self.model_id = self.config.get("model_id", "bytedance/seedream-v4/edit")
-        self.size = self.config.get("size", "2048*2048")
+        # size 不配 → 逐次按被编辑图的宽高比推导(2026-07-31 实测:写死
+        # 2048*2048 会把 16:9 关键帧逼成方画幅重构图,"保景"直接失败)
+        self.size = self.config.get("size")
         self.poll_interval = float(self.config.get("poll_interval", 2.0))
         self.timeout = float(self.config.get("timeout", 300))
+
+    @staticmethod
+    def _size_for(kf: Path, fallback: str = "2048*2048") -> str:
+        """被编辑图的送修尺寸:保持原宽高比,放大到长边 ≈2048(seedream
+        质量区间),8 对齐。读不出尺寸 → fallback(留痕靠调用日志)。"""
+        try:
+            from PIL import Image
+            with Image.open(kf) as im:
+                w, h = im.size
+            scale = 2048.0 / max(w, h)
+            w2 = max(8, int(round(w * scale / 8)) * 8)
+            h2 = max(8, int(round(h * scale / 8)) * 8)
+            return f"{w2}*{h2}"
+        except Exception:
+            return fallback
 
     def _headers(self) -> dict:
         if not self.api_key:
@@ -77,7 +108,8 @@ class WaveSpeedImageEditClient(BaseImageEditClient):
         return {"Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"}
 
-    def edit(self, keyframe: Path, instruction: str, out_path: Path) -> Path:
+    def edit(self, keyframe: Path, instruction: str, out_path: Path,
+             references: Optional[list] = None) -> Path:
         import requests  # std in our [all] extras; loud ImportError otherwise
 
         self._headers()                                # loud key check first
@@ -90,14 +122,26 @@ class WaveSpeedImageEditClient(BaseImageEditClient):
                 f"'{kf.suffix}': {keyframe} — a real edit cannot run on a "
                 "non-image (mock stubs stay on the mock client)."
             )
+        # 参考图(ViMax 肖像替换):逐张校验后随行上传 —— images[0] 是被
+        # 编辑的帧,images[1:] 是要遵循的参考;坏参考响亮报错,不静默丢。
+        ref_paths: list[Path] = []
+        for rp in (references or []):
+            rpp = Path(rp)
+            if not rpp.exists() or rpp.suffix.lower() not in (
+                    ".png", ".jpg", ".jpeg", ".webp"):
+                raise ValueError(
+                    f"reference image invalid for edit: {rp} — a real edit "
+                    "cannot follow a missing/non-image reference.")
+            ref_paths.append(rpp)
         from .video_gen_backends import upload_media
 
         payload = {
             "enable_base64_output": False,
             "enable_sync_mode": False,
-            "images": [upload_media(self.api_key, kf)],
+            "images": ([upload_media(self.api_key, kf)]
+                       + [upload_media(self.api_key, p) for p in ref_paths]),
             "prompt": instruction,
-            "size": self.size,
+            "size": self.size or self._size_for(kf),
         }
         resp = requests.post(f"{self.BASE}/{self.model_id}", json=payload,
                              headers=self._headers(), timeout=60)
