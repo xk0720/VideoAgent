@@ -87,6 +87,8 @@ def main() -> int:
                          "对比(附加物,不影响正流程)")
     ap.add_argument("--anchor-duration", type=int, default=None,
                     help="锚点视频时长秒数(默认不传 = API 默认)")
+    ap.add_argument("--audio", action="store_true",
+                    help="音频线:对白原生音频(口型)+ scene 级配乐 + 混音")
     ap.add_argument("--prompt-enhancer", action="store_true",
                     help="启用 prompt 润色 agent(官方 prompt 技巧技能,"
                          "按条件事实重写每镜 video prompt)")
@@ -251,6 +253,7 @@ def main() -> int:
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,
+        enable_audio=args.audio,
         mllm=mllm)   # 需求 ②:接点实况 VLM(gemini API / qwen-local 本地)
 
     _section("brain 决策流水(§B keyframe + §C 条件;via=episode/llm/fallback)")

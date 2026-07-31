@@ -230,6 +230,72 @@ class AnthropicLLM(BaseLLMClient):
 
 
 # name (or its provider prefix) → backend class
+class GeminiLLM(BaseLLMClient):
+    """Gemini 原生 generateContent 的【纯文本】后端(2026-07-29 用户指示:
+    可能把 brain 从 OpenAI 整体替换为 Gemini)。
+
+    与 GeminiVLM 同一端点形状、同一 key、同一 $GEMINI_BASE_URL 覆盖 ——
+    评审走得通的网络路径(含自定义中转),brain 同样走得通。切换只需:
+
+      models.llm:
+        name: "gemini"
+        model: "gemini-3.5-pro"     # 或 $GEMINI_TEXT_MODEL 覆盖
+
+    诚实约定:HTTP ≥400 直接抛(带响应体前 500 字,不静默);回复无
+    text part 抛 —— 调用方(_brain_pick 等)自会记 usable=False。"""
+
+    def __init__(self, name: str = "gemini", config: Optional[dict] = None):
+        self.name = name
+        self.config = config or {}
+        self.model = (self.config.get("model")
+                      or os.getenv("GEMINI_TEXT_MODEL")
+                      or "gemini-3.5-pro")
+        self.base_url = (self.config.get("base_url")
+                         or os.getenv("GEMINI_BASE_URL")
+                         or "https://generativelanguage.googleapis.com"
+                         ).rstrip("/")
+        self.api_key = (self.config.get("api_key")
+                        or os.getenv("GEMINI_API_KEY"))
+        self.temperature = float(self.config.get("temperature", 0.7))
+        self.max_tokens = int(self.config.get("max_tokens", 4096))
+
+    def supports_function_calling(self) -> bool:
+        return True
+
+    def complete(self, prompt: str, **kwargs) -> str:
+        import requests  # lazy — 与其余后端同款
+
+        if not self.api_key:
+            raise RuntimeError(
+                f"GeminiLLM('{self.name}') needs an API key: set "
+                f"models.llm.api_key or $GEMINI_API_KEY.")
+        url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
+        payload = {
+            "contents": [{"role": "user",
+                          "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": float(kwargs.get("temperature",
+                                                self.temperature)),
+                "maxOutputTokens": int(kwargs.get("max_tokens",
+                                                  self.max_tokens)),
+            },
+        }
+        headers = {"x-goog-api-key": self.api_key,
+                   "Content-Type": "application/json"}
+        resp = requests.post(url, json=payload, headers=headers,
+                             timeout=float(kwargs.get("timeout", 120)))
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"GeminiLLM HTTP {resp.status_code}: {resp.text[:500]}")
+        cands = resp.json().get("candidates") or []
+        for part in reversed((cands[0].get("content") or {})
+                             .get("parts", []) if cands else []):
+            if part.get("text"):
+                return str(part["text"])
+        raise RuntimeError("GeminiLLM: no text part in response "
+                           f"({str(resp.text)[:200]})")
+
+
 _REGISTRY = {
     "openai": OpenAICompatLLM,
     "gpt": OpenAICompatLLM,
@@ -237,6 +303,7 @@ _REGISTRY = {
     "qwen": OpenAICompatLLM,
     "vllm": OpenAICompatLLM,
     "openai-compat": OpenAICompatLLM,
+    "gemini": GeminiLLM,
     "anthropic": AnthropicLLM,
     "claude": AnthropicLLM,
 }

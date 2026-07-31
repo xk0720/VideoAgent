@@ -807,6 +807,30 @@ class GeminiVLM(OpenAICompatVLM):
                 f'The script requires this shot to END in this state: '
                 f'"{end_state}". Judge the FINAL moment against it (moving '
                 f'vs at rest matters) — add one check for it.')
+        # 运镜衔接(2026-07-30 用户令):镜头自身也是"运动物体"——
+        # 实况/交接棒里提到 camera 时,追加一条"开场运镜是否延续"检查。
+        if "camera" in (prev_actual + " " + end_state).lower():
+            junction_lines.append(
+                "CAMERA CONTINUITY: the states above include the camera's "
+                "own motion. Add one check: does this shot OPEN by "
+                "continuing that camera state (same move direction and "
+                "pace, or a settled camera)? A REVERSED camera direction "
+                "at the cut (e.g. push-in ending, pull-back opening) is a "
+                "failed check.")
+        # 音画同步(2026-07-30 用户令):有台词的镜,评审必须【听】——
+        # 台词内容 / 口型同步 / 人声之外是否干净(生成时压制了背景音,
+        # 这里正好验证压制话术是否生效;BGM 由后期统一混)。
+        dialogue = str(cond.get("dialogue") or "").strip()
+        if dialogue:
+            junction_lines.append(
+                f'This shot has scripted DIALOGUE: "{dialogue}". The video '
+                "part includes its AUDIO track — listen to it. Add three "
+                "checks: (1) the line is audibly spoken and matches the "
+                "script; (2) the speaker's mouth movement is synchronized "
+                "with the speech (lip sync); (3) apart from the voice the "
+                "audio is clean — no background music or ambience (they "
+                "are suppressed at generation and mixed in later; hearing "
+                "them here is a defect).")
         # 跨镜一致性(2026-07-17 审计):官方外观描述符 = 一致性标尺。
         # 只对本镜画面里出现的角色判;每个出场角色出一条 check。
         cast = cond.get("cast") or {}
@@ -1091,6 +1115,22 @@ class GeminiVLM(OpenAICompatVLM):
             "text."}])
         return (reply or "").strip()
 
+    def describe_junction_video(self, video_path) -> str:
+        """接点实况·视频版(2026-07-28 用户裁决):看上一镜的【末尾片段】
+        —— 单帧只能靠运动模糊猜"动没动",片段才有真实的运动信息(方向/
+        快慢/是否仍在动)。失败/桩文件 → ""(调用方回退单帧,绝不编)。"""
+        from ..physics.track_extractor_backends import _looks_like_video
+
+        p = Path(str(video_path))
+        if not p.is_file() or not _looks_like_video(p):
+            return ""
+        got = self._video_part("THE FINAL SECONDS OF THE PREVIOUS SHOT", p)
+        if not got:
+            return ""
+        self._require_key()
+        reply = self._generate(got + [{"text": _JUNCTION_VIDEO_INSTRUCTION}])
+        return (reply or "").strip()
+
     def describe_junction(self, image_path) -> str:
         """接点实况(2026-07-15 需求 ②):看上一镜的【真实尾帧】,一句话
         说清续接状态 —— 每个关键主体在哪、看起来是动是停、朝什么方向。
@@ -1104,6 +1144,16 @@ class GeminiVLM(OpenAICompatVLM):
 
 
 # 接点实况的共用指令(GeminiVLM 与 LocalQwenVLM 同一份 —— 两种模式同语义)
+_JUNCTION_VIDEO_INSTRUCTION = (
+    "This is the FINAL few seconds of a video shot. Describe the state at "
+    "its VERY LAST MOMENT for continuity into the next shot, in ONE "
+    "factual sentence: each key subject's position in the frame, whether "
+    "it is MOVING or AT REST — judge from the actual motion across the "
+    "clip, not from blur — its direction and pace if moving, and the "
+    "camera's own motion if any. Only what is visible — no speculation. "
+    "No other text."
+)
+
 _JUNCTION_INSTRUCTION = (
     "This is the FINAL frame of a video shot. Describe its state for "
     "continuity into the next shot in ONE factual sentence: each key "

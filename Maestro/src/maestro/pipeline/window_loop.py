@@ -253,6 +253,119 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
 
 _PRESERVE_CLAUSE = "Preserve the established scene, lighting and camera."
 
+# 首帧锁定在【上一镜尾帧】上的策略:它们的第 0 帧 ≈ 上一镜最后一帧,
+# 直接拼接会让同一画面连续出现两次(约 42ms 的微顿/轻闪)。拼装时裁掉
+# 重复帧 —— 但必须先量证实(用户 2026-07-30:"剪掉首帧不就行了";
+# 检查由我加:量不出/不相似就不裁,绝不凭策略名瞎剪真帧)。
+_PREV_FRAME_LOCKED = {"ti2v_prev_last", "ti2v_prev_plus_keyframe",
+                      "flf2v_bridge"}
+# 平均像素差阈值(/255):实测"同帧不同质"≈5-6,镜内正常相邻帧≈1-1.5,
+# 真不同帧 >12(movie_20260729_150307 三组实测)。
+_DUP_FRAME_MAD = 8.0
+
+
+def _first_last_mad(prev_video: Path, video: Path,
+                    work_dir: Path) -> Optional[float]:
+    """上一镜末帧 vs 本镜首帧的平均像素差(/255);任何环节算不出 →
+    None(不猜,调用方不裁)。"""
+    if not shutil.which("ffmpeg"):
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    work_dir.mkdir(parents=True, exist_ok=True)
+    a, b = work_dir / "_prev_last.rgb", work_dir / "_cur_first.rgb"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-y", "-sseof", "-0.05",
+             "-i", str(prev_video), "-frames:v", "1", "-f", "rawvideo",
+             "-pix_fmt", "rgb24", str(a)],
+            check=True, capture_output=True, timeout=60)
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-y", "-i", str(video),
+             "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24",
+             str(b)],
+            check=True, capture_output=True, timeout=60)
+        x = np.fromfile(a, dtype=np.uint8).astype(np.float32)
+        y = np.fromfile(b, dtype=np.uint8).astype(np.float32)
+        if x.size == 0 or x.size != y.size:
+            return None
+        return float(np.abs(x - y).mean())
+    except Exception:
+        return None
+    finally:
+        a.unlink(missing_ok=True)
+        b.unlink(missing_ok=True)
+
+
+def _drop_first_frame(video: Path, cond: dict, *,
+                      measured_prev: Optional[Path] = None) -> Path:
+    """接缝去重帧(用户规矩 2026-07-30:"首帧的时候直接切掉首帧",
+    改在【生成时】完成,下游评审/修复/拼装看到的都是切好的版本):
+    - 硬锁路线(measured_prev=None):首帧由 API 通道锁死在上一镜尾帧
+      上(ti2v_prev_last 的 first_frame 参数 / flf2v_bridge 的首锚),
+      重复是 API 保证的 → 无条件切一帧;
+    - 软锁路线(传 measured_prev):prompt 话术锁不保证服从 —— 先量
+      (上一镜末帧 vs 本镜首帧 MAD < 阈值)证实确为重复才切;没服从时
+      首帧是真内容,切了丢帧还毁掉评审要抓的"未按 @Image1 开场"证据。
+    切割走 _trim_head(解码级 + 裁后自检);任何环节失败 → 原样返回。
+    一切结果如实记入 cond(dedup_first_frame / junction_mad)。"""
+    from .timeline import _probe_fps
+
+    if measured_prev is not None:
+        mad = _first_last_mad(measured_prev, video, video.parent)
+        cond["junction_mad"] = (round(mad, 2) if mad is not None else None)
+        if mad is None or mad >= _DUP_FRAME_MAD:
+            cond["dedup_first_frame"] = False
+            return video
+    fps_ = _probe_fps(video) or 24.0
+    t = _trim_head(video, 1.0 / max(1.0, fps_),
+                   video.with_name(video.stem + "_dedup.mp4"))
+    cond["dedup_first_frame"] = bool(t)
+    return Path(t) if t else video
+
+
+def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
+    """§E 第一步(用户规矩 2026-07-30):终版路径【确定并核验】——
+    台账 video_path 是唯一权威;逐镜打印 "label → 文件 [策略]" 清单;
+    文件缺失响亮告警 + 记 decisions 后跳过,绝不静默拼错片。
+
+    接缝切割不在这里做(2026-07-30 二次简化,按用户提议前移):
+    extend 裁头与首帧去重都发生在【生成时】(_generate_with_condition
+    的 extend/_drop_first_frame),下游全链看到的已是切好的版本。"""
+    out: list = []
+    notes: list[dict] = []
+    for e in storyboard.entries:
+        p = Path(e.video_path) if e.video_path else None
+        strat = str(((e.condition or {}).get("strategy")) or "")
+        if p is None or not p.exists():
+            log.warning("assemble: %s final video MISSING (%s) — skipped",
+                        e.label, e.video_path)
+            notes.append({"stage": "assemble", "label": e.label,
+                          "action": "skip_missing",
+                          "path": str(e.video_path)})
+            continue
+        log.info("assemble: %s → %s [%s]", e.label, p.name, strat or "?")
+        out.append(p)
+    return out, notes
+
+
+def _with_dialogue(prompt: str, entry, cast: dict) -> str:
+    """对白镜的口型子句(2026-07-29 音频线):确定性追加在最终 prompt 尾,
+    brain/enhancer 都不写它(skill 已注明)。台词已在 prompt 里(引号串
+    去重)→ 原样返回。压制背景音是本子句的核心:BGM 由 §F 统一配,
+    生成端只许出人声,两层互不打架。"""
+    line = str(getattr(entry, "dialogue", "") or "").strip()
+    if not line or not prompt:
+        return prompt
+    if f'"{line}"' in prompt:
+        return prompt
+    who = next(iter(_cast_in_shot(entry.description, cast)), "the character")
+    return (f'{prompt} {who} says: "{line}", mouth moving with the '
+            f"words. Audio: only the character's voice speaking the line — "
+            f"no background music, no ambient sound, no sound effects.")
+
 
 def _scrub_setting_sentence(text: str, setting: str, strategy: str) -> str:
     """P0-A 加固(2026-07-18 二轮):锚定路线出口的建景句确定性拦截。
@@ -448,21 +561,41 @@ def _cut_tail(video: Path, seconds: float, out_path: Path) -> Optional[Path]:
 def _trim_head(video: Path, seconds: float, out_path: Path) -> Optional[Path]:
     """裁掉视频开头 `seconds` 秒(video-extend 的输出 = 输入片段+续段拼接,
     官方页原文 "the original and new segment are concatenated" —— 裁头后才
-    是纯续段)。ffmpeg 缺失/失败 → None(调用方带痕降级用未裁版本)。"""
+    是纯续段)。
+
+    2026-07-29 现场事故修正(movie_20260729_150307 接缝闪烁的根因):
+    旧实现 `-ss` 前置 + `-c copy` 是流拷贝,只能在关键帧处下刀 —— AI
+    生成短片常常整段只有一个关键帧,结果【一帧没裁】,只把容器时长
+    元数据改小;帧数与时长不符的文件进 concat 后按错误时长排偏移,
+    接缝处两镜的帧交错播放 = 画面闪烁。改为解码级精确裁(`-ss` 后置 +
+    重编码,音轨一并裁齐),并加【裁后自检】:输出时长 ≉ 原时长-裁量
+    → None(诚实降级,坏文件永远到不了拼接台)。
+    ffmpeg 缺失/失败 → None(调用方带痕降级用未裁版本)。"""
     if not shutil.which("ffmpeg"):
         return None
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    src_dur = _probe_seconds(video)
     try:
         r = subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{max(0.0, seconds):.2f}",
-             "-i", str(video), "-c", "copy", str(out_path)],
-            capture_output=True, timeout=120,
+            ["ffmpeg", "-y", "-i", str(video),
+             "-ss", f"{max(0.0, seconds):.3f}",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+             "-avoid_negative_ts", "make_zero", str(out_path)],
+            capture_output=True, timeout=300,
         )
     except Exception:
         return None
     if r.returncode != 0 or not out_path.exists()             or out_path.stat().st_size == 0:
         return None
+    if src_dur > 0:
+        got = _probe_seconds(out_path)
+        if abs(got - max(0.0, src_dur - seconds)) > 0.6:
+            log.warning("trim_head self-check failed (src=%.2fs cut=%.2fs "
+                        "got=%.2fs) — refusing the trimmed file",
+                        src_dur, seconds, got)
+            return None
     return out_path
 
 
@@ -659,13 +792,22 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               'as <name> in angle brackets, names copied from cast keys>", '
               '"duration_s": <int 4-10>, '
               '"end_state": "<one sentence: at the CUT, who/what is where, '
-              'moving or still, in which direction>", '
+              'moving or still, in which direction — PLUS the camera\'s '
+              'own state (static / pushing in / tracking right at walking '
+              'pace ...)>", '
               '"variation": "large|medium|small (expected first-to-last '
               'frame change inside this shot)", '
               '"opening_frame": "<ONLY for the first shot and scene cuts: '
               'a purely STATIC opening snapshot (no ongoing actions); omit '
-              'for continuing shots>"}, '
-              "...]} — each description 15-40 words (subject + action + "
+              'for continuing shots>", '
+              '"dialogue": "<ONE spoken line of at most 6 words, ONLY when '
+              'a cast character visibly speaks on screen (medium close-up '
+              'or closer); omit otherwise>"}, '
+              '...], "music_plan": {"scene 1": "<ONE music description '
+              'for the whole scene: mood, genre, tempo/BPM — all shots in '
+              'a scene share one track; omit a scene (or the whole field) '
+              'for silence>"}} '
+              "— each description 15-40 words (subject + action + "
               "setting + camera), scene N stated when the location changes. "
               "YOU decide the shot count AND each shot's duration_s (4-10 "
               "seconds, from how long the action NEEDS) from the story "
@@ -695,8 +837,8 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         "episode_guidance": episode_guidance,
                         "max_shots": max_shots}})
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
-            shots, durs, ends, variations, openings, seen = \
-                [], [], [], [], [], set()
+            shots, durs, ends, variations, openings, dialogues, seen = \
+                [], [], [], [], [], [], set()
             for s_ in data["shots"][:max_shots]:
                 # 兼容两种形态:纯字符串,或 {description, duration_s, end_state}
                 if isinstance(s_, dict):
@@ -720,6 +862,9 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         var if var in ("large", "medium", "small") else "")
                     openings.append(
                         str(s_.get("opening_frame", "") or "").strip()
+                        if isinstance(s_, dict) else "")
+                    dialogues.append(
+                        str(s_.get("dialogue", "") or "").strip()[:120]
                         if isinstance(s_, dict) else "")
                     # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
                     # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
@@ -753,16 +898,28 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                             len(asset_catalog),
                             [a.get("desc", a.get("label", ""))[:40]
                              for a in asset_catalog])
+                # music_plan:scene 号 → 音乐描述("scene 1"/"1"/1 皆可)
+                mp_raw = data.get("music_plan")
+                music_plan: dict = {}
+                if isinstance(mp_raw, dict):
+                    for k, v in mp_raw.items():
+                        desc_ = str(v or "").strip()
+                        m_ = re.search(r"(\d+)", str(k))
+                        if desc_ and m_:
+                            music_plan[int(m_.group(1))] = desc_[:300]
                 return shots, durs, ends, \
                     {"cast": cast, "setting": setting,
                      "variations": variations,
-                     "opening_frames": openings}, "llm"
+                     "opening_frames": openings,
+                     "dialogues": dialogues,
+                     "music_plan": music_plan}, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
     # (不是 config 的 shot_duration,也不是我们编的数);end_state 同理为空。
     return fb, [None] * len(fb), [""] * len(fb), \
         {"cast": {}, "setting": "", "variations": [""] * len(fb),
-         "opening_frames": [""] * len(fb)}, "fallback"
+         "opening_frames": [""] * len(fb), "dialogues": [""] * len(fb),
+         "music_plan": {}}, "fallback"
 
 
 def _skill_body_named(name: str) -> str:
@@ -1377,10 +1534,12 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         anchor_img = pl if pl is not None else kf
         if last is not None and anchor_img is not None:
             cond.update(first_anchor=str(last), last_anchor=str(anchor_img))
-            return Path(video_gen.frame_to_frame(
+            outp = Path(video_gen.frame_to_frame(
                 prompt=brain_prompt or spec.prompt, first_frame=last,
                 last_frame=anchor_img,
-                out_path=out, duration=spec.duration, seed=seed)), cond
+                out_path=out, duration=spec.duration, seed=seed))
+            # 首锚 = 上一镜尾帧(通道级保证)→ 首帧必重复,直接切
+            return _drop_first_frame(outp, cond), cond
         strategy = "ti2v_prev_last"      # 尾帧抽不出来 → 逐级降级(如实改写)
         cond = {"strategy": strategy, "degraded_from": "flf2v_bridge"}
 
@@ -1406,11 +1565,14 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                 + "".join(f" @Video{i + 1} is the user's source video "
                           f"({cap}) — keep its subject consistent."
                           for i, (_v, cap) in enumerate(source_videos or [])))
-            return Path(video_gen.generate(
+            outp = Path(video_gen.generate(
                 prompt=brain_prompt or fallback_prompt,
                 duration=spec.duration, out_path=out, fps=fps,
                 reference_images=all_refs, seed=seed,
-                reference_video=(src_vids or None))), cond
+                reference_video=(src_vids or None)))
+            # 软锁(@Image1 话术):先量证实服从了锁才切(见 helper 注释)
+            return _drop_first_frame(
+                outp, cond, measured_prev=Path(prev.video_path)), cond
         # 尾帧抽不出来 → 还有自己的图可用。降级取向:有首帧角色图(含兼容
         # 模式的 keyframe)优先硬锚 i2v;纯参考角色图(从未打算当首帧)才
         # 降到 t2v_own_refs —— 角色语义在降级里也不许错配。
@@ -1527,10 +1689,12 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
                            cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
         if last is not None:
             cond.update(first_frame=str(last))
-            return Path(video_gen.generate(
+            outp = Path(video_gen.generate(
                 prompt=brain_prompt or spec.prompt, duration=spec.duration,
                 out_path=out,
-                fps=fps, first_frame=last, seed=seed)), cond
+                fps=fps, first_frame=last, seed=seed))
+            # 首帧参数 = 上一镜尾帧(通道级保证)→ 首帧必重复,直接切
+            return _drop_first_frame(outp, cond), cond
         strategy = "i2v_keyframe" if kf is not None else "t2v"
         cond = {"strategy": strategy, "degraded_from": "ti2v_prev_last"}
 
@@ -1553,38 +1717,56 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
 _JUNCTION_CACHE: dict = {}
 
 
-def _junction_state(mllm, prev, cache_dir: Path) -> str:
-    """需求 ②(2026-07-15):看上一镜的【真实尾帧】,出一句续接实况
-    ("the apple is at rest at the center of the floor")。写 prompt 的人
-    从实况起笔,不再照剧本想象。
+def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0) -> str:
+    """需求 ②(2026-07-15;2026-07-28 升级为看片段):出一句续接实况
+    ("the cat is trotting right, camera tracking")。写 prompt 的人从
+    实况起笔,不再照剧本想象。
 
-    诚实链:无上一镜 / 无 VLM / 尾帧抽不出 / VLM 失败 → ""(跳过,不编)。
-    VLM 双模式(用户裁决):describe_junction 由 GeminiVLM(API)和
-    LocalQwenVLM(本地)同名实现,models.mllm.name 切换。"""
+    升级理由(用户裁决):单帧只能靠运动模糊【猜】"动没动",上一镜
+    末尾约 2 秒的片段才能真判断运动状态。诚实链:VLM 支持视频
+    (describe_junction_video,GeminiVLM)→ 看尾段;不支持(LocalQwen)
+    / 尾段裁不出 / 视频路失败 → 回退单帧 describe_junction;仍不行 →
+    ""(跳过,不编)。"""
     if prev is None or not getattr(prev, "video_path", None) or mllm is None:
         return ""
-    fn = getattr(mllm, "describe_junction", None)         or getattr(mllm, "caption_image", None)
+
+    def _cached(media: Path, call) -> str:
+        try:
+            key = (str(media.resolve()), media.stat().st_mtime_ns)
+        except OSError:
+            return ""
+        if key not in _JUNCTION_CACHE:
+            try:
+                _JUNCTION_CACHE[key] = str(call(media) or "").strip()
+            except Exception as exc:
+                log.warning("junction caption failed: %s — trying the next "
+                            "fallback", exc)
+                _JUNCTION_CACHE[key] = ""
+            if _JUNCTION_CACHE[key]:
+                log.info("junction state: %s", _JUNCTION_CACHE[key][:160])
+        return _JUNCTION_CACHE[key]
+
+    # 首选:末尾片段(真实运动信息)
+    vfn = getattr(mllm, "describe_junction_video", None)
+    if vfn is not None:
+        tail = _cut_tail(Path(prev.video_path), tail_s,
+                         Path(cache_dir) / "junction_prev_tail.mp4")
+        if tail is not None:
+            got = _cached(Path(tail), vfn)
+            if got:
+                return got
+            log.warning("junction: video-tail reading failed/empty — "
+                        "falling back to the single last frame")
+    # 回退:单帧(旧行为,LocalQwen 等无视频通道的后端走这里)
+    fn = getattr(mllm, "describe_junction", None) \
+        or getattr(mllm, "caption_image", None)
     if fn is None:
         return ""
     frame = _last_frame(Path(prev.video_path),
                         Path(cache_dir) / "junction_prev_last.png")
     if frame is None:
         return ""
-    fp = Path(frame)
-    try:
-        key = (str(fp.resolve()), fp.stat().st_mtime_ns)
-    except OSError:
-        return ""
-    if key not in _JUNCTION_CACHE:
-        try:
-            _JUNCTION_CACHE[key] = str(fn(fp) or "").strip()
-        except Exception as exc:
-            log.warning("junction caption failed: %s — proceeding without "
-                        "the actual-state hint", exc)
-            _JUNCTION_CACHE[key] = ""
-        if _JUNCTION_CACHE[key]:
-            log.info("junction state: %s", _JUNCTION_CACHE[key][:160])
-    return _JUNCTION_CACHE[key]
+    return _cached(Path(frame), fn)
 
 
 def _conditions_for_prompt(strategy: str, entry, prev,
@@ -1808,6 +1990,7 @@ def generate_movie_windowed(
     patience: int = 2,                  # 小循环:连续 N 轮被拒即止损(≤0 关闭)
     quality_bar: Optional[float] = None,  # 小循环:达标即停(None 关闭)
     repair_severity: float = 0.0,       # 最坏缺陷低于此值不修(0 关闭,荐 0.6)
+    enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -1887,10 +2070,13 @@ def generate_movie_windowed(
         entry_.end_state = end_
         vars_ = script_meta.get("variations") or []
         opens_ = script_meta.get("opening_frames") or []
+        dlgs_ = script_meta.get("dialogues") or []
         entry_.variation = vars_[i_] if i_ < len(vars_) else ""
         entry_.opening_frame = opens_[i_] if i_ < len(opens_) else ""
+        entry_.dialogue = dlgs_[i_] if i_ < len(dlgs_) else ""
     # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)
     storyboard.cast = dict(script_meta.get("cast", {}))
+    storyboard.music_plan = dict(script_meta.get("music_plan", {}))
     storyboard.setting = str(script_meta.get("setting", ""))
     if storyboard.cast:
         log.info("window: cast canon — %s",
@@ -1945,7 +2131,8 @@ def generate_movie_windowed(
         # 交接棒(上一镜 end_state / 本镜 end_state)一起进 brain 上下文,
         # prompt 从实况起笔,不照剧本想象。
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
-        junction_actual = _junction_state(mllm, prev, shot_dir)
+        junction_actual = _junction_state(mllm, prev, shot_dir,
+                                          tail_s=window_tail_s)
         junction_ctx = {
             "prev_last_frame_actual": junction_actual or None,
             "prev_end_state_script": (getattr(prev, "end_state", "") or None)
@@ -2024,6 +2211,11 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
+        # ── 音频线(2026-07-29,enable_audio 门控):对白镜临时开
+        # generate_audio;口型子句在引用闸门【之后】追加(审查修正:
+        # 闸门丢弃 prompt 时子句不能陪葬,顺序与全修闭包一致)。
+        want_audio = bool(enable_audio and entry.dialogue)
+
         # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
         # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错
         # 编号永远到不了 API;可引用槽位漏提 → 自动补一句(素材不白传)。
@@ -2051,7 +2243,13 @@ def generate_movie_windowed(
                                       "reason": "appended mentions: "
                                                 f"{audit['appended']}"})
                 brain_prompt = fixed
+        if want_audio:
+            brain_prompt = _with_dialogue(brain_prompt or spec.prompt,
+                                          entry, storyboard.cast)
         for s in range(max(1, n_candidates)):
+            _old_ga = getattr(video_gen, "generate_audio", False)
+            if want_audio:
+                video_gen.generate_audio = True
             try:
                 video_path, cond = _generate_with_condition(
                     d["strategy"], entry, prev, spec, video_gen,
@@ -2062,12 +2260,23 @@ def generate_movie_windowed(
                 log.info("window: conditioned generation failed (%s): %s — "
                          "falling back to plain t2v for this seed",
                          d["strategy"], exc)
+                # 审查修正:对白镜的兜底 t2v 同样要带口型子句(否则音频
+                # 开着、台词丢了,模型自由配音)。
                 video_path, cond = _generate_with_condition(
                     "t2v", entry, prev, spec, video_gen, shot_dir,
-                    seed=s, fps=fps, window_tail_s=window_tail_s)
+                    seed=s, fps=fps, window_tail_s=window_tail_s,
+                    brain_prompt=(_with_dialogue(spec.prompt, entry,
+                                                 storyboard.cast)
+                                  if want_audio else ""))
                 # 异常降级必须留痕:没有这两行,台账会谎称 brain 主动选了 t2v
                 cond["degraded_from"] = d["strategy"]
                 cond["degraded_reason"] = f"exception: {exc}"[:200]
+            finally:
+                video_gen.generate_audio = _old_ga
+            if want_audio:
+                # 注:记录的是"本镜请求了原生音频"(部分旧路线 payload
+                # 不带该参数,见 video_gen_backends._is_range_family)。
+                cond["generate_audio"] = True
             cond["seed"] = s
             seed_conds.append(cond)
             clip = CandidateClip(shot_idx=spec.shot_idx,
@@ -2080,6 +2289,7 @@ def generate_movie_windowed(
                 "end_state": entry.end_state or None,
                 "junction_prev_actual": junction_actual or None,
                 "cast": (shot_cast or None),
+                "dialogue": (entry.dialogue or None),
                 "setting": (storyboard.setting or None),
                 "images": [{"path": im.get("path"), "role": im.get("role")}
                            for im in entry.images
@@ -2107,14 +2317,27 @@ def generate_movie_windowed(
                                    action=_spec.prompt,
                                    end_state=_entry.end_state)
             prompt = _scrub_setting_sentence(prompt, _setting, _strategy)
-            v_path, r_cond = _generate_with_condition(
-                _strategy, _entry, _prev, _spec, video_gen, _dir,
-                seed=seed, fps=fps, window_tail_s=window_tail_s,
-                brain_prompt=prompt,
-                use_prev_tail_video=_ut, source_videos=source_videos)
+            # 音频线:对白镜的全修不能把对白修没 —— hint 替换正文后口型
+            # 子句重新追加(_with_dialogue 引号串去重),原生音频同款开关。
+            _wa = bool(enable_audio and getattr(_entry, "dialogue", ""))
+            if _wa:
+                prompt = _with_dialogue(prompt, _entry, _cast)
+            _old_ga2 = getattr(video_gen, "generate_audio", False)
+            if _wa:
+                video_gen.generate_audio = True
+            try:
+                v_path, r_cond = _generate_with_condition(
+                    _strategy, _entry, _prev, _spec, video_gen, _dir,
+                    seed=seed, fps=fps, window_tail_s=window_tail_s,
+                    brain_prompt=prompt,
+                    use_prev_tail_video=_ut, source_videos=source_videos)
+            finally:
+                video_gen.generate_audio = _old_ga2
             r_cond["regen_of_original"] = True
             r_cond["regen_prompt_mode"] = ("hint_replace" if hint_
                                            else "base")
+            if _wa:
+                r_cond["generate_audio"] = True
             return v_path, r_cond
 
         # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain 修复
@@ -2205,12 +2428,34 @@ def generate_movie_windowed(
 
     # ── §E 合成:时间顺序 concat ────────────────────────────────────────────
     final: Optional[Path] = None
-    clips = [e.video_path for e in storyboard.entries if e.video_path]
+    clips, assemble_notes = _final_cut(storyboard, cache_dir)
+    decisions.extend(assemble_notes)
     if clips:
         try:
             from ..tools.video_concat import VideoConcatTool
+            from .audio_stage import add_music, any_audio, normalize_for_concat
 
-            final = VideoConcatTool().run(clips, cache_dir / "movie.mp4")
+            concat_in = list(clips)
+            if enable_audio and any_audio(clips):
+                # 对白镜带音轨、静音镜没有 → concat 前统一(静音镜补
+                # 无声 AAC 轨),否则 -c copy 拼接在音轨参差时产出坏文件。
+                try:
+                    concat_in = normalize_for_concat(
+                        clips, cache_dir / "concat_norm")
+                except Exception as exc:
+                    log.warning("window: audio normalize failed (%s) — "
+                                "falling back to raw concat", exc)
+                    concat_in = list(clips)
+            final = VideoConcatTool().run(concat_in, cache_dir / "movie.mp4")
+
+            # §F 配乐(2026-07-29 极简版):music_plan 逐 scene 一条曲 →
+            # 音乐床 → 人声闪避混音 → -14 LUFS。失败绝不毁正片。
+            if enable_audio and final is not None:
+                scored = add_music(final, storyboard, video_gen,
+                                   cache_dir / "movie_scored.mp4")
+                if scored is not None:
+                    final = scored
+                    log.info("window: scored film → %s", final)
         except Exception as exc:          # ffmpeg 缺失等 → 不合成,单镜可用
             log.info("window: merge degraded (%s) — per-shot clips remain", exc)
 

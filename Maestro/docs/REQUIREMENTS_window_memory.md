@@ -587,3 +587,115 @@ shot1/2 同样带噪却成功 = i2v 通道级硬锁不吃 prompt 噪声,反证�
 - 训练脚本(TRL SFT/KTO/DPO)属 S1,不进本仓库依赖。
 
 测试:tests/unit/test_rl_dataset.py(6 条,全离线)。全套 480 通过。
+## 追加需求(2026-07-29,dev-music,已实现):音频线两条极简策略入核心
+
+用户批准的两条(playground 实验版先行,现入管线;`--audio` 总开关):
+
+- **对白音画同步(prompt-only,零加价)**:剧本逐镜可选 `dialogue`
+  (≤6 词,仅角色近景开口时;skill 明确禁旁白滥用)→ ShotEntry.dialogue
+  入台账/to_brain_line/conditioning。执行器出口**确定性追加**口型子句
+  (`_with_dialogue`:引号台词 + "嘴随词动" + **压制背景音**话术 ——
+  生成端只出人声,BGM 由 §F 统一配,两层不打架;引号串去重防重复);
+  该镜生成调用临时开 `generate_audio`(try/finally 还原,非对白镜保持
+  静音即经济);全修闭包同款(hint 替换正文后子句重追加,修复不丢对白)。
+  brain/enhancer 均不写台词(三处 skill 注明,防重复冲突)。
+- **scene 级 BGM(一 scene 一曲,曲内自洽 = 跨段一致性的构造性解法)**:
+  剧本新输出 `music_plan`("scene N" → 情绪+流派+BPM 一句;缺省=刻意
+  静场),归一化后存 StoryboardMemory.music_plan(持久化)。新模块
+  `pipeline/audio_stage.py`:§E concat 前音轨统一(对白镜有声、静音镜
+  补无声 AAC 轨,否则 -c copy 拼接出坏文件)→ §F `add_music`(逐 scene
+  text-to-music(sonilo 首选/ace_step 备选,走 `_run_task` 自动进调用
+  日志)→ 按 scene 起止铺音乐床 → 有人声 sidechain 闪避(0.02/9/
+  200ms/500ms)→ 两遍 loudnorm -14 LUFS → movie_scored.mp4)。诚实链:
+  计划空 → 响亮记录静音片;任一步失败 → 保留无配乐正片,增强层绝不毁片。
+
+对抗审查修正(提交前专项审查,6 处):对白镜异常兜底 t2v 补口型子句
+(否则音频开着台词丢了);口型子句移到引用闸门之后(闸门丢 prompt 不再
+陪葬子句);scene 号无标注时**沿用上一镜**(旧"归 1"会把续接镜错标、
+音乐床错位);逐镜时长探测失败 → 拒绝配乐(不铺错位的床);终混人声轨
+apad + duration=longest + -t 收口(防截掉画面尾巴);两遍 loudnorm 测量
+脆断 → 单遍兜底。ffmpeg ≥ 4.4 依赖已注明。
+
+测试:tests/unit/test_audio_line.py(9 条:解析/持久化/子句去重/scene
+跨度/逐 scene 生曲与偏移/诚实静音)。全套 485 通过。
+## 追加事故修正(2026-07-29,已实现):接缝闪烁根因与两道防线
+
+现场:movie_20260729_150307,三镜(i2v + extend×2),接缝处画面闪烁。
+取证链:shot001/002 各多出 48 帧(=2.0s 尾段)且容器时长照裁后声称
+(239 帧@24fps ≈9.96s vs 声称 7.96s);movie.mp4 总帧 599 = 全部未裁
+帧数;concat 按谎报时长排偏移 → 每个接缝 2 秒区间两镜帧交错 = 闪烁,
+且接缝先回放上一镜尾段内容。
+
+根因:`_trim_head` 旧实现 `-ss` 前置 + `-c copy` 是流拷贝,只能在关键
+帧下刀;AI 生成短片常整段一个关键帧(实测 shot001 唯一关键帧在 1.83s)
+→ 一帧没裁,仅时长元数据改小。
+
+- **防线一 `_trim_head` 重写**:解码级精确裁(`-ss` 后置 + libx264
+  重编码,音轨一并裁齐,avoid_negative_ts)+ 【裁后自检】(输出时长
+  ≉ 原时长-裁量 → None,说谎文件绝不放行,调用方按既有降级带痕使用
+  未裁版)。
+- **防线二 concat 完整性闸**(tools/video_concat.py):拼接前逐文件
+  校验"帧数×帧率 ≈ 容器时长"(±0.15s)+ 跨文件 编码/分辨率/帧率/
+  像素格式一致;任一不过 → 响亮告警并改走 concat FILTER 重编码拼接
+  (全解码重排时间戳,对元数据说谎免疫)。副作用同时消除:此前任何
+  参数不齐的输入静默产出坏拼接的隐患。
+- 连带自愈:scene 级音乐床的偏移取自 ffprobe 时长 —— 裁准后自动对齐
+  (本次 run 的配乐原本也错位 2-4 秒)。
+
+回归:tests/unit/test_flicker_fixes.py(5 条:稀疏关键帧精确裁【事故
+同款前提,-g 999 复现】、自检拒谎、说谎时长/参数漂移判定、混帧率
+重编码拼接)。全套 481 通过。
+
+---
+
+## 追加规矩(2026-07-30,用户口述,已实现):§E 终版清单与接缝分诊
+
+用户两条规矩:"第一步确定每镜最终视频路径(错了就全完)";"extend
+剪掉之前的视频片段、首帧生成的剪掉首帧;检查你看着办"。落地为
+`_final_cut`(§E 第一步,decisions 留痕):
+
+- **终版路径确定并核验**:台账 video_path 是唯一权威;逐镜打印
+  "label → 文件 [策略]" 清单;文件缺失响亮告警 + decisions 记
+  skip_missing 后跳过,绝不静默拼错片。
+- **接缝按策略分诊**:extend_prev 生成时已裁头(裁后自检把关,拼装
+  不再动);`_PREV_FRAME_LOCKED`(ti2v_prev_last / ti2v_prev_plus_
+  keyframe / flf2v_bridge,首帧=上一镜尾帧)的镜 → 拼装时裁掉重复的
+  第 0 帧。
+- **两道检查(我方裁量)**:①先量后裁 —— `_first_last_mad` 实测
+  上一镜末帧 vs 本镜首帧的平均像素差,< 8/255(实测标定:同帧不同质
+  ≈5-6,正常相邻帧 ≈1-1.5,真不同帧 >12)才裁,量不出/不像 → 不裁;
+  ②裁用 `_trim_head`(解码级 + 裁后自检)。首镜永不裁;接缝比较永远
+  用上一镜【原片】末帧。
+
+二次简化(同日,用户提议):切割全部前移到【生成时】——
+`_drop_first_frame` 在 _generate_with_condition 内完成:硬锁路线
+(ti2v_prev_last / flf2v_bridge,首帧由 API 参数锁死在上一镜尾帧)
+**无条件切一帧**;软锁路线(ti2v_prev_plus_keyframe)先量后切
+(junction_mad 记入 cond);extend 裁头维持生成时既有。下游评审/修复/
+拼装看到的都是切好的版本;拼装层 `_final_cut` 只留"终版路径确定并
+核验"清单,不再动文件。
+
+回归:tests/unit/test_final_cut.py(5 条:清单缺失跳过/清单不动文件/
+硬锁不量直切/软锁量后分流/裁失败诚实保留)。全套 500 通过。
+
+---
+
+## 追加需求(2026-07-30,用户批准,已实现):运镜衔接 + 音画同步评审
+
+- **运镜交接(镜头也是运动物体)**:① scene_write 新增 CAMERA HANDOFF
+  LAW —— 每镜 end_state 必须带镜头状态("camera: static / slowly
+  pushing in / tracking right at walking pace"),切点上镜头运动只许
+  延续或静止,**禁止方向反转**(推近收尾接拉远开场 = 跳切感头号来源);
+  剧本 STRICT JSON 指令同步(window_loop);例子三处补镜头状态。
+  ② window_generation junction 规则加 CAMERA HANDOFF(开场延续实况
+  报告的镜头运动);③ prompt_enhancer 的 opening_state_actual 消费面
+  从"位置+运动"扩到"+镜头运动"。④ 评审(mllm_backends):实况/交接棒
+  文本含 camera 时自动注入"开场运镜是否延续,方向反转即败"检查项
+  (无据不查)。场记的视频版指令本就要求报告镜头运动 —— 至此闭环。
+- **音画同步入评审**:有台词的镜(conditioning.dialogue 非空),评审
+  指令自动注入三查:台词说了且与剧本一致 / 口型与语音同步 / 人声之外
+  干净(生成端压制了背景音,评审验证压制生效;BGM 由 §F 统一混)。
+  Gemini 原生视频输入自带音轨,零额外成本。
+
+回归:test_audio_line.py 增至 11 条(运镜检查注入与无据不注入、
+台词三查注入与无台词不注入)。全套 502 通过。

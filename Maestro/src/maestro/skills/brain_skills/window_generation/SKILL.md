@@ -28,8 +28,12 @@ condition strategy from the gated `menu` and write the video prompt for it.
                        with the recorded failure `reason` — a weighted warning
                        to reason about, NOT an automatic ban (see rule 2).
 - `junction`         — the CUT HANDOFF facts:
-                       `prev_last_frame_actual` = what a VLM actually SAW in
-                       the previous shot's final frame (ground truth pixels);
+                       `prev_last_frame_actual` = what a VLM actually SAW at
+                       the END of the previous shot — judged from its final
+                       seconds of VIDEO, so the motion state (moving vs at
+                       rest, direction, pace) is real, not guessed from blur
+                       (single-frame fallback when video reading is
+                       unavailable);
                        `prev_end_state_script` = what the script SAID that
                        shot should end as; `required_end_state` = the state
                        THIS shot must end in. See the junction rules below.
@@ -169,6 +173,11 @@ by the executor — do NOT output them.
    anchor tends to under-deliver big change. `medium`/empty = neutral.
    It is a HINT to weigh, not a gate — continuity rules above still win.
 5. Only pick names present in the menu; output strict JSON, nothing else.
+   DIALOGUE shots (ledger field `dialogue`, 2026-07-29): do NOT write the
+   spoken line or any audio direction into `video_prompt` — the executor
+   appends the lip-sync clause deterministically. Prefer framings at
+   medium close-up or closer for these shots (lip precision needs face
+   resolution).
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
    ANCHORED-ROUTE DIET (field lesson 2026-07-18): on strategies whose
@@ -206,6 +215,13 @@ by the executor — do NOT output them.
      instruction like "the apple is still rolling as the shot ends — it
      does not slow down or settle". Video models kill motion at clip end
      unless told not to; an unwanted settle breaks the NEXT shot's opening.
+   - CAMERA HANDOFF (2026-07-30): `prev_last_frame_actual` also reports
+     the CAMERA's own motion (the junction reader watches the final
+     seconds of video). Your `video_prompt`'s opening must CONTINUE that
+     camera state — same move, same direction, similar pace — or state
+     that the camera has settled. NEVER reverse the camera's direction
+     across the cut (push-in ending → pull-back opening reads as a jump
+     cut); the reviewer checks this handoff.
 
 ### Example 1 — scene continues, both anchors exist
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}

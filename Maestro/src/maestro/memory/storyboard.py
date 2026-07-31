@@ -39,12 +39,15 @@ from typing import Optional
 _SCENE_RE = re.compile(r"scene\s*(\d+)|场景\s*(\d+)", re.IGNORECASE)
 
 
-def _parse_scene_idx(description: str) -> int:
-    """outline 文本里带 "scene N"/"场景N" 就用 N,否则归 1。"""
+def _parse_scene_idx(description: str, prev_scene: int = 1) -> int:
+    """outline 文本里带 "scene N"/"场景N" 就用 N;没写 → **沿用上一镜的
+    场号**(2026-07-29 审查修正:场景是持续状态,"换场才声明"是剧本
+    skill 的明文口径 —— 旧的"没写归 1"会把 scene 2 的续接镜错标回
+    scene 1,音乐床按场铺设后这就是实打实的错位)。首镜无标注 = 1。"""
     m = _SCENE_RE.search(description or "")
     if m:
         return int(m.group(1) or m.group(2))
-    return 1
+    return prev_scene
 
 
 @dataclass
@@ -65,6 +68,9 @@ class ShotEntry:
     # 换场/首镜的【开场静态快照】(纯静态,无进行中动作)—— 图计划的 t2i
     # prompt 底稿;续接镜留空(开场 = 上镜 end_state,不重复声明)。
     opening_frame: str = ""
+    # 对白台词(2026-07-29 音频线):≤6 词的一句;执行器据此在生成时
+    # 开原生音频并追加口型子句。空 = 本镜无对白。
+    dialogue: str = ""
     # keyframe:路径 + 来源(t2i 生成 | 素材库图片 | 素材视频抽帧 | 无)。
     # Image Plan 升级后仍保留:= images 里第一张 first/first_frame 角色图
     # (老策略 i2v_keyframe / flf2v_bridge 读它,兼容不破)。
@@ -114,6 +120,7 @@ class ShotEntry:
             "end_state": self.end_state,
             "variation": self.variation,
             "opening_frame": self.opening_frame,
+        "dialogue": self.dialogue,
             "status": self.status,
             "image_plan": self.image_plan,
             "images": [{"role": im.get("role"), "source": im.get("source"),
@@ -140,6 +147,8 @@ class StoryboardMemory:
         # 剧本层一次定稿,所有写 prompt 的人照抄,评审拿它当一致性标尺。
         self.cast: dict = {}
         self.setting: str = ""
+        # scene 号(int)→ 音乐描述;空 = 无配乐(诚实静音)
+        self.music_plan: dict = {}
         self._rev = 0                    # 单调更新计数(每次写 +1,可审计)
 
     # ── 构建 ──────────────────────────────────────────────────────────────
@@ -150,8 +159,11 @@ class StoryboardMemory:
         场号从文本解析;同场内镜头号按出现顺序 1..n。"""
         sb = cls(path=path)
         per_scene: dict[int, int] = {}
+
+        scene_carry = 1
         for i, desc in enumerate(outline):
-            scene = _parse_scene_idx(desc)
+            scene = _parse_scene_idx(desc, prev_scene=scene_carry)
+            scene_carry = scene
             per_scene[scene] = per_scene.get(scene, 0) + 1
             sb.entries.append(ShotEntry(
                 shot_idx=i, scene_idx=scene,
@@ -268,6 +280,7 @@ class StoryboardMemory:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"rev": self._rev,
                    "cast": self.cast, "setting": self.setting,
+                   "music_plan": self.music_plan,
                    "entries": [asdict(e) for e in self.entries]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -280,6 +293,9 @@ class StoryboardMemory:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         sb._rev = int(data.get("rev", 0))
         sb.cast = dict(data.get("cast", {}) or {})
+        sb.music_plan = {int(k): str(v) for k, v in
+                         (data.get("music_plan") or {}).items()
+                         if str(v).strip()}
         sb.setting = str(data.get("setting", "") or "")
         sb.entries = [ShotEntry(**e) for e in data.get("entries", [])]
         return sb
