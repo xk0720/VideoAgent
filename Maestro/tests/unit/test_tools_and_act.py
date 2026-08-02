@@ -96,14 +96,22 @@ def test_frame_extract_writes_one_artifact_per_timestamp(tmp_path: Path):
         assert p.exists()
 
 
-def test_video_concat_mock_writes_manifest(tmp_path: Path):
+def test_video_concat_refuses_fake_output(tmp_path: Path, monkeypatch):
+    """2026-08-02 事故回归:旧"沙箱兜底"把 MOCK CONCAT 文本写成 movie.mp4
+    (moov atom not found,用户打不开)。新契约:坏输入/缺 ffmpeg →
+    响亮 RuntimeError,绝不产假 mp4。"""
+    import pytest
+
     a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
     a.write_text("mock a"); b.write_text("mock b")
-    out = VideoConcatTool().run([a, b], tmp_path / "out.mp4")
-    assert out.exists()
-    text = out.read_text(encoding="utf-8", errors="ignore")
-    # The mock fallback always writes a manifest (real ffmpeg path produces an mp4).
-    assert "MOCK CONCAT" in text or out.stat().st_size > 0
+    with pytest.raises(RuntimeError, match="missing or"):
+        VideoConcatTool().run([a, b], tmp_path / "out.mp4")
+    assert not (tmp_path / "out.mp4").exists()
+    # ffmpeg 不在 PATH → 同样拒绝(不看输入)
+    import maestro.tools.video_concat as vc
+    monkeypatch.setattr(vc.shutil, "which", lambda _t: None)
+    with pytest.raises(RuntimeError, match="ffmpeg is REQUIRED"):
+        VideoConcatTool().run([a, b], tmp_path / "out2.mp4")
 
 
 def test_image_ops_resize_runs_on_any_box(tmp_path: Path):

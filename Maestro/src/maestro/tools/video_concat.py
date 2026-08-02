@@ -81,17 +81,23 @@ class VideoConcatTool(BaseTool):
         out = Path(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         clip_paths = [Path(p) for p in clips]
-        real = bool(shutil.which("ffmpeg")) and all(
-            p.exists() and p.stat().st_size > 1024 for p in clip_paths
-        )
-        if not real:
-            # Sandbox fallback: drop a manifest text file (NOT a real mp4); the
-            # pipeline's AssemblyTool does the same, kept consistent here.
-            out.write_text(
-                "MOCK CONCAT\n" + "\n".join(str(p) for p in clip_paths),
-                encoding="utf-8",
-            )
-            return out
+        # 2026-08-02 事故修复:旧"沙箱兜底"在 ffmpeg 缺失时写一个
+        # "MOCK CONCAT" 文本文件冒充 movie.mp4 —— 用户拿到打不开的假成片
+        # (moov atom not found),§F 配乐也随之全灭。假产物绝不许出门:
+        # 依赖缺失/输入无效 → 响亮报错,让问题在源头炸出来。
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError(
+                "video_concat: ffmpeg is REQUIRED to assemble the final "
+                "movie (and for extend trimming / junction dedup / audio "
+                "mixing upstream) — install ffmpeg on this machine; no "
+                "fake output will be written.")
+        bad = [str(p) for p in clip_paths
+               if not p.exists() or p.stat().st_size <= 1024]
+        if bad:
+            raise RuntimeError(
+                f"video_concat: {len(bad)} input clip(s) missing or "
+                f"not real video files: {bad[:3]} — refusing to "
+                "assemble a corrupt movie.")
         infos = [_stream_info(p) for p in clip_paths]
         safe, reason = _copy_safe(infos)
         if safe:

@@ -790,3 +790,30 @@ I/O 英文法度无运行时闸)。两案并修:
 另:frame-2 瞬移实锤(shot000_w_s301 帧 1→2 MAD 13.58,正常 1~1.5)——
 i2v 钉帧只服从约两帧后按文字先验重画人+景;钉帧完整性 MAD 闸门已列入
 待裁决方案(骨架 §G),本轮未实现。
+
+## 2026-08-02 假成片事故 + extend 雪崩 + REFERENCE-FIRST 裁决
+
+事故(outputs/movie_20260731_180541,另一台机器,ffmpeg 未安装):
+1. movie.mp4 打不开(moov atom not found)—— 真凶不是分支合并:git 实证
+   audio_stage.py 自落地起零改动(e611962..HEAD diff=0),§E/§F 完好;
+   是 video_concat.py 的远古"沙箱兜底"在 ffmpeg 缺失时写了 683 字节
+   "MOCK CONCAT" 文本冒充 movie.mp4,§F 拿到假文件配乐全灭;
+2. extend 雪崩:裁尾(_cut_tail)与裁头(_trim_head)都依赖 ffmpeg,
+   全失败 → 每镜以整段上镜原片为续接源且不裁头,8s→16s→25s→30.9s,
+   30.9s 冒充 6s 镜、内含前两镜画面(台账 untrimmed=True 如实记了,
+   但瘸腿产片仍到了用户手里)。
+
+修法(全部落地,525 测试全绿):
+- video_concat 假产物兜底拔除:ffmpeg 缺失/输入非真视频 → 响亮
+  RuntimeError,绝不写假 mp4(旧测试改写为锁新契约);
+- 窗口管线入口硬预检:ffmpeg/ffprobe 不在 PATH → 当场拒跑(附安装
+  指引);cv2 缺失 → 响亮警告(段修降级);
+- §E 对账:终版逐镜实测时长 vs 计划时长,偏差 > max(1.5s, 30%) 响亮
+  告警 + decisions 记录;合成失败从 info 升为 WARNING + decisions;
+- 【裁决】REFERENCE-FIRST 法则(用户 2026-08-02):有人物/场景参考图
+  (含自动附挂肖像)时必选参考通道(续接→ti2v_prev_plus_keyframe,
+  切换→t2v_own_refs);extend_prev 看不见任何参考图,仅限无参考图的
+  无缝同镜续接 —— skill 决策规则 4 重写 + extend_prev 菜单描述同步;
+- 该次运行已就地修复:repair_20260802/ 按台账 extended_from 逐镜裁头
+  (7.96/8.96/5.96s 全对上计划),重拼 38.96s 可播 movie.mp4,真 sonilo
+  BGM 混出 movie_scored.mp4(h264+aac,-14 LUFS)。

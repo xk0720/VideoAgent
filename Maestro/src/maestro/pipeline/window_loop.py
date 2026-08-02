@@ -1613,8 +1613,13 @@ def _condition_menu(entry, prev, video_gen, portraits=None) -> list[dict]:
                                         "model generates onward FROM the "
                                         "previous shot's final frame — "
                                         "identity, scene and light carry over "
-                                        "natively (the strongest continuity "
-                                        "route). `video_prompt` must describe "
+                                        "natively. CANNOT carry any reference "
+                                        "image: when this shot HAS references "
+                                        "(portraits / planned images), the "
+                                        "REFERENCE-FIRST law (2026-08-02) "
+                                        "says pick ti2v_prev_plus_keyframe "
+                                        "or t2v_own_refs instead. "
+                                        "`video_prompt` must describe "
                                         "ONLY what happens NEXT plus what to "
                                         "maintain — never re-describe what "
                                         "already happened. A planned "
@@ -2196,6 +2201,24 @@ def generate_movie_windowed(
 ) -> MovieResult:
     """窗口式全片生成:§A playwriting → §B keyframe → §C+§D 逐镜窗口循环
     → §E 合成 → §M episode 蒸馏。全程读写 StoryboardMemory(R1)。"""
+    # ── 运行环境硬预检(2026-08-02 事故:一台没装 ffmpeg 的机器上,
+    # extend 裁尾/裁头全失败 → 每镜滚雪球叠上前镜(8s→16s→25s→31s),
+    # 终版又被旧 mock 兜底写成假 mp4。ffmpeg/ffprobe 是接缝裁切、接点
+    # 去重、拼接、配乐的共同地基 —— 缺了就当场拒跑,绝不瘸着腿产片。──
+    _missing = [t for t in ("ffmpeg", "ffprobe") if not shutil.which(t)]
+    if _missing:
+        raise RuntimeError(
+            f"windowed pipeline PREFLIGHT failed: {_missing} not found on "
+            f"PATH. ffmpeg/ffprobe are REQUIRED (extend head-trim, junction "
+            f"dedup, final concat and the audio stage all depend on them) — "
+            f"install ffmpeg on this machine first (macOS: brew install "
+            f"ffmpeg; Ubuntu: apt install ffmpeg).")
+    try:
+        import cv2  # noqa: F401  段级修复(regenerate_segment)解码用
+    except Exception:
+        log.warning("PREFLIGHT: cv2 (opencv-python) unavailable — "
+                    "regenerate_segment repairs will degrade to whole-clip "
+                    "no-ops on this machine (pip install opencv-python)")
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     asset_memory = asset_memory or AssetMemory()
@@ -2673,6 +2696,26 @@ def generate_movie_windowed(
     final: Optional[Path] = None
     clips, assemble_notes = _final_cut(storyboard, cache_dir)
     decisions.extend(assemble_notes)
+    # §E 对账(2026-08-02 事故):终版逐镜实测时长 vs 计划时长 —— 未裁净
+    # 的 extend(30.9s 冒充 6s 镜、还带着前两镜画面)在拼接前响亮暴露。
+    for e_ in storyboard.entries:
+        if not e_.video_path or not Path(e_.video_path).exists():
+            continue
+        planned_ = (getattr(specs[e_.shot_idx], "duration", None)
+                    if e_.shot_idx < len(specs) else None)
+        if not planned_:
+            continue
+        actual_ = _probe_seconds(Path(e_.video_path))
+        if actual_ > 0 and abs(actual_ - float(planned_)) > max(
+                1.5, 0.3 * float(planned_)):
+            log.warning("assemble AUDIT: %s runs %.1fs but the plan says "
+                        "%.1fs — the clip likely still carries previous-"
+                        "shot footage (untrimmed extend) or was cut wrong",
+                        e_.label, actual_, float(planned_))
+            decisions.append({"stage": "assemble", "label": e_.label,
+                              "action": "duration_mismatch",
+                              "actual_s": round(actual_, 2),
+                              "planned_s": float(planned_)})
     if clips:
         try:
             from ..tools.video_concat import VideoConcatTool
@@ -2699,8 +2742,11 @@ def generate_movie_windowed(
                 if scored is not None:
                     final = scored
                     log.info("window: scored film → %s", final)
-        except Exception as exc:          # ffmpeg 缺失等 → 不合成,单镜可用
-            log.info("window: merge degraded (%s) — per-shot clips remain", exc)
+        except Exception as exc:          # 拼接失败 → 不合成,单镜可用
+            log.warning("window: FINAL MERGE FAILED (%s) — no movie.mp4 "
+                        "was produced; per-shot clips remain", exc)
+            decisions.append({"stage": "assemble", "action": "merge_failed",
+                              "reason": str(exc)[:300]})
 
     # ── §M 收工:蒸馏 episode(good/bad 由客观收敛状态判定)────────────────
     episode_id = ""

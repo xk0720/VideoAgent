@@ -171,12 +171,20 @@ identity contract; the reviewer judges appearance against them.
    strategy that leaves it out breaks the user's explicit requirement.
    In `video_prompt`, bind the description's asset mention to that slot's
    ID ("@Image2, the user's orange tabby cat, jumps onto the sill").
-4. Continuity first: when the scene continues from the previous shot,
-   prefer extend_prev (true continuation) — or ti2v_prev_last /
-   ti2v_prev_plus_keyframe / flf2v_bridge when materials or a target frame
-   demand them — over own-image-only routes; when the script cuts to a new
-   scene, prefer i2v_keyframe / flf2v_own_pair / t2v and deliberately skip
-   the previous-shot anchors.
+4. REFERENCE-FIRST LAW (2026-08-02 user ruling — overrides the old
+   "extend first" habit): whenever this shot HAS reference images —
+   official character portraits (auto-attached), planned reference
+   images, or user asset images — you MUST pick a reference-channel
+   route that carries them: `ti2v_prev_plus_keyframe` when the scene
+   continues from the previous shot (its @Image1 pins the junction AND
+   the references steer identity/scene), `t2v_own_refs` on a scene cut.
+   extend_prev cannot see any reference image — identity drifts with
+   nothing to anchor it (field runs: extend chains re-imagined the cast).
+   Reserve extend_prev for shots with NO reference images at all whose
+   scene continues seamlessly. Continuity still matters: when the scene
+   continues and no references exist, prefer extend_prev / ti2v_prev_last
+   / flf2v_bridge; on a scene cut prefer i2v_keyframe / flf2v_own_pair /
+   t2v and deliberately skip the previous-shot anchors.
    VARIATION HINT (ViMax-derived, 2026-07-17): the shot's ledger line may
    carry `variation` — the scripted first-to-last-frame change magnitude.
    `small` (composition barely changes) favors continuation-style routes
