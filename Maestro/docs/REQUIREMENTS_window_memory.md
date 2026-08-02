@@ -851,3 +851,28 @@ i2v 钉帧只服从约两帧后按文字先验重画人+景;钉帧完整性 MAD 
   修复弯路)—— CLI 帮助与注释不再写"免费"。
 测试 7 条(含 0→1 撕裂、接点撕裂、measure_failed、per_seed 噪声),
 全套 532 通过。
+
+## 2026-08-02(三)末镜事故分析 + B/E 两案落地(用户圈选;F 提出后撤回)
+
+事故分析(movie_20260802_100750,证据帧齐全):
+- 开头黑:REFERENCE-FIRST 法则(上一轮新加)措辞过强,把 brain 从
+  i2v_keyframe 赶到 t2v_own_refs,已产关键帧被浪费、开场无锚自由构图;
+  另拼接产物视频流 start_time 20ms 偏移会在部分播放器闪黑一帧;
+- 末镜三连败:①"缓慢拉远"= 揭示型运镜,软参考锚不了新露出的区域 →
+  背景渐变重画;② 8s 镜只有 5s 戏 + 死尾终态 → 尾段真空,模型滑向
+  肖像吸引子(f180 实录:跳场景 + 女主正面呆立 = 肖像标准构图);
+  ③ enhancer 把 "dark green raincoat" 改写成 "teal raincoat"(逐字律
+  被改写绕过)+ 建景词复活 + 全修 prompt 动作三连说。
+落地:
+- 【B 案】肖像槽位语义行单源加固:_portrait_slot_content() —— "identity
+  ONLY ... NEVER copy its pose, framing or background" 内置进槽位清单,
+  四个写手(brain/enhancer/兜底/全修)自然继承;
+- 【E 案】正典描述符逐字契约:_enforce_cast_canon() —— 出场角色 static
+  内容词覆盖率 < 0.75 → 确定性追加正典身份子句 + 响亮告警 + decisions
+  记 cast_canon;三出口接线(brain/enhancer 出口合一 + 全修闭包);
+  enhancer 技能加 VERBATIM WORDS LAW(颜色/材质/衣物名不许改名)。
+- F 案(关键帧优先路线)用户口误圈选后撤回,改动已完整回退,仍是
+  待裁决方案。A/C/D 亦待裁决。
+测试:test_cast_canon.py 4 条 + 肖像槽位断言更新;全套 536 通过。
+RL:数据管道全新重跑验证(8 runs × 6 shots → kto 76/sft 41/dpo 28/
+holdout 12/excluded 64),流程文档见对话交付。

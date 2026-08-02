@@ -38,6 +38,13 @@ never change WHAT happens in the shot.
   deterministic scrubber cleans verbatim leaks, but a paraphrased leak
   is yours to prevent). Use ALL rows; invent NONE — never add a visual
   specific (a color, a material, a pattern) that appears in no row.
+  VERBATIM WORDS LAW (field bug 2026-08-02): the static half's visual
+  words are a CONTRACT — copy its colors, materials and garment names
+  EXACTLY, never rename or "improve" them ("dark green raincoat"
+  rewritten as "teal raincoat" gave the same character two different
+  coats across shots; a deterministic gate now measures word coverage
+  and re-appends the canonical clause when you paraphrase — don't make
+  it fire).
   State roles:
   - `opening_state_actual` — what a VLM actually saw at the END of the
     previous shot (from its final seconds of video — true position,

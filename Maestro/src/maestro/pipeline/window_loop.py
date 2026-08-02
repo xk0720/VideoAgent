@@ -1506,6 +1506,54 @@ def _prepared_source_videos(asset_memory, cache_dir: Path) -> list[tuple]:
     return out
 
 
+_CANON_STOPWORDS = {"and", "the", "with", "her", "his", "a", "an", "of",
+                    "in", "on", "or", "has", "wearing"}
+
+
+def _enforce_cast_canon(text: str, shot_cast,
+                        cast: Optional[dict]) -> tuple[str, list[dict]]:
+    """E 案(2026-08-02 用户批准):正典描述符【逐字契约】的确定性执行。
+
+    实锤病根:enhancer 把 "dark green raincoat" 改写成 "teal raincoat" ——
+    清洗器只认原句精确匹配,改写自由漂移 → 同一角色两副长相。
+    检查:本镜出场角色 static 半句的内容词在出门 prompt 里的覆盖率
+    < 0.75 → 判定被改写/丢失 → 确定性追加一句正典身份子句(这是恢复
+    瘦身法则要求的"唯一身份子句",不是加噪)+ 响亮告警;notes 供
+    decisions 记账。空 prompt(走兜底模板,模板自带身份)不处理。"""
+    out = str(text or "")
+    notes: list[dict] = []
+    if not out.strip() or not cast:
+        return out, notes
+    low = out.lower()
+    for name in sorted(shot_cast or []):
+        static = _static_half(cast.get(name, ""))
+        words = [w for w in re_words(static)
+                 if len(w) > 2 and w.lower() not in _CANON_STOPWORDS]
+        if len(words) < 3:
+            continue
+        hit = sum(1 for w in words if w.lower() in low)
+        cov = hit / len(words)
+        if cov < 0.75:
+            missing = [w for w in words if w.lower() not in low]
+            log.warning("cast canon: %s's canonical look paraphrased or "
+                        "missing in the outgoing prompt (coverage %.0f%%, "
+                        "missing %s) — appending the canonical identity "
+                        "clause", name, cov * 100, missing[:6])
+            out = f"{out.rstrip()} {name}: {static}."
+            notes.append({"stage": "cast_canon", "name": name,
+                          "coverage": round(cov, 2),
+                          "action": "canon_appended"})
+    return out, notes
+
+
+def _portrait_slot_content(name: str) -> str:
+    """肖像槽位的单源语义(B 案 2026-08-02):防拷贝子句内置 —— 写 prompt
+    的四个角色全部从这行抄,肖像只许当身份参考,绝不许被复刻构图。"""
+    return (f"official portrait of {name} — identity ONLY: match the "
+            f"character's face/build/wardrobe to it; NEVER copy its pose, "
+            f"framing or background")
+
+
 def _slot_manifest(strategy: str, entry, prev,
                    use_prev_tail: bool = True,
                    source_videos=None, portraits=None) -> list[dict]:
@@ -1548,11 +1596,13 @@ def _slot_manifest(strategy: str, entry, prev,
                  "content": _c(p, "a planned reference image")}
                 for i, p in enumerate(refs)]
         # 角色官方肖像(2026-07-31 视觉锚):排在自有图之后,编号与
-        # _generate_with_condition 的装配顺序严格一致。
+        # _generate_with_condition 的装配顺序严格一致。B 案(2026-08-02):
+        # 防拷贝子句写进语义行本身 —— 四个写手(brain/enhancer/兜底/全修)
+        # 都从这行抄引用语义,缺了它模型会把画面坍缩成肖像构图(实录:
+        # 末镜女主正面呆立 = 肖像标准姿势)。
         rows += [{"slot": f"@Image{len(refs) + j + 1}",
                   "referenceable": True,
-                  "content": f"official portrait of {n} "
-                             f"(identity reference)"}
+                  "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
         rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
                   "content": f"user asset: {cap}"}
@@ -1576,8 +1626,7 @@ def _slot_manifest(strategy: str, entry, prev,
                  for i, p in enumerate(own)]
         rows += [{"slot": f"@Image{len(own) + j + 2}",
                   "referenceable": True,
-                  "content": f"official portrait of {n} "
-                             f"(identity reference)"}
+                  "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
         rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
                   "content": f"user asset: {cap}"}
@@ -2523,6 +2572,12 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
+        # ── E 案(2026-08-02):正典描述符逐字契约 —— brain/enhancer 的
+        # 改写("teal"≠"dark green")确定性检出,正典身份子句补回。
+        brain_prompt, canon_notes = _enforce_cast_canon(
+            brain_prompt, shot_cast, storyboard.cast)
+        for cn in canon_notes:
+            decisions.append({**cn, "label": entry.label})
         # ── 音频线(2026-07-29,enable_audio 门控):对白镜临时开
         # generate_audio;口型子句在引用闸门【之后】追加(审查修正:
         # 闸门丢弃 prompt 时子句不能陪葬,顺序与全修闭包一致)。
@@ -2735,6 +2790,10 @@ def generate_movie_windowed(
                                    action=_spec.prompt,
                                    end_state=_entry.end_state)
             prompt = _scrub_setting_sentence(prompt, _setting, _strategy)
+            # E 案:全修 hint 同样过逐字契约(hint 是 brain 写的,一样会
+            # 改写正典外观;闭包内不进 decisions,响亮日志已够审计)。
+            prompt, _cn = _enforce_cast_canon(
+                prompt, _cast_in_shot(_entry.description, _cast), _cast)
             # 音频线:对白镜的全修不能把对白修没 —— hint 替换正文后口型
             # 子句重新追加(_with_dialogue 引号串去重),原生音频同款开关。
             _wa = bool(enable_audio and getattr(_entry, "dialogue", ""))

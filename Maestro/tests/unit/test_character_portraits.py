@@ -133,8 +133,9 @@ def test_slot_manifest_appends_portrait_rows_in_order(tmp_path):
     # @Image1=上镜尾帧, @Image2=自有图, @Image3=肖像 —— 与装配顺序一致
     assert "previous shot's final frame" in slots["@Image1"]
     assert "planned ref" in slots["@Image2"]      # 语义跟着图走(裁决 1.2)
-    assert slots["@Image3"] == ("official portrait of the cat "
-                                "(identity reference)")
+    # B 案(2026-08-02):防拷贝子句内置在槽位语义行里(单源,四写手继承)
+    assert "official portrait of the cat" in slots["@Image3"]
+    assert "NEVER copy its pose" in slots["@Image3"]
 
     rows2 = wl._slot_manifest("t2v_own_refs", e, None,
                               use_prev_tail=False, portraits=portraits)
