@@ -80,6 +80,11 @@ def main() -> int:
     ap.add_argument("--repair-severity", type=float, default=0.0,
                     help="最坏缺陷 severity 低于此值就不修(0=关闭,荐 0.6:"
                          "VLM 惯出的 0.5 级小项不再触发花钱修复)")
+    ap.add_argument("--pin-gate-mad", type=float, default=0.0,
+                    help="§G 钉帧完整性闸门(0=关闭,荐 8.0):钉了开场的"
+                         "路线生成完立即测开场撕裂度(接点/帧0→1/帧1→2 "
+                         "取最大;测量零成本),超阈当场重掷一次(重掷花"
+                         "一次生成费,换掉更贵的评审→修复弯路)")
     ap.add_argument("--with-physics-measure", action="store_true",
                     help="启用 CoTracker+GroundingDINO 测量 critic(需 GPU)")
     ap.add_argument("--baseline-anchor", action="store_true",
@@ -251,6 +256,7 @@ def main() -> int:
         window_tail_s=args.tail_seconds,
         patience=args.patience, quality_bar=args.quality_bar,
         repair_severity=args.repair_severity,
+        pin_gate_mad=args.pin_gate_mad,
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,

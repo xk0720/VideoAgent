@@ -319,6 +319,77 @@ def _first_last_mad(prev_video: Path, video: Path,
         b.unlink(missing_ok=True)
 
 
+# §G 钉帧完整性闸门(2026-08-02 用户批准,默认关)适用路线:开场被
+# 一张图钉住(硬锁或 @Image1 软锁)的所有路线 —— 只有"钉住的开场"
+# 才存在"第 2 帧抛开钉帧重画"这种失效。
+_PIN_GATE_ROUTES = {"i2v_keyframe", "ti2v_prev_last", "flf2v_own_pair",
+                    "flf2v_bridge", "ti2v_prev_plus_keyframe"}
+# 其中"上镜末帧锚定"的三条:交付片已被 _drop_first_frame 裁过头,撕裂
+# 可能只在【接点】(上镜末帧 vs 本片帧 0)可见 → 闸门要连接点一起量。
+_PIN_GATE_PREV = {"ti2v_prev_last", "flf2v_bridge",
+                  "ti2v_prev_plus_keyframe"}
+
+
+def _pin_frame_mad(video: Path, work_dir: Path,
+                   prev_video: Optional[Path] = None) -> Optional[float]:
+    """§G:开场撕裂度 = max(接点差, 帧 0→1 差, 帧 1→2 差)(/255)。
+
+    2026-08-02 对抗核查修正(三处盲区,均已实锤):
+    - 帧 1→2 撕裂:未裁头路线的"钉两帧后重画"(144652 实录 13.58);
+    - 帧 0→1 撕裂:裁头路线(_drop_first_frame 已切掉重复钉帧)上同一
+      失效前移一帧;或未裁路线上钉帧只撑了一帧;
+    - 接点撕裂(prev_video 给出时,量上镜末帧 vs 本片帧 0):钉帧被
+      完全无视 → 片内无撕裂,只有对着上镜末帧才可见。
+    体温表:健康相邻帧 ≈1~1.5;撕裂 ≈13+。一个分量算不出就跳过该
+    分量;全算不出 → None(不猜,调用方响亮留痕)。纯算术零成本。"""
+    if not shutil.which("ffmpeg"):
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    work_dir.mkdir(parents=True, exist_ok=True)
+    f: dict = {}
+    for n in (0, 1, 2):
+        out = work_dir / f"_pin_f{n}.rgb"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-y", "-i", str(video),
+                 "-vf", f"select=eq(n\\,{n})", "-frames:v", "1",
+                 "-f", "rawvideo", "-pix_fmt", "rgb24", str(out)],
+                check=True, capture_output=True, timeout=60)
+            arr = np.fromfile(out, dtype=np.uint8).astype(np.float32)
+            if arr.size:
+                f[n] = arr
+        except Exception:
+            pass
+        finally:
+            out.unlink(missing_ok=True)
+    mads: list[float] = []
+    for a_, b_ in ((0, 1), (1, 2)):
+        if a_ in f and b_ in f and f[a_].size == f[b_].size:
+            mads.append(float(np.abs(f[a_] - f[b_]).mean()))
+    if prev_video is not None and 0 in f:
+        out = work_dir / "_pin_prev_last.rgb"
+        try:
+            # 末帧稳健取法:截末尾 0.5s 倒放取第一帧 = 真末帧(低帧率片
+            # 上 -sseof -0.05 会落到最后一帧之后,解码不出任何帧)。
+            subprocess.run(
+                ["ffmpeg", "-hide_banner", "-y", "-sseof", "-0.5",
+                 "-i", str(prev_video), "-vf", "reverse",
+                 "-frames:v", "1", "-f", "rawvideo",
+                 "-pix_fmt", "rgb24", str(out)],
+                check=True, capture_output=True, timeout=60)
+            arr = np.fromfile(out, dtype=np.uint8).astype(np.float32)
+            if arr.size and arr.size == f[0].size:
+                mads.append(float(np.abs(arr - f[0]).mean()))
+        except Exception:
+            pass
+        finally:
+            out.unlink(missing_ok=True)
+    return max(mads) if mads else None
+
+
 def _drop_first_frame(video: Path, cond: dict, *,
                       measured_prev: Optional[Path] = None) -> Path:
     """接缝去重帧(用户规矩 2026-07-30:"首帧的时候直接切掉首帧",
@@ -2192,6 +2263,8 @@ def generate_movie_windowed(
     patience: int = 2,                  # 小循环:连续 N 轮被拒即止损(≤0 关闭)
     quality_bar: Optional[float] = None,  # 小循环:达标即停(None 关闭)
     repair_severity: float = 0.0,       # 最坏缺陷低于此值不修(0 关闭,荐 0.6)
+    pin_gate_mad: float = 0.0,          # §G 钉帧完整性闸门阈值(≤0 关闭;
+                                        # 荐 8.0 —— 帧 1→2 像素差超阈当场重掷)
     enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
     character_library=None,             # 跨片角色肖像库(2026-07-31)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
@@ -2517,6 +2590,88 @@ def generate_movie_windowed(
                 # 不带该参数,见 video_gen_backends._is_range_family)。
                 cond["generate_audio"] = True
             cond["seed"] = s
+            # §G 钉帧完整性闸门(2026-08-02 用户批准,默认关:阈值 ≤0)。
+            # 只看钉了开场的路线(按 cond 里的【实际】路线,降级后不误判):
+            # 开场撕裂度(接点/帧0→1/帧1→2 取最大)爆表 = 模型抛开钉帧
+            # 重画全景 → 当场重掷一次(测量零成本;重掷是一次生成费,
+            # 换掉更贵的"送评审→修复弯路")。
+
+            def _gate_measure(vp, strat):
+                prev_v = (Path(prev.video_path)
+                          if strat in _PIN_GATE_PREV and prev is not None
+                          and prev.video_path else None)
+                m = _pin_frame_mad(Path(vp), shot_dir, prev_video=prev_v)
+                if m is None:
+                    # 用户显式开了闸门却测不了 → 必须响亮(哑火≠健康)
+                    log.warning("window: %s PIN GATE could not measure "
+                                "(ffmpeg/numpy/decode failure) — gate "
+                                "DISARMED for this candidate", entry.label)
+                    decisions.append({"stage": "pin_gate",
+                                      "label": entry.label,
+                                      "action": "measure_failed"})
+                return m
+
+            if (pin_gate_mad > 0
+                    and cond.get("strategy") in _PIN_GATE_ROUTES):
+                mad_ = _gate_measure(video_path, cond.get("strategy"))
+                cond["pin_gate_mad"] = (round(mad_, 2)
+                                        if mad_ is not None else None)
+                if mad_ is not None and mad_ > pin_gate_mad:
+                    log.warning("window: %s PIN GATE tripped (frame1→2 MAD "
+                                "%.2f > %.2f) — rerolling seed %d once",
+                                entry.label, mad_, pin_gate_mad, s)
+                    decisions.append({"stage": "pin_gate",
+                                      "label": entry.label,
+                                      "strategy": cond.get("strategy"),
+                                      "seed": s, "mad": round(mad_, 2),
+                                      "action": "reroll"})
+                    rerolled = False
+                    _old_ga_g = getattr(video_gen, "generate_audio", False)
+                    if want_audio:
+                        video_gen.generate_audio = True
+                    try:
+                        video_path, cond = _generate_with_condition(
+                            d["strategy"], entry, prev, spec, video_gen,
+                            shot_dir, seed=s + 1000, fps=fps,
+                            window_tail_s=window_tail_s,
+                            brain_prompt=brain_prompt,
+                            use_prev_tail_video=use_tail,
+                            source_videos=source_videos,
+                            portraits=shot_portraits)
+                        rerolled = True
+                    except Exception as exc:
+                        # 重掷失败 → 如实保留被拦的原片(留给评审看),
+                        # 绝不空手;台账记明原因。
+                        log.warning("window: pin-gate reroll failed (%s) — "
+                                    "keeping the tripped clip", exc)
+                        decisions.append({"stage": "pin_gate",
+                                          "label": entry.label,
+                                          "action": "reroll_failed",
+                                          "reason": str(exc)[:200]})
+                    finally:
+                        video_gen.generate_audio = _old_ga_g
+                    if rerolled:
+                        if want_audio:
+                            cond["generate_audio"] = True
+                        cond["seed"] = s + 1000
+                    # 复测同样按重掷后的【实际】路线门控:重掷内部降级到
+                    # 无钉开场的路线(如 t2v_own_refs)就不复测 —— 否则
+                    # 会给无钉片记假的 pin 失败信号(对抗核查修正)。
+                    if rerolled and cond.get("strategy") in _PIN_GATE_ROUTES:
+                        mad2 = _gate_measure(video_path,
+                                             cond.get("strategy"))
+                        cond["pin_gate_mad"] = (round(mad2, 2)
+                                                if mad2 is not None else None)
+                        if mad2 is not None and mad2 > pin_gate_mad:
+                            log.warning("window: %s PIN GATE still tripped "
+                                        "after reroll (MAD %.2f) — keeping "
+                                        "the clip; the reviewer will see it",
+                                        entry.label, mad2)
+                            decisions.append({"stage": "pin_gate",
+                                              "label": entry.label,
+                                              "seed": s + 1000,
+                                              "mad": round(mad2, 2),
+                                              "action": "still_tripped"})
             seed_conds.append(cond)
             clip = CandidateClip(shot_idx=spec.shot_idx,
                                  video_path=Path(video_path), revision=0)
@@ -2647,7 +2802,10 @@ def generate_movie_windowed(
         cond_used = dict(winner_cond)
         cond_used["decided_strategy"] = d["strategy"]   # brain 的原始决定
         cond_used["decided_via"] = d["via"]
-        distinct = {json.dumps({k: v for k, v in c.items() if k != "seed"},
+        # pin_gate_mad 是逐候选的噪声测量值,不算条件分歧(对抗核查修正:
+        # 不剔除它,开闸后每个多候选镜都会被误判"分歧"而膨胀 per_seed)。
+        distinct = {json.dumps({k: v for k, v in c.items()
+                                if k not in ("seed", "pin_gate_mad")},
                                sort_keys=True) for c in seed_conds}
         if len(distinct) > 1:
             cond_used["per_seed"] = seed_conds          # 有分歧才展开全量流水

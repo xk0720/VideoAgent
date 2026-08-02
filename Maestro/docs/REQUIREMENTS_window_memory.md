@@ -817,3 +817,37 @@ i2v 钉帧只服从约两帧后按文字先验重画人+景;钉帧完整性 MAD 
 - 该次运行已就地修复:repair_20260802/ 按台账 extended_from 逐镜裁头
   (7.96/8.96/5.96s 全对上计划),重拼 38.96s 可播 movie.mp4,真 sonilo
   BGM 混出 movie_scored.mp4(h264+aac,-14 LUFS)。
+
+## 2026-08-02(二)§G 钉帧完整性闸门落地(用户批准,默认关闭)
+
+用户裁决:"这个你可以先加,然后默认关闭"。实现:
+- `_pin_frame_mad(video, work_dir)`:第 1 帧 vs 第 2 帧平均像素差(/255),
+  ffmpeg+numpy 纯算术零成本;算不出 → None(不猜不拦)。体温表:健康
+  相邻帧 ≈1~1.5,同瞬间重画 ≈5~6,"第二帧瞬移"实录 13.58;
+- 适用路线 _PIN_GATE_ROUTES = 开场被图钉住的五条(i2v_keyframe /
+  ti2v_prev_last / flf2v_own_pair / flf2v_bridge / ti2v_prev_plus_keyframe),
+  按 cond 实际路线判定(降级后不误判);
+- 触发(阈值默认 0=关;开启荐 8.0):超阈 → decisions 记 pin_gate/reroll
+  → 同条件 seed+1000 免费重掷一次 → 复测;仍超阈 → 保留 + still_tripped
+  留痕(交给评审,不空手);重掷异常 → 保留被拦原片 + reroll_failed;
+- 台账诚实:重掷后 cond.seed 改记实际 seed(s+1000),pin_gate_mad 记
+  重掷后的干净测量;对白镜重掷同步 generate_audio 开关;
+- 入口:generate_movie_windowed(pin_gate_mad=0.0) + test_window_movie
+  --pin-gate-mad;测试 4 条(真 ffmpeg 合成瞬移片实测 + 布线三态)。
+
+### §G 对抗核查修正(同日,多智能体三视角审查,6 条实锤全修)
+- 【高】裁头路线盲区:ti2v_prev_last / flf2v_bridge /(去重触发时)
+  ti2v_prev_plus_keyframe 的交付片已被 _drop_first_frame 裁掉重复钉帧,
+  撕裂前移到帧 0→1 甚至只在接点可见 —— 测量升级为【开场撕裂度 =
+  max(接点差, 帧0→1, 帧1→2)】,上镜锚定三路线连接点(上镜末帧 vs
+  本片帧 0)一起量;末帧取法改"截尾 0.5s 倒放取首帧"(低帧率下
+  -sseof -0.05 会落空);
+- 未裁路线帧 0→1 撕裂同被覆盖(原实现 0 基索引量的是第 2↔3 帧);
+- 重掷后复测按重掷的【实际】路线门控(内部降级到无钉路线不复测,
+  不给无钉片记假 pin 失败);
+- 开闸却测不了 → log.warning + decisions 记 measure_failed(哑火必响);
+- pin_gate_mad 逐候选噪声不计入 per_seed 分歧判定;
+- 措辞纠偏:测量零成本,但重掷是一次真金生成费(换掉更贵的评审→
+  修复弯路)—— CLI 帮助与注释不再写"免费"。
+测试 7 条(含 0→1 撕裂、接点撕裂、measure_failed、per_seed 噪声),
+全套 532 通过。
