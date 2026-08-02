@@ -18,16 +18,25 @@ def load_cfg(path: str | None = None) -> dict:
 def build_model_and_tokenizer(cfg: dict):
     """底座 + LoRA(全线性层)+ 可选 4bit。返回 (model, tokenizer,
     peft_config) —— peft_config 交给 TRL trainer,让它自己套(PEFT 模式
-    下 KTO/DPO 无需单独参考模型:关掉 adapter 的底座即参考)。"""
+    下 KTO/DPO 无需单独参考模型:关掉 adapter 的底座即参考)。
+
+    多卡(accelerate launch / torchrun,2026-08-02):每个进程把完整
+    模型放到【自己那张卡】(device_map={"": LOCAL_RANK});单进程才用
+    device_map="auto"。"auto" 的朴素切层和 DDP 数据并行是冲突的 ——
+    八卡下混用会直接报错或静默慢到没法用。"""
+    import os
+
     import torch
     from peft import LoraConfig
     from transformers import (AutoModelForCausalLM, AutoTokenizer,
                               BitsAndBytesConfig)
 
     m = cfg["model"]
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
     kw: dict = {"torch_dtype": (torch.bfloat16 if m.get("bf16")
                                 else torch.float16),
-                "device_map": "auto"}
+                "device_map": ({"": local_rank} if local_rank >= 0
+                               else "auto")}
     if m.get("load_in_4bit"):
         kw["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,

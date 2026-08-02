@@ -1,7 +1,14 @@
 # ── RL 训练统一配置(train_sft.py / train_kto.py / train_dpo.py 共用)──
+# 八卡启动(2026-08-02):
+#   accelerate launch --multi_gpu --num_processes 8 --mixed_precision bf16 \
+#       scripts/rl/train_sft.py --config scripts/rl/train_config.yaml
+# 有效批量 = per_device × 卡数 × accumulation。合成冒烟数据只有几十条,
+# 八卡时把各段 gradient_accumulation_steps 降到 1,否则一个 epoch 凑不满
+# 一步;真实数据(千条级)再调回。显存 ≥40G/卡可把 load_in_4bit 关掉
+# (纯 bf16 LoRA,更快更稳)。
 model:
-  base: "Qwen/Qwen3-8B"        # 开源底座;8B 起步,plateau 再上 14B
-  load_in_4bit: true           # QLoRA:单张 24G 可跑;有 48G+ 可关
+  base: "Qwen/Qwen3-8B"        # 开源底座;本地权重直接填目录绝对路径
+  load_in_4bit: true           # QLoRA:单张 24G 可跑;有 40G+ 建议 false
   bf16: true
 
 lora:                          # LoRA Without Regret:RL 场景 LoRA≈全参
