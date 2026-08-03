@@ -876,3 +876,19 @@ i2v 钉帧只服从约两帧后按文字先验重画人+景;钉帧完整性 MAD 
 测试:test_cast_canon.py 4 条 + 肖像槽位断言更新;全套 536 通过。
 RL:数据管道全新重跑验证(8 runs × 6 shots → kto 76/sft 41/dpo 28/
 holdout 12/excluded 64),流程文档见对话交付。
+
+## 2026-08-03 dev-music-bailian 重构启动:计划裁决 + M0 真 API 验证
+
+八项裁决:BASE_URL 用公共 dashscope 端点;BGM/t2i/图像编辑暂留
+wavespeed;转场固定 3s;brain/VLM 不变、可灵两模型都可用;旧后端保留
+可切换不干扰;时长规则沿用 4-10s;不用可灵原生 multi_shot。
+
+M0 结果(scripts/playground/bailian_kling_probe.py,五形态全真调用):
+- t2v/i2v/flf2v/ref2v/mix 全部 SUCCEEDED;OSS 上传链路打通
+  (getPolicy → 表单直传 → oss:// + X-DashScope-OssResourceResolve);
+- 实测契约:无 first_frame 时 aspect_ratio 必填;kling-v3(标准)跑
+  t2v、omni 跑带媒体路线;3s/std 生成 47s~2min;
+- <<<image_1>>>/<<<image_2>>> 引用服从度好(双角色同场,雨衣颜色对);
+- 【定策略池的关键发现】first_frame + refer 可同请求混用 —— 续接镜
+  = 硬钉上镜尾帧 + 肖像参考,旧 ti2v_prev_plus_keyframe 的软钉意图
+  从此有 API 级硬实现。
