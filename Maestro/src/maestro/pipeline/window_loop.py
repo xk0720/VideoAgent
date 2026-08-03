@@ -2949,10 +2949,14 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
-        # ── E 案(2026-08-02):正典描述符逐字契约 —— brain/enhancer 的
-        # 改写("teal"≠"dark green")确定性检出,正典身份子句补回。
-        brain_prompt, canon_notes = _enforce_cast_canon(
-            brain_prompt, shot_cast, storyboard.cast)
+        # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
+        # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
+        # 追加正典 = 稀释钉帧,豁免。
+        if d["strategy"] not in _ANCHORED_STRATEGIES:
+            brain_prompt, canon_notes = _enforce_cast_canon(
+                brain_prompt, shot_cast, storyboard.cast)
+        else:
+            canon_notes = []
         for cn in canon_notes:
             decisions.append({**cn, "label": entry.label})
         # ── 音频线(2026-07-29,enable_audio 门控):对白镜临时开
@@ -3167,10 +3171,10 @@ def generate_movie_windowed(
                                    action=_spec.prompt,
                                    end_state=_entry.end_state)
             prompt = _scrub_setting_sentence(prompt, _setting, _strategy)
-            # E 案:全修 hint 同样过逐字契约(hint 是 brain 写的,一样会
-            # 改写正典外观;闭包内不进 decisions,响亮日志已够审计)。
-            prompt, _cn = _enforce_cast_canon(
-                prompt, _cast_in_shot(_entry.description, _cast), _cast)
+            # E 案:全修 hint 的逐字契约同样只管无锚路线(硬锚豁免)。
+            if _strategy not in _ANCHORED_STRATEGIES:
+                prompt, _cn = _enforce_cast_canon(
+                    prompt, _cast_in_shot(_entry.description, _cast), _cast)
             # 音频线:对白镜的全修不能把对白修没 —— hint 替换正文后口型
             # 子句重新追加(_with_dialogue 引号串去重),原生音频同款开关。
             _wa = bool(enable_audio and getattr(_entry, "dialogue", ""))
