@@ -41,6 +41,18 @@ character in every shot.
    write what a camera sees ("high cheekbones", "dark green raincoat").
 8. LANGUAGE: descriptors in ENGLISH (they feed image models verbatim);
    character NAMES may stay in the user's language.
+9. GIVEN-CHARACTERS LAW: the task JSON may carry `given_characters` —
+   names the USER bound to official images, each with an `image_look`
+   caption. These names are AUTHORITATIVE canon keys: adopt every one
+   VERBATIM as an output key (never rename, translate or drop one).
+   The IMAGE is the source of truth for their `static:` half — build it
+   from `image_look`; the screenplay only supplies `dynamic:` and gaps.
+   Screenplay aliases that clearly refer to a given character (a title,
+   a nickname, "the prince" for a named prince) merge INTO the given
+   name. Two script characters may share one given image (e.g. two
+   officers bound to one "male officer" reference) — output BOTH names,
+   each with its own entry, looks based on that same image. You may
+   still ADD genuinely new characters the user did not bind.
 
 ## Output format (STRICT JSON — output this and nothing else)
 

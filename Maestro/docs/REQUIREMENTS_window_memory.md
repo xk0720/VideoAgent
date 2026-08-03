@@ -920,3 +920,18 @@ ref2v/i2v_first 写作指导 + <<<image_N>>> 示例);prompt_enhancer 重写为
 两职能(连续性润色 + 引用校正,主旨不变铁律);全部 SKILL 清除日期/
 出处注记(用户裁决:时间版本是误导),规则改直接陈述,出处留在本台账。
 全套 559 测试通过。
+
+## 2026-08-03(四)用户剧本 JSON 输入契约(五项裁决全落地)
+
+契约:{"content": 剧本全文, "role": {角色名→图片路径}}(兼容顶层平铺);
+--screenplay 智能识别 .json。裁决:坏路径数字归一救援并记录/允许多名
+一图/中文剧本维持分镜阶段英译/角色不在 content 告警继续。
+实现:pipeline/script_input.py 确定性解析(救援链:原路径→同名→数字
+归一;每步 notes 留痕);钦定角色图 VLM 打标(图为 static 法源)→
+§A1 提取带 given(名字逐字采用,LLM 漏名确定性兜底,无 LLM 走
+given_only)→ user_json 肖像预填台账(§A' 跳过,零 t2i)→ 既有确定性
+引用链(<标记>→自动附挂→槽位编号→闸门)保证参考图引用正确 —— 路径
+永远不进 prompt,brain 只守名字纪律。skill:character_extract 加
+GIVEN-CHARACTERS LAW,scene_write 加 MARKER DISCIPLINE。
+真实样例 script-wedding 实测:5/5 角色解析成功,3 条坏路径救援留痕。
+测试 5 条新增,全套 564 通过。

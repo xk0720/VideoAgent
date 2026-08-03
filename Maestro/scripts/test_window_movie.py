@@ -81,8 +81,9 @@ def main() -> int:
                     help="最坏缺陷 severity 低于此值就不修(0=关闭,荐 0.6:"
                          "VLM 惯出的 0.5 级小项不再触发花钱修复)")
     ap.add_argument("--screenplay", default="",
-                    help="M2:用户自带剧本文件路径(给了就跳过 §A0 剧本"
-                         "创作,直接进角色提取+分镜)")
+                    help="用户自带剧本路径:.txt 纯文本;.json 走固定契约 "
+                         "{content, role:{角色名→图片路径}}(智能识别,"
+                         "角色图预填官方肖像,路径救援见 script_input)")
     ap.add_argument("--no-review", action="store_true",
                     help="M2:关闭评审/修复总开关(首选候选直接收货,"
                          "不评审不修复;episode 蒸馏同时停用)")
@@ -135,6 +136,22 @@ def main() -> int:
     run_dir = base / f"movie_{time.strftime('%Y%m%d_%H%M%S')}"
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"用户指令: {args.prompt}\n输出目录: {run_dir.resolve()}")
+
+    # 剧本输入智能识别:.json 走固定契约(content + role 角色图绑定)
+    _screenplay_text, _given_chars = None, None
+    if args.screenplay:
+        sp = Path(args.screenplay)
+        if sp.suffix.lower() == ".json":
+            from maestro.pipeline.script_input import parse_script_json
+            parsed = parse_script_json(sp)
+            _screenplay_text = parsed["content"]
+            _given_chars = parsed["roles"]
+            print(f"剧本 JSON: {len(_screenplay_text)} 字 | 角色绑定 "
+                  f"{len(_given_chars)} 位")
+            for n in parsed["notes"]:
+                print(f"  ⚠ {n}")
+        else:
+            _screenplay_text = sp.read_text(encoding="utf-8")
 
     llm = build_llm(models_cfg.get("llm"))
     mllm = build_mllm(models_cfg.get("mllm"))
@@ -263,8 +280,8 @@ def main() -> int:
         patience=args.patience, quality_bar=args.quality_bar,
         repair_severity=args.repair_severity,
         pin_gate_mad=args.pin_gate_mad,
-        screenplay=(Path(args.screenplay).read_text(encoding="utf-8")
-                    if args.screenplay else None),
+        screenplay=_screenplay_text,
+        given_characters=_given_chars,
         enable_review=(not args.no_review),
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,

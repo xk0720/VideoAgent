@@ -117,7 +117,15 @@ strategy, review, repair) hangs off these entries.
    an image model produces a wrong character in a wrong scene. Entity
    NAMES (cast keys, used inside <angle markers>) and `dialogue` lines
    (spoken on screen) may stay in the user's language.
-11. OBSERVABLE ACTION, NOT ABSTRACT EMOTION: the model renders pixels,
+11. GIVEN-CHARACTERS MARKER DISCIPLINE: when the cast canon contains
+   characters bound to USER-PROVIDED official images (they arrive in
+   `cast_canon`), their names must appear in shot descriptions as
+   `<markers>` COPIED CHARACTER-FOR-CHARACTER from the canon keys — the
+   marker is the key that auto-attaches that character's reference image
+   to the shot's generation call; one wrong character in the name breaks
+   the whole identity chain for that shot. Never invent an alias for a
+   bound character inside a description.
+12. OBSERVABLE ACTION, NOT ABSTRACT EMOTION: the model renders pixels,
    not feelings. Convert every mood or intention into things a camera
    can record — facial expression, gaze direction, posture and gesture,
    interaction with objects, environmental feedback ("wind lifts her

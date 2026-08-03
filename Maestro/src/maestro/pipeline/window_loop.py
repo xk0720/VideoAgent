@@ -1016,16 +1016,29 @@ def _write_screenplay(llm, user_prompt: str, screenplay,
     return str(user_prompt), "idea_passthrough"
 
 
-def _extract_characters(llm, screenplay: str) -> tuple[dict, str]:
-    """§A1 角色提取(M2,ViMax character_extractor 规则移植):剧本 →
-    {名字: "static: ...; dynamic: ..."} 正典。失败 → {}(分镜阶段的
-    cast 输出仍是兜底,不编造)。"""
+def _extract_characters(llm, screenplay: str,
+                        given: Optional[dict] = None) -> tuple[dict, str]:
+    """§A1 角色提取(ViMax character_extractor 规则移植):剧本 →
+    {名字: "static: ...; dynamic: ..."} 正典。`given` = 用户剧本 JSON 的
+    钦定角色 {名字: 图像打标描述} —— 名字逐字采用、以图为法源;缺失的
+    given 名字由确定性兜底补齐(引用链不许因提取遗漏而断)。失败 → {}。"""
     if llm is None or not str(screenplay).strip():
+        # 无 LLM 也要保 given 链:名字+图像描述直接成正典
+        if given:
+            return ({n: f"static: {c or 'as pictured in the official image'}"
+                        f"; dynamic: as scripted"
+                     for n, c in given.items()}, "given_only")
         return {}, "skipped"
     skill_text = _skill_body_named("character_extract")
+    task: dict = {"screenplay": screenplay}
+    if given:
+        task["given_characters"] = {
+            n: {"image_look": (c or "official image provided; caption "
+                                    "unavailable")}
+            for n, c in given.items()}
     prompt = (
         skill_text + "\n\nTHIS TASK (JSON):\n"
-        + json.dumps({"screenplay": screenplay}, ensure_ascii=False)
+        + json.dumps(task, ensure_ascii=False)
         + '\n\nSTRICT JSON only: {"characters": {"<name>": "static: '
           '<physique/face/hair — near-invariant traits, ENGLISH>; '
           'dynamic: <attire/accessories/props that may vary>"}}')
@@ -1039,6 +1052,15 @@ def _extract_characters(llm, screenplay: str) -> tuple[dict, str]:
     if isinstance(data, dict) and isinstance(data.get("characters"), dict):
         chars = {str(k): str(v) for k, v in data["characters"].items()
                  if str(v).strip()}
+    # 钦定角色确定性兜底:提取漏了谁就补谁(名字是引用链的钥匙,
+    # 绝不许因 LLM 遗漏而断);以图像打标为 static 法源。
+    for n, c in (given or {}).items():
+        if n not in chars:
+            log.warning("character_extract: given character %r missing "
+                        "from the LLM output — backstopped from its "
+                        "image caption", n)
+            chars[n] = (f"static: {c or 'as pictured in the official image'}"
+                        f"; dynamic: as scripted")
     brain_log("window/character_extract", {
         "raw": raw, "usable": bool(chars), "skill": "character_extract",
         "skill_chars": len(skill_text),
@@ -2569,6 +2591,8 @@ def generate_movie_windowed(
     character_library=None,             # 跨片角色肖像库(2026-07-31)
     screenplay: Optional[str] = None,   # M2:用户自带剧本(给了就跳过 §A0)
     enable_review: bool = True,         # M2:评审/修复总开关(关 = 首选即收)
+    given_characters: Optional[dict] = None,  # 剧本 JSON 的 角色名→图片路径
+                                        # (路径可 None = 图缺失,落回生成链)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -2640,8 +2664,28 @@ def generate_movie_windowed(
         llm, user_prompt, screenplay, asset_catalog0)
     decisions.append({"stage": "screenplay", "via": sp_via,
                       "chars": len(screenplay_text)})
-    cast_canon, ce_via = _extract_characters(llm, screenplay_text) \
-        if sp_via != "idea_passthrough" else ({}, "skipped")
+    # 钦定角色图像打标(剧本 JSON 输入):VLM 看图出英文 static 描述,
+    # 图为法源;VLM 缺/失败 → 空描述照样入链(名字纪律不受影响),留痕。
+    given_caps: dict = {}
+    for _gn, _gp in (given_characters or {}).items():
+        cap = ""
+        if _gp and Path(_gp).exists() and mllm is not None \
+                and hasattr(mllm, "caption_image"):
+            try:
+                cap = str(mllm.caption_image(Path(_gp)) or "").strip()
+            except Exception as exc:
+                log.warning("given character %r: image caption failed "
+                            "(%s) — descriptor rides on the script only",
+                            _gn, exc)
+        given_caps[_gn] = cap
+    if given_caps:
+        decisions.append({"stage": "given_characters",
+                          "names": sorted(given_caps),
+                          "captioned": sorted(n for n, c in
+                                              given_caps.items() if c)})
+    cast_canon, ce_via = _extract_characters(
+        llm, screenplay_text, given=(given_caps or None)) \
+        if (sp_via != "idea_passthrough" or given_caps) else ({}, "skipped")
     decisions.append({"stage": "character_extract", "via": ce_via,
                       "characters": sorted(cast_canon)})
 
@@ -2688,7 +2732,26 @@ def generate_movie_windowed(
     storyboard.music_plan = dict(script_meta.get("music_plan", {}))
     storyboard.setting = str(script_meta.get("setting", ""))
 
-    # §A' 角色官方肖像(2026-07-31 视觉锚):用户素材 > 跨片库 > t2i
+    # 钦定角色肖像预填(剧本 JSON,最高优先):名字→用户图直接入台账,
+    # §A' 对已有名字跳过(零 t2i);图缺失(路径救援也没救回)的名字不
+    # 预填 —— 自然落回 §A' 生成链。
+    for _gn, _gp in (given_characters or {}).items():
+        if not _gp or not Path(_gp).exists():
+            continue
+        storyboard.portraits[_gn] = str(_gp)
+        try:
+            from ..types import Identity
+            asset_memory.identity_anchors[f"portrait:{_gn}"] = Identity(
+                identity_id=f"portrait:{_gn}", name=_gn, source=str(_gp),
+                description=f"character: official portrait of {_gn} — "
+                            f"{given_caps.get(_gn, '')}")
+        except Exception:
+            pass
+        decisions.append({"stage": "cast_portrait", "name": _gn,
+                          "via": "user_json", "path": str(_gp)})
+    if given_characters:
+        storyboard._save()
+    # §A' 角色官方肖像:用户素材 > 跨片库 > t2i
     decisions.extend(_ensure_cast_portraits(
         storyboard, asset_memory, video_gen, cache_dir,
         library=character_library))
