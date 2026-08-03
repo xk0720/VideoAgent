@@ -119,13 +119,28 @@ class VideoConcatTool(BaseTool):
         # 对元数据说谎/参数不齐的输入免疫;2026-07-29 闪烁事故防线)。
         log.warning("concat: -c copy unsafe (%s) — falling back to "
                     "re-encode concat", reason)
+        # 分辨率归一(2026-08-03 实跑:i2v_first 随首帧比例出 1304×704,
+        # ref2v/std 出 1280×720,concat filter 要求同尺寸直接报错)——
+        # 以多数分辨率为基准,少数派 scale+pad 居中,fps 同步统一。
+        from collections import Counter
+        dims = Counter((i["w"], i["h"]) for i in infos if i)
+        tw, th = dims.most_common(1)[0][0]
+        fpss = Counter(i["fps"] for i in infos if i and i["fps"] > 0)
+        tfps = fpss.most_common(1)[0][0] if fpss else 24
+        if len(dims) > 1:
+            log.warning("concat: mixed resolutions %s — normalizing all "
+                        "to %dx%d before concat",
+                        dict(dims), tw, th)
+        norm = (f"scale={tw}:{th}:force_original_aspect_ratio=decrease,"
+                f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={tfps}")
         all_audio = all(i and i["has_audio"] for i in infos)
         cmd = ["ffmpeg", "-y"]
         for p_ in clip_paths:
             cmd += ["-i", str(p_)]
         n = len(clip_paths)
+        pre = "".join(f"[{i}:v]{norm}[v{i}];" for i in range(n))
         if all_audio:
-            fc = ("".join(f"[{i}:v][{i}:a]" for i in range(n))
+            fc = (pre + "".join(f"[v{i}][{i}:a]" for i in range(n))
                   + f"concat=n={n}:v=1:a=1[v][a]")
             maps = ["-map", "[v]", "-map", "[a]",
                     "-c:a", "aac", "-b:a", "192k"]
@@ -134,11 +149,15 @@ class VideoConcatTool(BaseTool):
                 log.warning("concat: mixed audio presence — re-encode "
                             "concat drops audio (normalize upstream to "
                             "keep it)")
-            fc = ("".join(f"[{i}:v]" for i in range(n))
+            fc = (pre + "".join(f"[v{i}]" for i in range(n))
                   + f"concat=n={n}:v=1[v]")
             maps = ["-map", "[v]"]
         cmd += ["-filter_complex", fc, *maps,
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-pix_fmt", "yuv420p", str(out)]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"concat re-encode failed: "
+                f"{r.stderr.decode(errors='ignore')[-800:]}")
         return out
