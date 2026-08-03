@@ -814,6 +814,11 @@ class BailianKlingClient(BaseVideoGenClient):
         ck = (str(p.resolve()), st.st_mtime_ns)
         if ck in self._upload_cache:
             return self._upload_cache[ck]
+        # 上传前降采样(2026-08-03 实跑事故:2.4MB 级 ComfyUI 原图 PNG
+        # 连传数张,OSS 读超时 120s → 整条 i2v_first 降级纯 t2v)。参考图
+        # 不需要原始体积:长边 >1280 或 >1.2MB 的图片转 JPEG(质量 88),
+        # 体积普遍降一个量级;转不动(非图/无 PIL)原样上传,留痕。
+        p = self._shrink_for_upload(p)
         model = model or self.kling_omni_model
         sess = self._session()
         r = sess.get(f"{self.BASE}/uploads",
@@ -826,26 +831,76 @@ class BailianKlingClient(BaseVideoGenClient):
                 f"{r.status_code} — {r.text[:2000]}")
         pol = r.json()["data"]
         key = f"{pol['upload_dir']}/{p.name}"
-        with p.open("rb") as f:
-            files = {
-                "OSSAccessKeyId": (None, pol["oss_access_key_id"]),
-                "Signature": (None, pol["signature"]),
-                "policy": (None, pol["policy"]),
-                "x-oss-object-acl": (None, pol["x_oss_object_acl"]),
-                "x-oss-forbid-overwrite": (None,
-                                           pol["x_oss_forbid_overwrite"]),
-                "key": (None, key),
-                "success_action_status": (None, "200"),
-                "file": (p.name, f),
-            }
-            up = sess.post(pol["upload_host"], files=files, timeout=120)
-        if up.status_code >= 400:
+        # 大文件慢链路:读超时 300s + 超时/瞬断重试 3 次(指数退避)
+        last_exc: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                with p.open("rb") as f:
+                    files = {
+                        "OSSAccessKeyId": (None, pol["oss_access_key_id"]),
+                        "Signature": (None, pol["signature"]),
+                        "policy": (None, pol["policy"]),
+                        "x-oss-object-acl": (None,
+                                             pol["x_oss_object_acl"]),
+                        "x-oss-forbid-overwrite": (
+                            None, pol["x_oss_forbid_overwrite"]),
+                        "key": (None, key),
+                        "success_action_status": (None, "200"),
+                        "file": (p.name, f),
+                    }
+                    up = sess.post(pol["upload_host"], files=files,
+                                   timeout=(10, 300))
+                if up.status_code >= 500:
+                    raise RuntimeError(f"OSS HTTP {up.status_code}")
+                if up.status_code >= 400:
+                    raise RuntimeError(
+                        f"bailian_kling OSS upload of '{p.name}' failed: "
+                        f"HTTP {up.status_code} — {up.text[:2000]}")
+                last_exc = None
+                break
+            except Exception as exc:                    # 超时/瞬断可重试
+                if "HTTP 4" in str(exc):
+                    raise                               # 4xx 不是瞬断
+                last_exc = exc
+                log.warning("bailian_kling: upload of %s attempt %d "
+                            "failed (%s) — retrying", p.name,
+                            attempt + 1, exc)
+                time.sleep(2 * (attempt + 1))
+        if last_exc is not None:
             raise RuntimeError(
-                f"bailian_kling OSS upload of '{p.name}' failed: HTTP "
-                f"{up.status_code} — {up.text[:2000]}")
+                f"bailian_kling OSS upload of '{p.name}' failed after "
+                f"3 attempts: {last_exc}")
         url = f"oss://{key}"
         self._upload_cache[ck] = url
         return url
+
+    def _shrink_for_upload(self, p: Path) -> Path:
+        """参考图降采样:长边 ≤1280 的 JPEG(质量 88)。结果按源文件缓存
+        (同目录 .upload_*.jpg);非图片/PIL 缺失/更小无益 → 原样返回。"""
+        try:
+            if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+                return p
+            if p.stat().st_size <= 1_200_000:
+                from PIL import Image
+                with Image.open(p) as im:
+                    if max(im.size) <= 1280:
+                        return p
+            out = p.parent / f".upload_{p.stem}.jpg"
+            if out.exists() and out.stat().st_mtime >= p.stat().st_mtime:
+                return out
+            from PIL import Image
+            with Image.open(p) as im:
+                im = im.convert("RGB")
+                im.thumbnail((1280, 1280))
+                im.save(out, "JPEG", quality=88)
+            log.info("bailian_kling: %s shrunk for upload %.1fMB → %.2fMB",
+                     p.name, p.stat().st_size / 1e6,
+                     out.stat().st_size / 1e6)
+            return out
+        except Exception as exc:
+            log.warning("bailian_kling: shrink of %s failed (%s) — "
+                        "uploading the original", p.name, exc)
+            return p
 
     # ── payload(机械字段确定性补齐,LLM 不碰)─────────────────
     def _build_payload(self, prompt: str, media: list[dict],
