@@ -76,6 +76,18 @@ log = get_logger(__name__)
 _HIGH_SEVERITY = 0.7
 
 
+def _filter_menu_for_mode(menu: list, repair_mode: str) -> list:
+    """修复两段的菜单门(用户令):consistency = 只留 add_transition/
+    accept(其他 metrics 的修复工具本轮不给);classic = 去掉
+    add_transition(只旧策略);full = 原样。"""
+    if repair_mode == "consistency":
+        return [m for m in menu
+                if m.get("name") in ("add_transition", "accept")]
+    if repair_mode == "classic":
+        return [m for m in menu if m.get("name") != "add_transition"]
+    return list(menu)
+
+
 @dataclass
 class SelfImproveResult:
     clip: CandidateClip
@@ -760,6 +772,9 @@ def generate_shot_orchestrated(
     repair_severity: float = 0.0,
     regen_fn=None,        # R-1:全修按原始条件方法重生成(窗口层闭包)
     transition_fn=None,   # M2:转场闭包(上镜尾帧+本镜首帧→flf2v 3s)
+    repair_mode: str = "full",  # 修复两段控制:full=两段全开;
+                          # consistency=只修一致性(菜单仅 add_transition/
+                          # accept,不越权改判);classic=只旧策略(无转场)
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
@@ -911,14 +926,37 @@ def generate_shot_orchestrated(
                      spec.shot_idx, turn, review_brief["headline"])
         menu = orchestrator.available_actions(
             video_gen=generator.video_gen, asset_memory=asset_memory,
-            clip=best, transition_available=(transition_fn is not None),
+            clip=best,
+            transition_available=(transition_fn is not None
+                                  and repair_mode != "classic"),
         )
+        menu = _filter_menu_for_mode(menu, repair_mode)
         decision = orchestrator.decide(
             best, spec, menu, brain_history, defect_report=defect_report,
             review_brief=review_brief,
         )
 
         invalid = decision.get("tool") in ("__invalid__",)
+        if repair_mode == "consistency" and (invalid or
+                                             decision.get("tool") == "accept"):
+            # consistency 模式:只修接缝;brain 说 accept(或答非所问)=
+            # 接缝没问题/救不了 —— 尊重之,绝不越权落 router 重掷(其他
+            # metrics 的缺陷本轮明令不修)。
+            brain_log("repair/outcome", {
+                "decision_id": decision.get("decision_id"),
+                "shot_idx": spec.shot_idx, "turn": turn,
+                "tool": "accept", "outcome": "stop"})
+            actions.append({"tool": "accept", "args": {},
+                            "outcome": "stop",
+                            "reason": (decision.get("reason", "")
+                                       or "consistency-only mode"),
+                            "defects": defect_report.to_brain_json(),
+                            "brief_headline": review_brief.get("headline",
+                                                               "")})
+            log.info("shot %d turn%d consistency-mode ACCEPT → stop",
+                     spec.shot_idx, turn)
+            stop_reason = "brain_accept"
+            break
         if decision.get("tool") == "add_transition" and transition_fn is not None:
             # M2 转场(规则定死):生成 3s 过渡片挂到 best 上,然后收尾 ——
             # 转场是"接不上"的终审判决,不是继续修的理由。失败 → 记录后

@@ -2593,6 +2593,8 @@ def generate_movie_windowed(
     enable_review: bool = True,         # M2:评审/修复总开关(关 = 首选即收)
     given_characters: Optional[dict] = None,  # 剧本 JSON 的 角色名→图片路径
                                         # (路径可 None = 图缺失,落回生成链)
+    repair_mode: str = "full",          # 修复两段:full / consistency(只
+                                        # 转场)/ classic(只旧策略)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -3248,6 +3250,7 @@ def generate_movie_windowed(
                 repair_severity=repair_severity,
                 regen_fn=_regen_original,
                 transition_fn=transition_fn,
+                repair_mode=repair_mode,
             )
         shot_results.append(res)
         best = res.clip

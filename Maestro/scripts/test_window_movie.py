@@ -84,6 +84,12 @@ def main() -> int:
                     help="用户自带剧本路径:.txt 纯文本;.json 走固定契约 "
                          "{content, role:{角色名→图片路径}}(智能识别,"
                          "角色图预填官方肖像,路径救援见 script_input)")
+    ap.add_argument("--repair-mode", default="full",
+                    choices=["full", "consistency", "classic"],
+                    help="修复两段控制:consistency=只修一致性(菜单仅"
+                         "转场/接受,其他 metrics 不修,accept 不被越权"
+                         "改判);classic=只旧策略(regenerate/segment,"
+                         "无转场);full=两段全开")
     ap.add_argument("--no-review", action="store_true",
                     help="M2:关闭评审/修复总开关(首选候选直接收货,"
                          "不评审不修复;episode 蒸馏同时停用)")
@@ -283,6 +289,7 @@ def main() -> int:
         screenplay=_screenplay_text,
         given_characters=_given_chars,
         enable_review=(not args.no_review),
+        repair_mode=args.repair_mode,
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,

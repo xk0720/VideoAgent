@@ -198,3 +198,16 @@ def test_enable_review_off_skips_review_and_distill(tmp_path, monkeypatch):
     assert res.final_video is not None
     stages = {d.get("stage") for d in res.decisions}
     assert {"screenplay", "character_extract"} <= stages
+
+
+def test_repair_mode_menu_filter():
+    """修复两段门(用户令):consistency 只留 转场/接受;classic 去转场。"""
+    from maestro.pipeline.generate_loop import _filter_menu_for_mode
+    menu = [{"name": n} for n in
+            ("repair_keyframe_identity", "regenerate_segment",
+             "regenerate", "add_transition", "accept")]
+    assert [m["name"] for m in _filter_menu_for_mode(menu, "consistency")] \
+        == ["add_transition", "accept"]
+    assert "add_transition" not in [
+        m["name"] for m in _filter_menu_for_mode(menu, "classic")]
+    assert len(_filter_menu_for_mode(menu, "full")) == len(menu)
