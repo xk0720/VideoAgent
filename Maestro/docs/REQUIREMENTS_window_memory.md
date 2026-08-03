@@ -892,3 +892,15 @@ M0 结果(scripts/playground/bailian_kling_probe.py,五形态全真调用):
 - 【定策略池的关键发现】first_frame + refer 可同请求混用 —— 续接镜
   = 硬钉上镜尾帧 + 肖像参考,旧 ti2v_prev_plus_keyframe 的软钉意图
   从此有 API 级硬实现。
+
+### M1 进行中状态(2026-08-03,防压缩快照)
+已完成(未 commit):ref_slots 正则认 <<<image_N>>>;window_loop 新增
+_ref_tok 方言助手、能力标记分流菜单(first_frame_plus_refs → t2v/ref2v/
+i2v_first/flf2v_own_pair/flf2v_bridge 新菜单,旧后端菜单原样)、
+_slot_manifest 新分支(ref2v / i2v_first,refer 编号不含 first_frame,
+M0 实测)、_generate_with_condition 新分支(ref2v 全参考;i2v_first 硬钉
+上镜末帧+参考同请求,hard_prev 时 _drop_first_frame 无条件切,无上镜退
+自有关键帧不切)、三个 gate 集合加 i2v_first、enhancer 条件清单透传
+portraits/video_gen;tests/unit/test_kling_strategies.py 5 条全绿,全套
+536+5 绿。子代理在写 BailianKlingClient 三件套(backends/configs/tests)。
+待做:M1 收尾 commit;M2 管线重构;M3 技能重写(计划见上节)。

@@ -1,0 +1,114 @@
+# Maestro — 百炼可灵(DashScope kling-v3)主后端配置(dev-music-bailian)。
+#
+# 与 configs/basic.yaml 同构,只换视频生成后端(2026-08-03 八项裁决:
+# brain/VLM 不变;t2i / 图像编辑 / 音乐暂留 wavespeed;旧后端保留可切换):
+#   • 纯语言大模型 → OpenAI    （$OPENAI_API_KEY）
+#   • 多模态大模型 → Gemini    （$GEMINI_API_KEY,任意能读视频帧的多模态模型）
+#   • 视频生成     → 百炼可灵  （$DASHSCOPE_API_KEY,公共 dashscope 端点）
+#   • t2i / 音乐   → WaveSpeed （$WAVESPEED_API_KEY,内部代理）
+#   • 其余（物理 tracker / 关键帧编辑 / 音频）一律 mock —— 先不开。
+#
+# 跑：
+#   export OPENAI_API_KEY=... GEMINI_API_KEY=... DASHSCOPE_API_KEY=... WAVESPEED_API_KEY=...
+#   maestro run-once --prompt "..." -o outputs/demo.mp4 --config configs/bailian.yaml
+# 不需要起 server。
+
+models:
+  # 纯语言大模型（编剧 / 导演 / 修复 / 验证）——只用 OpenAI。
+  llm:
+    name: "openai"
+    model: "gpt-5.6-sol"   # brain 默认(2026-07-17 换代);gpt-5/o 系列自动用 max_completion_tokens、
+                           # 不发 temperature(它们拒收);gpt-4o 等旧模型也兼容
+
+  # 多模态大模型（语义/物理 VLM 评审 + 镜头对比 + 素材打标）。
+  # Gemini 官方 generateContent 端点;$GEMINI_MODEL / $GEMINI_BASE_URL 可覆盖。
+  # 备用:name: "qwen-vl" + model: "qwen-vl-max"($QWEN_API_KEY)。
+  mllm:
+    name: "gemini"
+    model: "gemini-3.5-flash"
+    n_frames: 4            # 抽帧后端(OpenAI 兼容 VLM)用;Gemini 走原生视频不抽帧
+    video_fps: 5           # Gemini 原生视频的采样帧率(官方默认 1.0;调高 →
+                           # 时间定位更准、token 也更多;范围 0-24)
+
+  # 视频生成——阿里云百炼可灵(DashScope 异步任务:提交 → 轮询 → 下载)。
+  # 契约 = M0 真 API 验证(scripts/playground/bailian_kling_probe.py,
+  # 2026-08-03,五形态全 SUCCEEDED):带媒体走 omni、纯文本走标准;无
+  # first_frame 时 aspect_ratio 必填;first_frame + refer 可同请求混用;
+  # 引用方言 <<<image_N>>>;seed API 不支持(只记日志不传)。
+  video_gen:
+    name: "bailian_kling"
+    kling_model: "kling/kling-v3-video-generation"            # 纯文本(t2v)
+    kling_omni_model: "kling/kling-v3-omni-video-generation"  # 带媒体(i2v/flf2v/refer)
+    mode: "std"               # std | pro
+    aspect_ratio: "16:9"      # 无 first_frame 的请求必填(M0 实测)
+    generate_audio: false     # kling 原生音轨;对白镜由管线临时打开
+    api_key: ""               # 留空 → $DASHSCOPE_API_KEY
+    poll_interval: 15.0       # 任务轮询间隔(秒);3s/std 实测 47s~2min 出片
+    timeout: 900              # 轮询超时(秒)= 15 分钟
+    # call_log: "outputs/bailian_calls.jsonl"  # 每次调用(模型+参数)落盘;
+    #   代理转发的音乐/t2i 调用同一本账
+    # 2026-08-03 裁决:t2i / 图像编辑 / 音乐暂留 wavespeed —— 内部代理:
+    wavespeed:
+      api_key: ""             # 留空 → $WAVESPEED_API_KEY
+      model_id: "bytedance/seedance-2.0/text-to-video"
+      resolution: "480p"      # 测试期默认(省钱);产线再升 720p/1080p/4k
+      generate_audio: false
+      poll_interval: 2.0
+      timeout: 600
+
+  # 以下先全部 mock —— 先把主链路跑通，之后再按需开启。
+  track_extractor:
+    name: "mock-track"      # 物理验证关闭：p2 中性（诚实标"未测量"，不伪造）
+  image_edit:
+    name: "mock-image-edit" # HSI Tier-0 关键帧编辑暂为 no-op
+  audio_gen:
+    name: "mock-audio-gen"  # 音频暂为占位
+
+# 规划
+plan:
+  n_shots: 3
+  max_shots: 6
+  shot_duration: 3.0       # 仅旧阶梯管线用;窗口管线的时长由 brain 逐镜决定
+  max_plan_iters: 3
+
+# 评审员开关(可能不用纯 physics 评审 → 分支开关控制)
+review:
+  physics_vlm: true        # VLM 物理观点评审(看画面判断合理性)
+  physics_measure: true    # 非 AI 测量链(basic 下 track 是 mock,中性;关掉即纯语义评审)
+
+# 窗口式全片生成(pipeline/window_loop.py)
+window:
+  tail_seconds: 2.0        # tiv2v_window 策略截取上镜尾段的长度(秒),可调
+
+# 生成 + 自改进循环
+compose:
+  fps: 8
+  n_candidates: 2           # 每镜 best-of-N 候选数
+  max_revisions: 5          # 自改进轮数上限(旧阶梯循环)
+  k_retries: 2
+  # 小循环轮数【自动】控制(brain 修复循环;max_turns 只是成本天花板):
+  patience: 2               # 连续 N 轮被 Verifier 拒 → 止损停(≤0 关闭)
+  quality_bar: null         # 总分 ≥ 此值且无高危缺陷 → 提前收工(如 0.75;null 关闭)
+
+# 评审指标权重（驱动单调 Verifier）
+metrics:
+  weights:
+    m1_semantic: 0.22
+    m2_temporal: 0.13
+    p1_physics: 0.22           # VLM 判的物理失效模式
+    p2_law_consistency: 0.10   # mock-track 下中性（未测量）
+    id1_identity: 0.13
+    m5_rhythm: 0.10
+    aesthetic: 0.10
+
+physics:
+  violation_threshold: 0.40
+
+# 记忆（技能 / 实体 / 教训跨运行持久化；纯本地文件，无需配置）
+memory:
+  user_id: "default"
+  enable_skills: true
+  enable_entities: true
+  enable_preferences: true
+  enable_episodes: true
+  enable_skill_admission: true

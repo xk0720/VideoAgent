@@ -15,6 +15,9 @@ Backends:
     service UniVA (2511.08521) uses for all its generation. This one is FULLY
     IMPLEMENTED: with $WAVESPEED_API_KEY set, `maestro` produces real pixels
     with no local GPU — the fastest route to the minimal real chain.
+  • BailianKlingClient — 阿里云百炼(DashScope)可灵 kling-v3,
+    dev-music-bailian 主后端(t2v/i2v/flf2v/refer,含 first_frame+refer 混用;
+    t2i / 音乐按 2026-08-03 裁决经内部 WaveSpeed 代理)。
   • OmniWeavingClient / WanClient — local-weights skeletons (fill + GPU).
   • VeoApiClient — hosted API skeleton.
 """
@@ -27,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..logging_utils import get_logger
-from .video_gen import BaseVideoGenClient
+from .video_gen import BaseVideoGenClient, MockVideoGenClient
 
 log = get_logger(__name__)
 
@@ -626,6 +629,12 @@ class WaveSpeedClient(BaseVideoGenClient):
     def supported_conditions(self) -> set[str]:
         return {"first_frame"}
 
+    def ref_token(self, n: int) -> str:
+        """本后端 prompt 里第 N 张参考图的引用方言:@ImageN(seedance-2.0 /
+        kling-o1 官方 prompt 语法)。窗口管线写引用句时问后端要方言,不再
+        硬编码 —— 百炼可灵是 <<<image_N>>>(BailianKlingClient.ref_token)。"""
+        return f"@Image{n}"
+
     def capabilities(self) -> set[str]:
         # Phase-2 routing seed: t2v/i2v via generate(), plus the optional
         # frame_to_frame (flf2v), edit_video (edit), and extend (extend) methods.
@@ -644,6 +653,399 @@ class WaveSpeedClient(BaseVideoGenClient):
         # multi-image FUSION i2v (images array ≤4) — the Kling multi-i2v route,
         # always addressable on this client (own model id per call).
         caps.add("multi_i2v")
+        return caps
+
+
+# ─────────────────────────────────────────────────────────────
+# 百炼可灵 — DashScope hosted API(dev-music-bailian 主后端)
+# ─────────────────────────────────────────────────────────────
+class BailianKlingClient(BaseVideoGenClient):
+    """阿里云百炼(DashScope)可灵 kling-v3 视频后端。协议 = M0 真 API 验证
+    (scripts/playground/bailian_kling_probe.py,2026-08-03,五形态全
+    SUCCEEDED),照实现,不改契约:
+
+      提交  POST {BASE}/services/aigc/video-generation/video-synthesis
+            头 Authorization: Bearer $DASHSCOPE_API_KEY + X-DashScope-Async: enable
+      轮询  GET  {BASE}/tasks/{task_id}(默认 15s 间隔 / 15min 超时,可配)
+            SUCCEEDED → 下载 output.video_url;FAILED → 响亮 raise(code/message)
+      上传  GET /uploads?action=getPolicy&model=… → OSS 表单直传 → oss://key;
+            带媒体的请求加头 X-DashScope-OssResourceResolve: enable;
+            同文件(路径+mtime)进程内缓存,只传一次。
+
+    M0 实测契约:
+      • 无 first_frame 的请求 aspect_ratio 必填;
+      • first_frame + refer 可同请求混用(capability "first_frame_plus_refs")
+        —— 续接镜 = 硬钉上镜尾帧 + 肖像参考的 API 级硬实现;
+      • 引用方言 <<<image_N>>>(见 ref_token());
+      • 本机系统代理会掐断长轮询 → requests 会话 trust_env=False 直连;
+      • seed:API 无此字段 → 只记日志不传(诚实,不假装可复现)。
+
+    八项裁决(docs/REQUIREMENTS_window_memory.md 2026-08-03):t2i / 图像
+    编辑 / 音乐暂留 wavespeed —— config 给 wavespeed 子配置(或环境有
+    $WAVESPEED_API_KEY)则内部实例化 WaveSpeedClient 代理,text_to_image /
+    _run_task(audio_stage 的音乐)转发给它;没代理时响亮 raise(不装死)。
+
+    config:
+      models.video_gen:
+        name: "bailian_kling"
+        kling_model:      "kling/kling-v3-video-generation"       # 纯文本
+        kling_omni_model: "kling/kling-v3-omni-video-generation"  # 带媒体
+        mode: "std"                # std | pro
+        aspect_ratio: "16:9"       # 无 first_frame 的请求必填(M0)
+        generate_audio: false
+        api_key: ...               # or $DASHSCOPE_API_KEY
+        poll_interval: 15.0
+        timeout: 900
+        call_log: ...
+        wavespeed: {...}           # t2i/音乐代理子配置(api_key 留空走环境)
+    """
+
+    BASE = "https://dashscope.aliyuncs.com/api/v1"
+    SYNTH = BASE + "/services/aigc/video-generation/video-synthesis"
+
+    def __init__(self, name: str = "bailian_kling",
+                 config: Optional[dict] = None):
+        self.name = name
+        self.config = config or {}
+        self.api_key = (self.config.get("api_key")
+                        or os.getenv("DASHSCOPE_API_KEY"))
+        self.kling_model = self.config.get(
+            "kling_model", "kling/kling-v3-video-generation")
+        self.kling_omni_model = self.config.get(
+            "kling_omni_model", "kling/kling-v3-omni-video-generation")
+        self.mode = self.config.get("mode", "std")
+        self.aspect_ratio = self.config.get("aspect_ratio", "16:9")
+        self.generate_audio = bool(self.config.get("generate_audio", False))
+        self.poll_interval = float(self.config.get("poll_interval", 15.0))
+        self.timeout = float(self.config.get("timeout", 900))
+        self._upload_cache: dict = {}     # (resolved path, mtime_ns) → oss url
+        self._sess = None                 # 懒建的直连 requests.Session
+        # 裁决:t2i / 图像编辑 / 音乐暂留 wavespeed —— 内部代理
+        ws_cfg = self.config.get("wavespeed")
+        if isinstance(ws_cfg, dict) or os.getenv("WAVESPEED_API_KEY"):
+            cfg = dict(ws_cfg or {})
+            if self.config.get("call_log") and not cfg.get("call_log"):
+                cfg["call_log"] = self.config["call_log"]   # 音乐调用同一本账
+            self._wavespeed: Optional[WaveSpeedClient] = WaveSpeedClient(
+                name="wavespeed", config=cfg)
+        else:
+            self._wavespeed = None
+
+    # ── 基础设施 ──────────────────────────────────────────────
+    def _session(self):
+        """直连会话(M0 实测:本机系统代理会掐断长轮询 → trust_env=False,
+        阿里云国内可达无需代理)。整个客户端复用同一条会话。"""
+        if self._sess is None:
+            import requests   # std in our [all] extras; loud ImportError otherwise
+            s = requests.Session()
+            s.trust_env = False
+            self._sess = s
+        return self._sess
+
+    def _headers(self, async_: bool = True, oss: bool = False) -> dict:
+        if not self.api_key:
+            raise RuntimeError(
+                "BailianKlingClient needs an API key: set $DASHSCOPE_API_KEY "
+                "or models.video_gen.api_key (or switch back to "
+                "'mock-video-gen')."
+            )
+        h = {"Authorization": f"Bearer {self.api_key}",
+             "Content-Type": "application/json"}
+        if async_:
+            h["X-DashScope-Async"] = "enable"
+        if oss:   # 带媒体的请求:让服务端解析 oss:// 临时资源(M0)
+            h["X-DashScope-OssResourceResolve"] = "enable"
+        return h
+
+    def ref_token(self, n: int) -> str:
+        """可灵引用方言:prompt 里第 N 张 refer 图写作 <<<image_N>>>
+        (M0 ref2v 实测服从度好;编号 = media 里 refer 的顺序)。"""
+        return f"<<<image_{n}>>>"
+
+    @staticmethod
+    def _clamp_duration(seconds) -> int:
+        """kling duration 域 = [3,15] 整数。小数向上取整后夹取(与 WaveSpeed
+        的 snap-up 约定一致:缺的时长补不出来,多的可以裁)。"""
+        want = (int(seconds) if float(seconds) == int(seconds)
+                else int(seconds) + 1)
+        return max(3, min(15, want))
+
+    # call_log 摘要规则与 WaveSpeed 完全一致(语义文本全文保留、长 blob
+    # 缩写);kling payload 顶层是 model/input/parameters 三个键,嵌套 dict
+    # 原样透传 —— prompt 全文可读,oss:// URL 原样记(很短,天然保留)。
+    _summarize_payload = WaveSpeedClient._summarize_payload
+
+    def _log_call(self, record: dict) -> None:
+        """call_log 机制与 WaveSpeedClient 同款(任务 0):模型名 + 参数打到
+        终端 INFO,并逐行追加到 config `call_log` 指定的 JSONL。日志失败
+        绝不影响调用本身。"""
+        try:
+            log.info("bailian_kling %s → %s %s", record.get("event"),
+                     record.get("model"),
+                     json.dumps({k: v for k, v in record.items()
+                                 if k not in ("event", "model", "ts")},
+                                ensure_ascii=False, default=str)[:1500])
+        except Exception:
+            pass
+        path = self.config.get("call_log")
+        if not path:
+            return
+        try:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str)
+                        + "\n")
+        except OSError as exc:
+            log.warning("call_log write failed (%s): %s", path, exc)
+
+    # ── 上传(getPolicy → OSS 表单直传 → oss://key)──────────────
+    def _upload_media(self, path, model: Optional[str] = None) -> str:
+        """本地文件 → DashScope 临时空间。http(s)/oss:// 直接透传;同文件
+        (路径+mtime)进程内缓存,repair 轮反复引用同一帧只传一次。"""
+        self._headers(async_=False)          # 无 key 先响亮(任何 IO 之前)
+        vp = str(path)
+        if vp.startswith(("http://", "https://", "oss://")):
+            return vp
+        p = Path(vp)
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(f"media not found: {vp}")
+        st = p.stat()
+        ck = (str(p.resolve()), st.st_mtime_ns)
+        if ck in self._upload_cache:
+            return self._upload_cache[ck]
+        model = model or self.kling_omni_model
+        sess = self._session()
+        r = sess.get(f"{self.BASE}/uploads",
+                     params={"action": "getPolicy", "model": model},
+                     headers={"Authorization": f"Bearer {self.api_key}"},
+                     timeout=30)
+        if r.status_code >= 400:
+            raise RuntimeError(
+                f"bailian_kling getPolicy for '{p.name}' failed: HTTP "
+                f"{r.status_code} — {r.text[:2000]}")
+        pol = r.json()["data"]
+        key = f"{pol['upload_dir']}/{p.name}"
+        with p.open("rb") as f:
+            files = {
+                "OSSAccessKeyId": (None, pol["oss_access_key_id"]),
+                "Signature": (None, pol["signature"]),
+                "policy": (None, pol["policy"]),
+                "x-oss-object-acl": (None, pol["x_oss_object_acl"]),
+                "x-oss-forbid-overwrite": (None,
+                                           pol["x_oss_forbid_overwrite"]),
+                "key": (None, key),
+                "success_action_status": (None, "200"),
+                "file": (p.name, f),
+            }
+            up = sess.post(pol["upload_host"], files=files, timeout=120)
+        if up.status_code >= 400:
+            raise RuntimeError(
+                f"bailian_kling OSS upload of '{p.name}' failed: HTTP "
+                f"{up.status_code} — {up.text[:2000]}")
+        url = f"oss://{key}"
+        self._upload_cache[ck] = url
+        return url
+
+    # ── payload(机械字段确定性补齐,LLM 不碰)─────────────────
+    def _build_payload(self, prompt: str, media: list[dict],
+                       duration, seed: int) -> tuple[str, dict]:
+        """模型按有无媒体二选一(带媒体 → omni,纯文本 → 标准);duration
+        None → 不传字段(API 默认);无 first_frame → aspect_ratio 必填
+        (M0 实测);audio ← generate_audio 属性;seed API 不支持 → 只记
+        日志不传。"""
+        model = self.kling_omni_model if media else self.kling_model
+        inp: dict = {"prompt": prompt}
+        if media:
+            inp["media"] = media
+        params: dict = {"mode": self.mode,
+                        "audio": bool(self.generate_audio)}
+        if duration is not None:
+            params["duration"] = self._clamp_duration(duration)
+        if not any(m.get("type") == "first_frame" for m in media):
+            params["aspect_ratio"] = self.aspect_ratio
+        if seed:
+            log.info("bailian_kling: seed=%s NOT sent — the DashScope kling "
+                     "API has no seed field (logged for the record only)",
+                     seed)
+        return model, {"model": model, "input": inp, "parameters": params}
+
+    # ── 生成入口(窗口管线的调用面)────────────────────────────
+    def generate(
+        self,
+        prompt: str,
+        duration: Optional[float],
+        out_path: Path,
+        fps: int = 8,
+        first_frame: Optional[Path] = None,
+        reference_images: Optional[list[Path]] = None,
+        seed: int = 0,
+        reference_video: Optional[Path] = None,
+    ) -> Path:
+        """t2v / i2v(first_frame)/ ref2v(refer×N)/ mix(first_frame+refer,
+        M0 已验证可同请求混用)。media 里 refer 的顺序即 <<<image_N>>> 编号。
+
+        reference_video:kling API 没有参考视频通道 → 在任何上传发生之前
+        响亮拒绝(诚实,不静默丢条件)。capabilities() 刻意不含 "ref_video",
+        能力驱动的菜单根本不会把它路由进来 —— 这里只防直呼。"""
+        if reference_video is not None:
+            raise RuntimeError(
+                "BailianKlingClient has no reference-video channel — the "
+                "DashScope kling API takes only first_frame/last_frame/refer "
+                "media. Drop the reference_video condition or route this call "
+                "to the 'wavespeed' backend (seedance-2.0 reference_videos)."
+            )
+        media: list[dict] = []
+        if first_frame is not None:
+            media.append({"type": "first_frame",
+                          "url": self._upload_media(first_frame)})
+        for img in (reference_images or []):
+            media.append({"type": "refer", "url": self._upload_media(img)})
+        model, payload = self._build_payload(prompt, media, duration, seed)
+        return self._submit_and_poll(model, payload, out_path)
+
+    def frame_to_frame(
+        self,
+        prompt: str,
+        first_frame: Path,
+        last_frame: Path,
+        out_path: Path,
+        duration: Optional[float] = 5,
+        seed: int = 0,
+    ) -> Path:
+        """首尾帧生成(capability "flf2v",M0 flf2v 形态验证)。转场时长由
+        调用方传(裁决:转场固定 3s);timeline.py 以 duration= 关键字调用。"""
+        media = [
+            {"type": "first_frame", "url": self._upload_media(first_frame)},
+            {"type": "last_frame", "url": self._upload_media(last_frame)},
+        ]
+        model, payload = self._build_payload(prompt, media, duration, seed)
+        return self._submit_and_poll(model, payload, out_path)
+
+    # ── 提交 → 轮询 → 下载(异步任务协议,M0 原样)──────────────
+    def _submit_and_poll(self, model: str, payload: dict,
+                         out_path: Path) -> Path:
+        needs_oss = bool((payload.get("input") or {}).get("media"))
+        t0 = time.time()
+        self._log_call({"ts": t0, "event": "submit", "model": model,
+                        "payload": self._summarize_payload(payload),
+                        "out": str(out_path)})
+        sess = self._session()
+        resp = sess.post(self.SYNTH, headers=self._headers(oss=needs_oss),
+                         json=payload, timeout=60)
+        if resp.status_code >= 400:
+            self._log_call({"ts": time.time(), "event": "failed",
+                            "model": model,
+                            "error": f"HTTP {resp.status_code}: "
+                                     f"{resp.text[:500]}"})
+            raise RuntimeError(
+                f"bailian_kling submit to '{model}' failed: HTTP "
+                f"{resp.status_code} — {resp.text[:2000]}\n"
+                f"payload: {self._summarize_payload(payload)}"
+            )
+        body = resp.json() if resp.text else {}
+        task_id = (body.get("output") or {}).get("task_id")
+        if not task_id:
+            self._log_call({"ts": time.time(), "event": "failed",
+                            "model": model, "error": "no task_id in submit"})
+            raise RuntimeError(
+                f"bailian_kling submit to '{model}' returned no task_id: "
+                f"{json.dumps(body, ensure_ascii=False)[:2000]}"
+            )
+
+        deadline = time.time() + self.timeout
+        while time.time() < deadline:
+            r = sess.get(f"{self.BASE}/tasks/{task_id}",
+                         headers=self._headers(async_=False), timeout=30)
+            if r.status_code >= 500:       # transient server hiccup → re-poll
+                time.sleep(self.poll_interval)
+                continue
+            if r.status_code >= 400:
+                raise RuntimeError(
+                    f"bailian_kling poll for task {task_id} ('{model}') "
+                    f"failed: HTTP {r.status_code} — {r.text[:2000]}"
+                )
+            data = r.json() if r.text else {}
+            out = data.get("output") or {}
+            status = out.get("task_status")
+            if status == "SUCCEEDED":
+                url = out.get("video_url")
+                if not url:
+                    raise RuntimeError(
+                        f"bailian_kling task {task_id} SUCCEEDED but has no "
+                        f"output.video_url: "
+                        f"{json.dumps(out, ensure_ascii=False)[:2000]}")
+                out_path = Path(out_path)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                video = sess.get(url, timeout=300)
+                if video.status_code >= 400:
+                    raise RuntimeError(
+                        f"bailian_kling download for task {task_id} failed: "
+                        f"HTTP {video.status_code}")
+                out_path.write_bytes(video.content)
+                self._log_call({"ts": time.time(), "event": "completed",
+                                "model": model, "task_id": task_id,
+                                "elapsed_s": round(time.time() - t0, 1),
+                                "out": str(out_path)})
+                return out_path
+            if status in ("FAILED", "UNKNOWN"):
+                code = out.get("code") or data.get("code")
+                msg = out.get("message") or data.get("message")
+                self._log_call({"ts": time.time(), "event": "failed",
+                                "model": model, "task_id": task_id,
+                                "error": f"{status} code={code} "
+                                         f"message={str(msg)[:400]}"})
+                raise RuntimeError(
+                    f"bailian_kling task {task_id} ('{model}') {status}: "
+                    f"code={code} message={msg}")
+            time.sleep(self.poll_interval)
+        self._log_call({"ts": time.time(), "event": "failed", "model": model,
+                        "task_id": task_id,
+                        "error": f"timeout after {self.timeout}s"})
+        raise TimeoutError(
+            f"bailian_kling task {task_id} did not finish within "
+            f"{self.timeout}s (poll_interval={self.poll_interval}s)")
+
+    # ── WaveSpeed 代理(裁决:t2i / 图像编辑 / 音乐暂留 wavespeed)──
+    def _proxy(self, what: str) -> WaveSpeedClient:
+        if self._wavespeed is None:
+            raise RuntimeError(
+                f"BailianKlingClient has no WaveSpeed proxy for {what} — "
+                "t2i/图像编辑/音乐暂留 wavespeed(2026-08-03 裁决):配 "
+                "models.video_gen.wavespeed 子配置或 $WAVESPEED_API_KEY。"
+            )
+        return self._wavespeed
+
+    def text_to_image(self, prompt: str, out_path: Path,
+                      seed: int = 0) -> Path:
+        """t2i 转发内部 WaveSpeed 代理(窗口 keyframe 阶段用);没代理响亮
+        raise,不装死。"""
+        return self._proxy("text_to_image (t2i)").text_to_image(
+            prompt, out_path, seed=seed)
+
+    def _run_task(self, model_id: str, payload: dict, out_path: Path) -> Path:
+        """WaveSpeed 原生任务直呼入口(audio_stage 的音乐生成
+        `video_gen._run_task(text-to-music)` 走这里)—— 转发内部代理;
+        代理带同一本 call_log,音乐调用照常入账。"""
+        return self._proxy(f"_run_task('{model_id}')")._run_task(
+            model_id, payload, out_path)
+
+    # ── 能力面 ────────────────────────────────────────────────
+    def supported_conditions(self) -> set[str]:
+        return {"first_frame", "reference_images"}
+
+    def capabilities(self) -> set[str]:
+        # 刻意不含 "extend"/"ref_video"/"multi_i2v"/"edit" —— kling API 没有
+        # 这些通道,旧菜单项按能力自然消失(能力驱动路由,不硬编码后端名)。
+        # "first_frame_plus_refs":M0 实测 first_frame+refer 可同请求混用,
+        # 续接镜 = 硬钉上镜尾帧 + 肖像参考,旧 ti2v_prev_plus_keyframe 的
+        # 软钉意图从此有 API 级硬实现。
+        caps = {"t2v", "i2v", "flf2v", "ref_images",
+                "first_frame_plus_refs"}
+        # 裁决(2026-08-03):t2i/图像编辑暂留 wavespeed —— 有代理时声明
+        # "t2i",肖像/关键帧阶段照常;无代理如实不声明(阶段自然跳过)。
+        if getattr(self, "_wavespeed", None) is not None:
+            caps.add("t2i")
         return caps
 
 
@@ -759,8 +1161,24 @@ class VeoApiClient(BaseVideoGenClient):
         return {"first_frame"}
 
 
+# ── 引用方言向后兼容:Mock 与 WaveSpeed 同款 @ImageN ──
+# MockVideoGenClient 定义在 video_gen.py(该文件另有人在改,本轮只许动
+# 本文件)—— 守卫式注入补齐方言方法;若那边日后正式定义 ref_token,
+# 以那边为准(hasattr 守卫自动让位)。
+if not hasattr(MockVideoGenClient, "ref_token"):
+    def _mock_ref_token(self, n: int) -> str:
+        """Mock 的图片引用方言,与 WaveSpeed 相同(@ImageN,向后兼容
+        既有 prompt 模板与测试)。"""
+        return f"@Image{n}"
+
+    MockVideoGenClient.ref_token = _mock_ref_token
+
+
 _REGISTRY = {
     "wavespeed": WaveSpeedClient,
+    "bailian_kling": BailianKlingClient,
+    "bailian": BailianKlingClient,
+    "kling": BailianKlingClient,
     "omniweaving": OmniWeavingClient,
     "wan": WanClient,
     "veo": VeoApiClient,

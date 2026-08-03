@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import re
 
-# @Image3 / @Video1 / "reference image 2"(kling 措辞,大小写不敏感)
-_REF_TOKEN_RE = re.compile(r"@(?:Image|Video)\d+|reference image \d+",
-                           re.IGNORECASE)
+# @Image3 / @Video1 / "reference image 2" / <<<image_1>>>(百炼可灵方言,
+# 2026-08-03)—— 大小写不敏感;闸门本身按槽位 ID 比对,与方言无关。
+_REF_TOKEN_RE = re.compile(
+    r"@(?:Image|Video)\d+|reference image \d+|<<<(?:image|video)_\d+>>>",
+    re.IGNORECASE)
 
 
 def validate_references(prompt: str, slots: list[dict]) -> tuple[str, dict]:

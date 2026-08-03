@@ -188,7 +188,7 @@ def _strip_markers(text: str) -> str:
 # 竞争 —— t2v 会照文字重新搭场景,首帧软锁被稀释;瘦身法则由此而来。
 _ANCHORED_STRATEGIES = {"i2v_keyframe", "flf2v_own_pair", "flf2v_bridge",
                         "ti2v_prev_last", "ti2v_prev_plus_keyframe",
-                        "extend_prev"}
+                        "extend_prev", "i2v_first"}
 
 # 首帧强锁句(用户实测有效的原话;兜底模板与全修合成共用一处定义)
 _PIN_SENTENCE = ("The shot opens EXACTLY on @Image1 — the final moment of "
@@ -323,11 +323,11 @@ def _first_last_mad(prev_video: Path, video: Path,
 # 一张图钉住(硬锁或 @Image1 软锁)的所有路线 —— 只有"钉住的开场"
 # 才存在"第 2 帧抛开钉帧重画"这种失效。
 _PIN_GATE_ROUTES = {"i2v_keyframe", "ti2v_prev_last", "flf2v_own_pair",
-                    "flf2v_bridge", "ti2v_prev_plus_keyframe"}
+                    "flf2v_bridge", "ti2v_prev_plus_keyframe", "i2v_first"}
 # 其中"上镜末帧锚定"的三条:交付片已被 _drop_first_frame 裁过头,撕裂
 # 可能只在【接点】(上镜末帧 vs 本片帧 0)可见 → 闸门要连接点一起量。
 _PIN_GATE_PREV = {"ti2v_prev_last", "flf2v_bridge",
-                  "ti2v_prev_plus_keyframe"}
+                  "ti2v_prev_plus_keyframe", "i2v_first"}
 
 
 def _pin_frame_mad(video: Path, work_dir: Path,
@@ -1546,6 +1546,14 @@ def _enforce_cast_canon(text: str, shot_cast,
     return out, notes
 
 
+def _ref_tok(video_gen, n: int) -> str:
+    """引用记号方言(2026-08-03 百炼迁移):后端声明自己的记号
+    (kling: <<<image_N>>>,seedance: @ImageN),槽位清单/兜底模板/
+    闸门统一按方言渲染 —— 换模型不再全网替换字符串。"""
+    fn = getattr(video_gen, "ref_token", None)
+    return fn(n) if callable(fn) else f"@Image{n}"
+
+
 def _portrait_slot_content(name: str) -> str:
     """肖像槽位的单源语义(B 案 2026-08-02):防拷贝子句内置 —— 写 prompt
     的四个角色全部从这行抄,肖像只许当身份参考,绝不许被复刻构图。"""
@@ -1556,7 +1564,8 @@ def _portrait_slot_content(name: str) -> str:
 
 def _slot_manifest(strategy: str, entry, prev,
                    use_prev_tail: bool = True,
-                   source_videos=None, portraits=None) -> list[dict]:
+                   source_videos=None, portraits=None,
+                   video_gen=None) -> list[dict]:
     """方案 A(2026-07-16 裁决):【槽位清单】—— 执行器将要装配的引用槽位,
     在写 prompt 之前算出来,发给写 prompt 的人(brain / enhancer)。编号
     从"brain 要遵守的规则"变成"brain 拿到的数据",错无可猜。
@@ -1586,6 +1595,32 @@ def _slot_manifest(strategy: str, entry, prev,
         return default
 
     rows: list[dict] = []
+    # ── 百炼可灵新策略(2026-08-03):编号按方言渲染;i2v_first 的
+    # refer 编号不含 first_frame(M0 实测:<<<image_1>>> 指首张 refer)──
+    if strategy == "ref2v":
+        own = list(refs)
+        rows = [{"slot": _ref_tok(video_gen, i + 1), "referenceable": True,
+                 "content": _c(p, "a planned reference image")}
+                for i, p in enumerate(own)]
+        rows += [{"slot": _ref_tok(video_gen, len(own) + j + 1),
+                  "referenceable": True,
+                  "content": _portrait_slot_content(n)}
+                 for j, n in enumerate(sorted(portraits or {}))]
+        return rows
+    if strategy == "i2v_first":
+        rows = [{"slot": "FIRST_FRAME", "referenceable": False,
+                 "content": ("the previous shot's final frame (this shot "
+                             "opens exactly on it)" if prev_ok else
+                             _c(kf, "this shot's planned opening frame"))}]
+        own = list(refs)
+        rows += [{"slot": _ref_tok(video_gen, i + 1), "referenceable": True,
+                  "content": _c(p, "a planned reference image")}
+                 for i, p in enumerate(own)]
+        rows += [{"slot": _ref_tok(video_gen, len(own) + j + 1),
+                  "referenceable": True,
+                  "content": _portrait_slot_content(n)}
+                 for j, n in enumerate(sorted(portraits or {}))]
+        return rows
     if strategy == "flf2v_own_pair" and pf is not None and pl is not None:
         rows = [{"slot": "FIRST_FRAME", "referenceable": False,
                  "content": _c(pf, "this shot's planned opening frame")},
@@ -1687,6 +1722,45 @@ def _condition_menu(entry, prev, video_gen, portraits=None) -> list[dict]:
     has_kf = ff is not None
     has_portraits = bool(portraits)
     has_prev = prev is not None and prev.video_path is not None
+    # ── 百炼可灵菜单(2026-08-03 重构):后端声明 first_frame_plus_refs
+    # 能力 → 收缩为 4 条;硬钉首帧可与参考图同请求混用(M0 实测),
+    # 软钉时代的 8 条菜单只属于旧后端,互不干扰。──────────────────────
+    if "first_frame_plus_refs" in caps:
+        menu = [{"name": "t2v", "description": "Text only — nothing else "
+                 "is available (last resort)."}]
+        if refs or has_portraits:
+            menu.append({"name": "ref2v",
+                         "description": "Reference-to-video: every planned "
+                                        "reference image and official "
+                                        "portrait rides the reference "
+                                        "channel (<<<image_N>>>). THE "
+                                        "route for scene cuts with "
+                                        "characters. Mention every slot "
+                                        "with its content."})
+        if has_prev or has_kf:
+            menu.append({"name": "i2v_first",
+                         "description": "HARD first-frame pin (API level, "
+                                        "not prompt wording): the previous "
+                                        "shot's final frame (or this "
+                                        "shot's own keyframe on a cut) "
+                                        "opens the shot exactly, AND "
+                                        "portraits/references ride along "
+                                        "in the same call. THE route for "
+                                        "in-scene continuation. Prompt "
+                                        "describes MOTION only."})
+        if pf is not None and pl is not None and "flf2v" in caps:
+            menu.append({"name": "flf2v_own_pair",
+                         "description": "This shot's OWN first+last frame "
+                                        "pair — opens on image 1, closes "
+                                        "on image 2 exactly; describe the "
+                                        "motion between."})
+        if has_prev and has_kf and "flf2v" in caps:
+            menu.append({"name": "flf2v_bridge",
+                         "description": "Bridge: previous shot's last "
+                                        "frame → this shot's keyframe as "
+                                        "the closing anchor (continuity "
+                                        "AND arrival)."})
+        return menu
     menu = [{"name": "t2v", "description": "Text only — no visual anchor. Use "
              "when nothing else is available or the shot is a hard scene cut."}]
     if has_kf:
@@ -1802,6 +1876,68 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         strategy = "i2v_keyframe" if (pf or kf) else "t2v"
         kf = pf or kf
         cond = {"strategy": strategy, "degraded_from": "flf2v_own_pair"}
+
+    if strategy == "ref2v":
+        # 百炼可灵参考生视频(2026-08-03):计划图 + 肖像全走 refer 通道,
+        # 编号按方言(<<<image_N>>>,顺序 = media 数组顺序)。
+        p_names = sorted(portraits or {})
+        p_paths = [Path(portraits[n]) for n in p_names]
+        all_refs = list(refs) + p_paths
+        if all_refs:
+            cond.update(reference_images=[str(p) for p in all_refs],
+                        anchoring="ref2v")
+            fallback = (spec.prompt + ". " + " ".join(
+                f"{_ref_tok(video_gen, i + 1)} shows: "
+                f"{_desc_of(entry, p_) or 'a planned reference image'} — "
+                f"keep it consistent." for i, p_ in enumerate(refs))
+                + "".join(
+                    f" {_ref_tok(video_gen, len(refs) + j + 1)} is the "
+                    f"official portrait of {n} — match the character's "
+                    f"appearance to it; never copy its pose or framing."
+                    for j, n in enumerate(p_names)))
+            return Path(video_gen.generate(
+                prompt=brain_prompt or fallback, duration=spec.duration,
+                out_path=out, fps=fps, reference_images=all_refs,
+                seed=seed)), cond
+        strategy = "t2v"
+        cond = {"strategy": "t2v", "degraded_from": "ref2v"}
+
+    if strategy == "i2v_first":
+        # 百炼可灵硬钉首帧 + 参考同请求(M0 实测可混用):续接镜首选。
+        # 首帧 = 上镜末帧(硬钉 → 接缝重复帧无条件切)或本镜关键帧。
+        first: Optional[Path] = None
+        hard_prev = False
+        if prev is not None and prev.video_path:
+            first = _last_frame(
+                Path(prev.video_path),
+                cache_dir / f"shot{spec.shot_idx:03d}_prev_last.png")
+            hard_prev = first is not None
+        if first is None and kf is not None:
+            first = kf
+        if first is not None:
+            p_names = sorted(portraits or {})
+            p_paths = [Path(portraits[n]) for n in p_names]
+            all_refs = list(refs) + p_paths
+            cond.update(first_anchor=str(first),
+                        reference_images=([str(p) for p in all_refs]
+                                          or None),
+                        anchoring="hard_first_frame")
+            fallback = (spec.prompt + " — the opening frame is already "
+                        "exact; describe MOTION only and keep the scene."
+                        + "".join(
+                            f" {_ref_tok(video_gen, len(refs) + j + 1)} is "
+                            f"the official portrait of {n} — identity "
+                            f"only, never copy its pose or framing."
+                            for j, n in enumerate(p_names)))
+            outp = Path(video_gen.generate(
+                prompt=brain_prompt or fallback, duration=spec.duration,
+                out_path=out, fps=fps, first_frame=first,
+                reference_images=(all_refs or None), seed=seed))
+            if hard_prev:      # 首帧=上镜末帧,通道级保证重复 → 直接切
+                return _drop_first_frame(outp, cond), cond
+            return outp, cond
+        strategy = "t2v"
+        cond = {"strategy": "t2v", "degraded_from": "i2v_first"}
 
     if strategy == "t2v_own_refs":
         # Image Plan reference 角色图 → seedance t2v @refs(无需上镜)。
@@ -2096,7 +2232,8 @@ def _conditions_for_prompt(strategy: str, entry, prev,
                            junction: str = "",
                            source_videos: Optional[list] = None,
                            cast: Optional[dict] = None,
-                           setting: str = "") -> list[dict]:
+                           setting: str = "",
+                           portraits=None, video_gen=None) -> list[dict]:
     """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
     按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
     事实,不能发明条件。
@@ -2107,7 +2244,8 @@ def _conditions_for_prompt(strategy: str, entry, prev,
     状态条件(kind=state)照旧。"""
     conds: list[dict] = []
     for r in _slot_manifest(strategy, entry, prev, use_prev_tail,
-                            source_videos=source_videos):
+                            source_videos=source_videos,
+                            portraits=portraits, video_gen=video_gen):
         conds.append({"kind": ("video" if "video" in r["slot"].lower()
                                else "image"),
                       "slot": r["slot"],
@@ -2511,7 +2649,8 @@ def generate_movie_windowed(
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
                                       source_videos=source_videos,
-                                      portraits=shot_portraits)
+                                      portraits=shot_portraits,
+                                      video_gen=video_gen)
             for m in menu}
         d = _decide(
             llm, "generation-condition", menu,
@@ -2550,7 +2689,8 @@ def generate_movie_windowed(
         use_tail = bool(d.get("use_prev_tail_video", False))
         slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
                                source_videos=source_videos,
-                               portraits=shot_portraits)
+                               portraits=shot_portraits,
+                               video_gen=video_gen)
         # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
         # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
         if prompt_enhancer is not None:
@@ -2561,7 +2701,9 @@ def generate_movie_windowed(
                                                   junction=junction_actual,
                                                   source_videos=source_videos,
                                                   cast=shot_cast,
-                                                  setting=storyboard.setting),
+                                                  setting=storyboard.setting,
+                                                  portraits=shot_portraits,
+                                                  video_gen=video_gen),
                 base_prompt=brain_prompt or spec.prompt,
                 label=entry.label)
             if enhanced:
