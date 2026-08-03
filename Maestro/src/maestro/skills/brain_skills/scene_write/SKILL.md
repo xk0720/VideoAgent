@@ -18,7 +18,7 @@ strategy, review, repair) hangs off these entries.
    Bad: "then it falls" (whose? where?);
    Good: "Shot 2: the glass tips over the table edge and falls (kitchen,
    close-up)".
-   COMPLETE-ACTION LAW (2026-07-16): every shot contains COMPLETE action
+   COMPLETE-ACTION LAW: every shot contains COMPLETE action
    units — never cut a one-off action halfway. A jump LANDS inside the
    shot that started it; a fall IMPACTS inside its shot. Handing motion
    across a cut is only allowed with SUSTAINABLE motion (walking,
@@ -41,7 +41,7 @@ strategy, review, repair) hangs off these entries.
    ceiling. Fewer, longer shots beat fragments — each shot runs 4-10 seconds
    (the fixed planning range; the executor maps it onto each generation
    model's own duration domain).
-   DURATION-DENSITY LAW (field lesson 2026-07-18): the described action
+   DURATION-DENSITY LAW: the described action
    must FILL the declared seconds. A shot whose whole content is a thin
    transitional beat ("continues trotting one more body length toward
    the bowl") cannot fill even 3 seconds — the model has nothing left to
@@ -50,6 +50,11 @@ strategy, review, repair) hangs off these entries.
    bowl, stops and starts eating" is ONE shot). If a beat deserves its
    own shot, it contains a complete action arc; if it only bridges two
    arcs, it belongs inside one of them.
+   Event budget per duration: 4-5s fits ONE complete action; 6-8s fits
+   one core action plus at most one secondary beat; 9-10s fits two to
+   three CHAINED actions. Match the budget honestly in both directions —
+   an overstuffed short shot drops actions, an underfilled long shot
+   loops.
 4. Time order IS generation order: the window loop walks the list strictly in
    order, and cross-shot continuity (previous shot's last frame / tail as the
    anchor) only holds between ADJACENT shots — put actions that must flow
@@ -57,7 +62,7 @@ strategy, review, repair) hangs off these entries.
 5. Entity consistency: use the SAME name for the same character/object across
    all shot descriptions (detection, tracking and asset retrieval all align
    by name).
-   CAST MARKER LAW (ViMax-derived, 2026-07-17): every time a CAST character
+   CAST MARKER LAW: every time a CAST character
    appears in a shot description, wrap its name in angle brackets — `<the
    boy>`, `<the orange-and-white cat>` — with the name COPIED EXACTLY from
    the cast keys. The markers are MACHINE-PARSED: the executor derives
@@ -83,14 +88,14 @@ strategy, review, repair) hangs off these entries.
    markings, clothing: "the orange-and-white cat (from the user's photo)").
    NEVER paste the whole catalog caption: its pose/scene words describe
    the PHOTO, not this shot ("sleeping on a windowsill" inside a shot
-   where the cat trots on the floor is a contradiction — field bug
-   2026-07-16). One natural mention per shot is enough. Do NOT write
+   where the cat trots on the floor is a contradiction). One natural
+   mention per shot is enough. Do NOT write
    @Image/@Video references here — numbering happens downstream (the slot
    manifest). A user-named asset that no shot description mentions is a
    script BUG. (The executor's deterministic warning only fires when the
    WHOLE catalog goes unmentioned — the law applies PER asset; do not rely
    on the warning.)
-8. FRAME GEOGRAPHY (ViMax-derived): state WHERE in the frame subjects are
+8. FRAME GEOGRAPHY: state WHERE in the frame subjects are
    and WHICH WAY they face whenever it matters for the cut or the action —
    "on the left side of the frame, facing right", "back to camera, walking
    away". When a shot is a close-up, name the exact body part / region in
@@ -99,19 +104,27 @@ strategy, review, repair) hangs off these entries.
    that shot — an off-screen voice or an implied presence confuses both
    the generator and the reviewer; if it isn't in frame, it isn't in the
    description.
-9. CAMERA-POSITION REUSE (ViMax-derived): within one scene, prefer
+9. CAMERA-POSITION REUSE: within one scene, prefer
    RETURNING to an already-established camera setup over inventing a new
    angle for every shot — reuse stabilizes background, lighting and
    spatial layout across cuts for free. Say it explicitly: "same
    framing/angle as shot 1". Change the angle only when the story needs
    it (a reveal, a new subject, an axis change).
-10. LANGUAGE LAW (field bug 2026-07-31): cast descriptors, setting, shot
+10. LANGUAGE LAW: cast descriptors, setting, shot
    descriptions, end_state, variation and opening_frame MUST be written in
    ENGLISH no matter what language the user's task is in — these fields
-   feed image/video models directly, and a Chinese descriptor reached the
-   portrait generator verbatim and produced a wrong character in a wrong
-   scene. Entity NAMES (cast keys, used inside <angle markers>) and
-   `dialogue` lines (spoken on screen) may stay in the user's language.
+   feed image/video models directly, and a non-English descriptor reaching
+   an image model produces a wrong character in a wrong scene. Entity
+   NAMES (cast keys, used inside <angle markers>) and `dialogue` lines
+   (spoken on screen) may stay in the user's language.
+11. OBSERVABLE ACTION, NOT ABSTRACT EMOTION: the model renders pixels,
+   not feelings. Convert every mood or intention into things a camera
+   can record — facial expression, gaze direction, posture and gesture,
+   interaction with objects, environmental feedback ("wind lifts her
+   hair"). Bad: "she feels free and hopeful"; good: "she lifts her face
+   to the sky and slowly opens her arms, a faint smile forming". Ban
+   vague evaluative words as action carriers ("showcases elegance",
+   "full of power").
 
 ## Output format (STRICT JSON — output this and nothing else)
 
@@ -149,7 +162,15 @@ strategy, review, repair) hangs off these entries.
   Write them concrete and visual — colors, marks, materials — not moods.
   For user-provided assets, derive the descriptor from the asset's catalog
   identity words.
-  STATIC/DYNAMIC SPLIT (ViMax-derived): the `static:` half is the identity
+  CAST CANON LAW: when the task JSON carries a non-empty `cast_canon`,
+  those names and descriptors are the film-wide identity canon, already
+  settled by the character-extraction stage (portraits are generated from
+  them). Adopt every canon entry VERBATIM in your `cast` output — same
+  key, same descriptor, word for word. You may only ADD characters the
+  canon missed; never rename, rewrite, restyle or "improve" a canon
+  entry (the executor overrides same-name entries with the canon anyway
+  — a divergent rewrite is wasted and misleading).
+  STATIC/DYNAMIC SPLIT: the `static:` half is the identity
   contract — it must stay word-for-word true in EVERY shot; the `dynamic:`
   half names what is ALLOWED to change (expression, pose, held items), so
   downstream prompts vary only those. DISTINCTNESS: when two cast members
@@ -192,7 +213,7 @@ strategy, review, repair) hangs off these entries.
      suspended one-off action ("mid-air", "mid-fall", "mid-impact").
      Complete the jump/fall inside its own shot first (COMPLETE-ACTION
      LAW above).
-  5. CAMERA HANDOFF LAW (2026-07-30): the camera is a moving subject
+  5. CAMERA HANDOFF LAW: the camera is a moving subject
      too. Every end_state ALSO states the camera's own state at the cut
      ("camera: static" / "camera: slowly pushing in" / "camera: tracking
      right at walking pace"). The next shot's opening must CONTINUE that
@@ -201,7 +222,7 @@ strategy, review, repair) hangs off these entries.
      on a pull-back is the #1 source of jump-cut feel. A junction reader
      watches the previous shot's final seconds and reports the actual
      camera motion; the reviewer checks the handoff.
-- `variation` (ViMax-derived) = how much the LAST frame differs from the
+- `variation` = how much the LAST frame differs from the
   FIRST frame of this shot: `small` (same composition, minor motion — a
   glass rocking), `medium` (subject moved / pose changed inside the same
   framing), `large` (composition or location visibly different — subject
@@ -214,14 +235,14 @@ strategy, review, repair) hangs off these entries.
   it becomes the base for a generated opening still. CONTINUING shots must
   OMIT it (their opening IS the previous end_state; restating it invites
   contradictions).
-- `dialogue` (audio line, 2026-07-29) — ONE spoken line of AT MOST 6
+- `dialogue` (audio line) — ONE spoken line of AT MOST 6
   words, ONLY when a cast character visibly speaks on screen at medium
   close-up or closer (lip-sync needs face resolution; a wide shot gets
   imprecise lips). Omit the field for shots with no on-screen speech —
   never narrate through it. The executor turns it into the lip-sync
   clause and enables native audio for that shot; do NOT write the line
   into the description itself.
-- `music_plan` (film-level, 2026-07-29) — one music description PER
+- `music_plan` (film-level) — one music description PER
   SCENE ("scene 1": "warm playful orchestral, light pizzicato, 95bpm").
   All shots in a scene share ONE generated track (one track cannot
   disagree with itself — that is how cross-segment music consistency is

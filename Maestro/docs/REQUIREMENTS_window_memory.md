@@ -904,3 +904,19 @@ M0 实测)、_generate_with_condition 新分支(ref2v 全参考;i2v_first 硬钉
 portraits/video_gen;tests/unit/test_kling_strategies.py 5 条全绿,全套
 536+5 绿。子代理在写 BailianKlingClient 三件套(backends/configs/tests)。
 待做:M1 收尾 commit;M2 管线重构;M3 技能重写(计划见上节)。
+
+### M2/M3 已完成(2026-08-03)
+M2(commit 8014784):新链 §A0 剧本(用户提供可跳过)→ §A1 角色提取
+(ViMax 规则,正典同名覆盖分镜输出)→ §A2 场景锚帧(逐场景 establishing
+图,可灵后端逐镜注入 reference 行);enable_review 总开关(关 = 首选
+即收,结局如实记 review_disabled,episode 蒸馏停用);修复菜单新增
+add_transition(终结动作:上镜尾帧+本镜首帧 → flf2v 3s 桥,brain 只写
+运动 prompt);台账新增 scene_anchors / transition_path 持久化;
+--screenplay / --no-review 旗子。
+M3:技能体系重写 —— 中央技能 video_prompt_writing(523 行,英文,用户
+写作要领英译 + ViMax 法则:三运动分离/三段式/密度表/外观代称/正面优先/
+图生视频只写运动/绑定契约方言化);window_generation 双池结构(Kling 池
+ref2v/i2v_first 写作指导 + <<<image_N>>> 示例);prompt_enhancer 重写为
+两职能(连续性润色 + 引用校正,主旨不变铁律);全部 SKILL 清除日期/
+出处注记(用户裁决:时间版本是误导),规则改直接陈述,出处留在本台账。
+全套 559 测试通过。

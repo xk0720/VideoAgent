@@ -23,7 +23,7 @@ appearance". Consumers:
    labels — the script brain sees what the user provided.
 4. @VideoN source-video references: user videos ride natively on the t2v
    strategies (≤3, 15-second head clips, seedance-2.0 limits).
-(retrieve_replace was RETIRED from the repair menu 2026-07-17; only a
+(retrieve_replace is RETIRED from the repair menu; only a
 legacy execute handler remains.)
 
 ## Retrieval rules
@@ -33,15 +33,15 @@ legacy execute handler remains.)
   full descriptions maximize token overlap).
 - Every retrieval returns (path, ACTUAL semantic label), and the actual
   label — user description > VLM caption > filename — is what travels
-  into downstream prompts, never the search query (ruling 1.2: describe
+  into downstream prompts, never the search query (describe
   what was actually retrieved, not what was searched for).
 - Image assets are scored across the WHOLE catalog by keyword overlap between
   the query and each asset's label; the label priority chain is
   user-provided description > VLM caption (backfilled by
   ensure_asset_descriptions when a real VLM is available) > filename
   (honest degradation — retrieval quality is limited and logged).
-- VIDEO assets are labeled by NATIVE VIDEO UNDERSTANDING (2026-07-17):
-  Gemini watches the WHOLE clip and writes identity words + setting + the
+- VIDEO assets are labeled by NATIVE VIDEO UNDERSTANDING:
+  the VLM watches the WHOLE clip and writes identity words + setting + the
   main motion/camera — because a shot may directly continue the user's
   footage, the label must describe the clip's content and movement, not
   one frame. Degradation chain: native video caption > middle-frame

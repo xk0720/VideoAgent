@@ -38,49 +38,90 @@ condition strategy from the gated `menu` and write the video prompt for it.
                        shot should end as; `required_end_state` = the state
                        THIS shot must end in. See the junction rules below.
 
-## Condition strategies
+## Condition strategies — two pools
+
+The backend decides which pool your `menu` comes from. You never mix
+pools: pick only names present in THIS turn's menu.
+
+### Kling pool (when the menu shows `ref2v` / `i2v_first`)
+
+- `ref2v`           Reference-to-video: EVERY planned reference image and
+                    official portrait rides the reference channel as a
+                    `<<<image_N>>>` slot. Nothing is pixel-locked — the
+                    prompt composes the frame; the references steer
+                    identity and look. THE route for scene cuts with
+                    characters or user assets.
+- `i2v_first`       HARD first-frame pin at the API level (not prompt
+                    wording): the previous shot's final frame — or this
+                    shot's own keyframe on a scene cut — opens the shot
+                    EXACTLY, and portraits/reference images ride along IN
+                    THE SAME CALL. THE route for in-scene continuation:
+                    pixel continuity AND identity anchoring at once.
+- `flf2v_own_pair`  This shot's OWN first+last image pair: opens on image
+                    1, closes on image 2, pixel-exactly. `video_prompt`
+                    describes the MOTION between the two frames.
+- `flf2v_bridge`    Previous shot's last frame → this shot's keyframe as
+                    the CLOSING anchor: continuity AND the shot ARRIVES
+                    at your image. Pick only when arriving at the image
+                    is the intent (it locks the ending).
+- `t2v`             Text only — last resort when nothing else is in the
+                    menu.
+
+How to write for the Kling pool:
+
+- `ref2v` prompts carry the full scene in text (no pixel anchor): subject
+  with visual descriptors + setting + a three-beat action + one camera
+  move. Bind EVERY manifest slot in prose — one clause per slot, slot ID
+  copied verbatim plus what it shows and what it does in THIS shot:
+  "<<<image_1>>>, the user's orange tabby cat, jumps onto the sill".
+  A portrait slot binds IDENTITY ONLY — never import the portrait's
+  pose, framing or background into the shot.
+- `i2v_first` prompts are MOTION ONLY. The opening frame is hard-pinned
+  by the API, so there is nothing to pin in words and NOTHING to
+  re-describe: zero appearance restatement, zero scene re-establishment,
+  zero opening-layout description — re-narrated statics dilute the one
+  thing the model needs (the motion) and compete with the pin. Write:
+  what moves (with direction, speed, amplitude) + how the camera moves
+  (continuing the junction's camera state) + what must not change (one
+  short preserve clause). Reference slots still exist on this route —
+  give each ONE short identity clause ("<<<image_1>>> fixes the cat's
+  appearance"), nothing more.
+
+### Legacy pool (seedance backend)
 
 Own-image strategies (consume THIS shot's planned images, role-matched):
-- `i2v_keyframe`      This shot's first_frame image opens the shot (i2v).
-                      For scene cuts / shots that must start on your image.
-- `flf2v_own_pair`    This shot's own first+last pair drives a first/last-frame
-                      model — the shot opens on image 1 and closes on image 2,
-                      pixel-exactly. `video_prompt` must describe the MOTION
-                      between the two frames.
-- `t2v_own_refs`      This shot's reference image(s) ride the seedance t2v
-                      reference channel (no previous shot needed). Soft
-                      conditioning: nothing is pixel-locked.
+- `i2v_keyframe`    This shot's first_frame image opens the shot (i2v).
+                    For scene cuts / shots that must start on your image.
+- `flf2v_own_pair`  Same semantics as in the Kling pool.
+- `t2v_own_refs`    This shot's reference image(s) ride the t2v reference
+                    channel as `@ImageN` (no previous shot needed); user
+                    source videos ride as `@VideoN`. Soft conditioning —
+                    nothing is pixel-locked.
 
 Previous-shot-anchored strategies (window continuity):
-- `ti2v_prev_last`    Previous shot's LAST frame opens this shot — the
-                      strongest SINGLE-FRAME anchor (pixel-locked opening).
-                      Use when the scene continues and this shot has no own
-                      image. (extend_prev is the strongest OVERALL
-                      continuity: it continues the pixels, not just frame 1.)
-- `flf2v_bridge`      Previous shot's last frame → this shot's image REPURPOSED
-                      as the CLOSING anchor: continuity AND the shot ARRIVES at
-                      your image. Pick only when arriving at the image is the
-                      intent (it locks the ending).
-- `extend_prev`       TRUE continuation (video-extend): generation continues
-                      FROM the previous shot's final frame — identity, scene
-                      and light carry over natively. The STRONGEST continuity
-                      route; prefer it whenever the scene flows on. The
-                      `video_prompt` describes ONLY what happens NEXT plus a
-                      maintenance clause (subject identity / setting / light);
-                      never re-describe what already happened. A planned
-                      'last'-role image becomes the target final frame.
-                      (Replaces the retired tiv2v_window: the t2v
-                      reference-video channel only REFERENCES motion — it
-                      does not continue the pixels; field-proven 2026-07-16.)
-- `ti2v_prev_plus_keyframe`  t2v reference channel with the previous shot's
-                      last frame as @Image1 (the moment to continue from) +
-                      this shot's image(s) as @Image2(…) (target look). SOFT
-                      anchoring — for pixel-exact continuity prefer
-                      ti2v_prev_last or flf2v_bridge.
+- `ti2v_prev_last`  Previous shot's LAST frame opens this shot — the
+                    strongest single-frame anchor on this pool.
+- `flf2v_bridge`    Same semantics as in the Kling pool.
+- `extend_prev`     TRUE continuation (video-extend): generation continues
+                    from the previous shot's final frame; identity, scene
+                    and light carry over natively — but it CANNOT carry
+                    any reference image (see REFERENCE-FIRST, rule 4).
+                    `video_prompt` = only what happens NEXT + one
+                    maintenance clause; never re-describe what already
+                    happened.
+- `ti2v_prev_plus_keyframe`  t2v reference channel with the previous
+                    shot's last frame as @Image1 (the moment to continue
+                    from) + this shot's image(s) as @Image2(…) (target
+                    look). The prompt must OPEN with the explicit pin
+                    "The shot opens EXACTLY on @Image1 — the final moment
+                    of the previous shot" — a vague "consistent with
+                    @Image1" loses the pin. Soft anchoring; for
+                    pixel-exact continuity prefer ti2v_prev_last or
+                    flf2v_bridge.
 
 Fallback:
-- `t2v`               Text only — no visual anchor. For a hard scene cut with
-                      no planned image, or when nothing else applies.
+- `t2v`             Text only — no visual anchor. For a hard scene cut
+                    with no planned image, or when nothing else applies.
 
 ## Output format (STRICT JSON — output this and nothing else)
 
@@ -94,61 +135,86 @@ You output SEMANTIC fields only. Mechanical payload fields (aspect_ratio,
 duration, keep_original_sound, image upload URLs) are filled deterministically
 by the executor — do NOT output them.
 
-## Character portraits (2026-07-31 identity anchors)
+## Character portraits (identity anchors)
 
 Cast members may have OFFICIAL PORTRAITS (generated at film start, or the
 user's own photo, or reused from the cross-film library). On
-reference-channel strategies (t2v_own_refs / ti2v_prev_plus_keyframe)
-they are auto-attached as extra @ImageN slots labeled "official portrait
-of <name>" — mention each one for its purpose ("@Image3 fixes the cat's
-appearance") like any other slot. They are the character's visual
-identity contract; the reviewer judges appearance against them.
+reference-carrying strategies (`ref2v` / `i2v_first` in the Kling pool;
+`t2v_own_refs` / `ti2v_prev_plus_keyframe` in the legacy pool) they are
+auto-attached as extra slots whose manifest content reads "official
+portrait of <name>" — mention each one for its purpose like any other
+slot. A portrait binds IDENTITY ONLY (face, build, wardrobe): never copy
+its pose, framing or background — the shot's composition comes from your
+prompt. Portraits are the character's visual identity contract; the
+reviewer judges appearance against them.
 
 ## Reference syntax per model family (get this right or the images are ignored)
 
-- seedance routes (`t2v_own_refs`, `ti2v_prev_plus_keyframe`): mention images
-  as `@Image1`, `@Image2`, and user source videos as `@Video1`(…) — images
-  and videos number separately.
-- FIRST-FRAME LAW on `ti2v_prev_plus_keyframe` (2026-07-17, field-verified:
-  t2v's @Image1 CAN pin the opening frame when the prompt demands it): the
-  prompt MUST open with "The shot opens EXACTLY on @Image1 — the final
-  moment of the previous shot" (or equivalent unambiguous wording). A vague
-  "consistent with @Image1" loses the pin. Reference ACCURACY is the whole
-  game on this route: @Image1 = previous last frame (continuity), @Image2…
-  = generated/planned images (target look), @VideoN = the user's source
-  video(s) (identity) — each mentioned with its actual content, none
-  swapped, none skipped.
+- Kling dialect (`ref2v`, `i2v_first`): reference images are
+  `<<<image_1>>>`, `<<<image_2>>>`, … — numbering follows the manifest's
+  reference order and NEVER includes the pinned first frame: on
+  `i2v_first`, `<<<image_1>>>` is the FIRST REFERENCE IMAGE, not the
+  opening frame (the opening frame is not referenceable at all — it is
+  pinned by the API, not by prose).
+- seedance dialect (`t2v_own_refs`, `ti2v_prev_plus_keyframe`): images
+  are `@Image1`, `@Image2`, … and user source videos `@Video1`(…) —
+  images and videos number separately.
 - `extend_prev`: NO reference syntax (the model natively continues from
   the previous final frame). Write only what happens NEXT + an explicit
   maintenance clause ("keep the same orange-and-white cat, the same living
   room and warm sunlight"). Never re-describe what already happened.
+- First/last-frame routes (`flf2v_own_pair`, `flf2v_bridge`,
+  `i2v_keyframe`, `ti2v_prev_last`): the pinned frames have no reference
+  tokens — describe the motion from the opening frame (to the closing
+  frame, when one exists).
 - NUMBERING IS GIVEN, NEVER GUESSED (the slot manifest): the context field
   `slots_by_strategy` lists, for EVERY strategy in the menu, the exact
   reference IDs the executor will assemble and what each one contains,
-  e.g. [{"slot": "@Image1", "content": "the previous shot's final frame"},
-  {"slot": "@Image2", "content": "the user's orange tabby cat"}]. After
-  picking a strategy, write `video_prompt` using ONLY that strategy's slot
-  IDs, copied verbatim. A deterministic gate validates your prompt: any
-  reference outside the manifest gets the whole prompt REJECTED (a
-  template replaces it), and unmentioned slots are auto-appended. Slots
-  marked FIRST_FRAME/LAST_FRAME are NOT referenceable — those routes have
-  no reference channel; describe the motion instead.
-- First/last-frame routes (`flf2v_own_pair`, `flf2v_bridge`): no reference
-  syntax — describe the motion from the opening frame to the closing frame.
-- REFERENCES MUST CARRY CONTENT: the context gives every planned image's
-  actual content in its `description` (what the picture really shows — the
-  user's asset label or the generation prompt). Every `@ImageN` /
-  "reference image N" mention must state what that image depicts and what
-  it does in THIS shot, e.g. "@Image2, the user's orange tabby cat, jumps
-  onto the windowsill". A bare "@Image2" steers nothing — never write one.
+  e.g. [{"slot": "<<<image_1>>>", "content": "user asset: the user's
+  orange tabby cat"}]. After picking a strategy, write `video_prompt`
+  using ONLY that strategy's slot IDs, copied verbatim — the dialect is
+  already correct in the manifest; never translate between dialects.
+  A deterministic gate validates your prompt: any reference outside the
+  manifest gets the whole prompt REJECTED (a template replaces it), and
+  unmentioned slots are auto-appended. Slots marked FIRST_FRAME/
+  LAST_FRAME are NOT referenceable — those anchors have no reference
+  channel; describe the motion instead.
+- REFERENCES MUST CARRY CONTENT: every slot mention must state what that
+  image depicts and what it does in THIS shot, e.g. "@Image2, the user's
+  orange tabby cat, jumps onto the windowsill". A bare "@Image2" or
+  "<<<image_2>>>" steers nothing — never write one. Slots whose content
+  starts with "user asset:" are the user's own materials — binding the
+  script's asset mention to that exact slot is mandatory.
+
+## Prompt craft (the central writing laws, condensed)
+
+- THREE MOTION CHANNELS, always in separate sentences: subject motion /
+  environmental motion / camera motion. Environmental motion stays weaker
+  than subject motion; an intentionally still channel is said explicitly
+  ("the camera is static").
+- THREE-BEAT TIMELINE: at first (initial state) → then (core action) →
+  finally (explicit end state). Every clip needs a stated end state, or
+  the model improvises one.
+- EVENT DENSITY fits the duration: 4-5s = one action; 6-8s = one core
+  action + at most one secondary; 9-10s = two-three chained beats.
+- VISUAL DESCRIPTORS, NEVER CHARACTER NAMES: the model does not know who
+  "Alice" is — refer to every subject by its distinguishing look ("the
+  short-haired woman in a green dress"), the same phrase verbatim every
+  time, mutually exclusive between subjects.
+- POSITIVE FIRST: state the desired stable behavior, then targeted
+  negatives only for risks actually present in this shot — never a
+  generic negative wall.
+- ONE primary camera movement per shot, with direction and speed.
+- Hard-pinned openings (i2v-style routes) are MOTION ONLY — the frame
+  already carries appearance, composition and style.
 
 ## Decision rules
 1. `episode_recommendation` (when present) is ADVICE, not an order
-   (2026-07-31 ruling — episode memory is guidance-only, never inherited
-   directly): a strategy verified on a similar PAST task is a strong
-   prior, but THIS run's conditions win — check the ledger (was an image
-   actually produced this time? does the junction match?) before
-   following it, and say in `reason` whether you followed or overrode it.
+   (episode memory is guidance-only, never inherited directly): a
+   strategy verified on a similar PAST task is a strong prior, but THIS
+   run's conditions win — check the ledger (was an image actually
+   produced this time? does the junction match?) before following it,
+   and say in `reason` whether you followed or overrode it.
 2. Read each `avoid` entry's `reason` and judge WHOSE fault the failure was
    (soft constraint — a past failure does not doom this run):
    - Skip the strategy only when the reason implicates the CONDITIONING
@@ -171,58 +237,64 @@ identity contract; the reviewer judges appearance against them.
    strategy that leaves it out breaks the user's explicit requirement.
    In `video_prompt`, bind the description's asset mention to that slot's
    ID ("@Image2, the user's orange tabby cat, jumps onto the sill").
-4. REFERENCE-FIRST LAW (2026-08-02 user ruling — overrides the old
-   "extend first" habit): whenever this shot HAS reference images —
+4. REFERENCE-FIRST LAW: whenever this shot HAS reference images —
    official character portraits (auto-attached), planned reference
-   images, or user asset images — you MUST pick a reference-channel
-   route that carries them: `ti2v_prev_plus_keyframe` when the scene
-   continues from the previous shot (its @Image1 pins the junction AND
-   the references steer identity/scene), `t2v_own_refs` on a scene cut.
-   extend_prev cannot see any reference image — identity drifts with
-   nothing to anchor it (field runs: extend chains re-imagined the cast).
-   Reserve extend_prev for shots with NO reference images at all whose
-   scene continues seamlessly. Continuity still matters: when the scene
-   continues and no references exist, prefer extend_prev / ti2v_prev_last
-   / flf2v_bridge; on a scene cut prefer i2v_keyframe / flf2v_own_pair /
-   t2v and deliberately skip the previous-shot anchors.
-   VARIATION HINT (ViMax-derived, 2026-07-17): the shot's ledger line may
-   carry `variation` — the scripted first-to-last-frame change magnitude.
-   `small` (composition barely changes) favors continuation-style routes
-   (extend_prev / ti2v_prev_last / i2v_keyframe): a single opening anchor
-   fully determines such a shot. `large` (subject crosses frame, camera
+   images, or user asset images — you MUST pick a route that CARRIES
+   them.
+   - Kling pool: `i2v_first` when the scene continues from the previous
+     shot (the hard pin holds the junction AND the references steer
+     identity in the same call); `ref2v` on a scene cut.
+   - Legacy pool: `ti2v_prev_plus_keyframe` when the scene continues
+     (its @Image1 pins the junction AND the references steer
+     identity/scene); `t2v_own_refs` on a scene cut. `extend_prev`
+     cannot see any reference image — identity drifts with nothing to
+     anchor it (extend chains re-imagine the cast) — reserve it for
+     shots with NO reference images at all whose scene continues
+     seamlessly.
+   Continuity still matters when no references exist: prefer the
+   previous-shot anchors (i2v_first / extend_prev / ti2v_prev_last /
+   flf2v_bridge) while the scene flows on; on a scene cut prefer the
+   own-image routes (ref2v / i2v_keyframe / flf2v_own_pair / t2v) and
+   deliberately skip the previous-shot anchors.
+   VARIATION HINT: the shot's ledger line may carry `variation` — the
+   scripted first-to-last-frame change magnitude. `small` (composition
+   barely changes) favors single-opening-anchor routes (i2v_first /
+   extend_prev / ti2v_prev_last / i2v_keyframe): one anchor fully
+   determines such a shot. `large` (subject crosses frame, camera
    travels, layout shifts) favors routes with a TARGET or freedom
-   (flf2v_own_pair / flf2v_bridge / t2v_own_refs / t2v): a lone opening
-   anchor tends to under-deliver big change. `medium`/empty = neutral.
-   It is a HINT to weigh, not a gate — continuity rules above still win.
+   (flf2v_own_pair / flf2v_bridge / ref2v / t2v_own_refs / t2v): a lone
+   opening anchor tends to under-deliver big change. `medium`/empty =
+   neutral. It is a HINT to weigh, not a gate — the rules above still
+   win.
 5. Only pick names present in the menu; output strict JSON, nothing else.
-   DIALOGUE shots (ledger field `dialogue`, 2026-07-29): do NOT write the
-   spoken line or any audio direction into `video_prompt` — the executor
+   DIALOGUE shots (ledger field `dialogue`): do NOT write the spoken
+   line or any audio direction into `video_prompt` — the executor
    appends the lip-sync clause deterministically. Prefer framings at
    medium close-up or closer for these shots (lip precision needs face
    resolution).
 6. `video_prompt` must match the chosen strategy's reference syntax (above) —
    wrong syntax means the images will NOT steer the result.
-   ANCHORED-ROUTE DIET (field lesson 2026-07-18): on strategies whose
-   opening is pixel-decided (i2v_keyframe, flf2v_own_pair, flf2v_bridge,
+   ANCHORED-ROUTE DIET: on strategies whose opening is pixel-decided
+   (i2v_first, i2v_keyframe, flf2v_own_pair, flf2v_bridge,
    ti2v_prev_last, ti2v_prev_plus_keyframe, extend_prev) keep the draft
    LEAN — pin (where the syntax has one) + one identity clause + one
    action sentence + one preserve clause; that shape naturally lands
    around 55-95 words, and crossing ~100 means forbidden content crept
-   in (cut that, never the action). Never restate the
-   setting as a scene-establishing sentence and never re-describe the
-   opening layout: the anchor already carries them, and a noisy prompt
-   makes t2v rebuild the scene from text instead of continuing from
-   @Image1 (this exact failure produced looping shots in the field).
-7. CAST CONSISTENCY LAW (2026-07-17; scoped 2026-07-18): the context
-   field `cast` holds the movie-wide appearance contract per character
-   ("static: …; dynamic: …") and `setting` the canonical scene
-   dressing+lighting. The labels "static:"/"dynamic:" and the dynamic
-   list are metadata and NEVER enter `video_prompt` — use the static
-   half as natural prose. On UNANCHORED routes (t2v/t2v_own_refs scene
-   cuts, re-entries after absence) the full static half is the only
-   identity carrier — weave it in completely, plus the setting words.
-   On ANCHORED routes one short identity clause suffices (the anchor
-   carries the look; see rule 6).
+   in (cut that, never the action). Never restate the setting as a
+   scene-establishing sentence and never re-describe the opening layout:
+   the anchor already carries them, and a noisy prompt makes the model
+   rebuild the scene from text instead of continuing from the anchor
+   (this exact failure produces looping shots).
+7. CAST CONSISTENCY LAW: the context field `cast` holds the movie-wide
+   appearance contract per character ("static: …; dynamic: …") and
+   `setting` the canonical scene dressing+lighting. The labels
+   "static:"/"dynamic:" and the dynamic list are metadata and NEVER
+   enter `video_prompt` — use the static half as natural prose. On
+   UNANCHORED routes (t2v / ref2v / t2v_own_refs scene cuts, re-entries
+   after absence) the full static half is the only identity carrier —
+   weave it in completely, plus the setting words. On ANCHORED routes
+   one short identity clause suffices (the anchor carries the look; see
+   rule 6).
 8. JUNCTION RULES (motion continuity across the cut — the #1 cause of
    broken movies):
    - When `junction.prev_last_frame_actual` exists, your `video_prompt`
@@ -237,19 +309,22 @@ identity contract; the reviewer judges appearance against them.
      instruction like "the apple is still rolling as the shot ends — it
      does not slow down or settle". Video models kill motion at clip end
      unless told not to; an unwanted settle breaks the NEXT shot's opening.
-   - CAMERA HANDOFF (2026-07-30): `prev_last_frame_actual` also reports
-     the CAMERA's own motion (the junction reader watches the final
-     seconds of video). Your `video_prompt`'s opening must CONTINUE that
-     camera state — same move, same direction, similar pace — or state
-     that the camera has settled. NEVER reverse the camera's direction
-     across the cut (push-in ending → pull-back opening reads as a jump
-     cut); the reviewer checks this handoff.
+   - CAMERA HANDOFF: `prev_last_frame_actual` also reports the CAMERA's
+     own motion (the junction reader watches the final seconds of
+     video). Your `video_prompt`'s opening must CONTINUE that camera
+     state — same move, same direction, similar pace — or state that the
+     camera has settled. NEVER reverse the camera's direction across the
+     cut (push-in ending → pull-back opening reads as a jump cut); the
+     reviewer checks this handoff.
 
 ### Example 1 — scene continues, both anchors exist
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}
 
-### Example 2 — two planned reference characters, kling route with the previous tail
-{"strategy": "ti2v_prev_plus_keyframe", "reason": "the scene continues and both leads' reference photos must steer identity", "video_prompt": "The shot opens EXACTLY on @Image1 — the final moment of the previous shot; do not alter its scene or layout. @Image2, the female lead in her green coat, and @Image3, the male lead in his grey sweater, sit together by the fireplace laughing softly; the camera slowly dollies in with shallow depth of field."}
+### Example 2 — Kling pool, scene cut with two referenced characters
+{"strategy": "ref2v", "reason": "scene 2 opens fresh and both leads' portraits must steer identity", "video_prompt": "Inside a warm fireside living room at night, <<<image_1>>>, the female lead in her dark green coat, and <<<image_2>>>, the male lead in his grey sweater, sit together by the fire. At first they talk quietly; then she laughs and leans on his shoulder; finally they settle, watching the flames. The camera slowly dollies in with shallow depth of field."}
 
-### Example 3 — new scene opens on this shot's own keyframe
+### Example 3 — Kling pool, in-scene continuation (hard pin + portrait)
+{"strategy": "i2v_first", "reason": "the scene flows on from the previous tail and the portrait must ride along", "video_prompt": "The cat trots across the wooden floor to the food bowl, slows, and lowers its head to eat, still chewing as the shot ends. A curtain sways gently. The camera continues its slow lateral track at walking pace. <<<image_1>>> fixes the cat's appearance. Preserve the established scene, lighting and camera."}
+
+### Example 4 — new scene opens on this shot's own keyframe
 {"strategy": "i2v_keyframe", "reason": "scene 2 opens a new location; anchoring on scene 1 would bleed the old scene in", "video_prompt": "Opening on the empty kitchen at dawn, the camera pans slowly right as sunlight creeps across the counter."}
