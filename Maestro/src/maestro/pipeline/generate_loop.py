@@ -759,6 +759,7 @@ def generate_shot_orchestrated(
     quality_bar: Optional[float] = None,
     repair_severity: float = 0.0,
     regen_fn=None,        # R-1:全修按原始条件方法重生成(窗口层闭包)
+    transition_fn=None,   # M2:转场闭包(上镜尾帧+本镜首帧→flf2v 3s)
 ) -> SelfImproveResult:
     """Agentic repair loop driven by the OrchestratorAgent (the brain).
 
@@ -910,7 +911,7 @@ def generate_shot_orchestrated(
                      spec.shot_idx, turn, review_brief["headline"])
         menu = orchestrator.available_actions(
             video_gen=generator.video_gen, asset_memory=asset_memory,
-            clip=best,
+            clip=best, transition_available=(transition_fn is not None),
         )
         decision = orchestrator.decide(
             best, spec, menu, brain_history, defect_report=defect_report,
@@ -918,6 +919,25 @@ def generate_shot_orchestrated(
         )
 
         invalid = decision.get("tool") in ("__invalid__",)
+        if decision.get("tool") == "add_transition" and transition_fn is not None:
+            # M2 转场(规则定死):生成 3s 过渡片挂到 best 上,然后收尾 ——
+            # 转场是"接不上"的终审判决,不是继续修的理由。失败 → 记录后
+            # 继续正常修复轮(工具哑火不终结循环)。
+            try:
+                orchestrator.execute(
+                    decision, best, spec, cache_dir, turn, board,
+                    asset_memory=asset_memory, fps=fps, regen_fn=regen_fn,
+                    transition_fn=transition_fn)
+                if getattr(best, "transition_path", None):
+                    log.info("shot %d turn%d ADD_TRANSITION accepted — "
+                             "3s bridge generated, stopping repairs",
+                             spec.shot_idx, turn)
+                    gen_calls += 1
+                    break
+            except Exception as exc:
+                log.warning("shot %d turn%d add_transition failed (%s) — "
+                            "continuing normal repair", spec.shot_idx,
+                            turn, exc)
         if decision.get("tool") == "accept":
             # NO PREMATURE ACCEPT: the brain may not stop while defects remain
             # and turns are left. We log the attempt, then take ONE deterministic
@@ -998,6 +1018,7 @@ def generate_shot_orchestrated(
             cand = orchestrator.execute(
                 decision, best, spec, cache_dir, turn, board,
                 asset_memory=asset_memory, fps=fps, regen_fn=regen_fn,
+                transition_fn=transition_fn,
             )
             gen_calls += 1
 

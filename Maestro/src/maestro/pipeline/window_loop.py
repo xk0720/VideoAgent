@@ -73,7 +73,8 @@ from .ref_slots import validate_references
 from ..memory.episode_memory import EpisodeMemory
 from ..memory.storyboard import StoryboardMemory
 from ..models.mllm_backends import _extract_json
-from ..pipeline.generate_loop import generate_shot_orchestrated
+from ..pipeline.generate_loop import (SelfImproveResult,
+                                       generate_shot_orchestrated)
 from ..pipeline.timeline import extract_frame
 from ..types import AssetMemory, CandidateClip, ShotSpec
 
@@ -532,6 +533,22 @@ def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
                           "action": "skip_missing",
                           "path": str(e.video_path)})
             continue
+        # M2:转场片(add_transition 产物)插在本镜之前;文件丢失响亮跳过
+        tp = Path(e.transition_path) if getattr(e, "transition_path", None) \
+            else None
+        if tp is not None:
+            if tp.exists():
+                log.info("assemble: %s ← transition %s", e.label, tp.name)
+                out.append(tp)
+                notes.append({"stage": "assemble", "label": e.label,
+                              "action": "transition_inserted",
+                              "path": str(tp)})
+            else:
+                log.warning("assemble: %s transition MISSING (%s) — "
+                            "skipped", e.label, e.transition_path)
+                notes.append({"stage": "assemble", "label": e.label,
+                              "action": "transition_missing",
+                              "path": str(e.transition_path)})
         log.info("assemble: %s → %s [%s]", e.label, p.name, strat or "?")
         out.append(p)
     return out, notes
@@ -942,9 +959,98 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
     return out
 
 
+def _extract_frame0(video: Path, out_path: Path) -> Optional[Path]:
+    """本镜第 0 帧(M2 转场闭包用)。ffmpeg 缺/失败 → None(不猜)。"""
+    if not shutil.which("ffmpeg"):
+        return None
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(video), "-vf", "select=eq(n\\,0)",
+             "-frames:v", "1", str(out_path)],
+            capture_output=True, timeout=60)
+    except Exception:
+        return None
+    if r.returncode != 0 or not out_path.exists() \
+            or out_path.stat().st_size == 0:
+        return None
+    return out_path
+
+
+def _write_screenplay(llm, user_prompt: str, screenplay,
+                      asset_catalog: list) -> tuple[str, str]:
+    """§A0 剧本(M2 新链):用户给剧本 → 原样采用;否则 LLM 按 screenplay
+    技能从 idea 写;LLM 不可用/输出不合格 → idea 原文直通(响亮记录,
+    下游按旧链行为运转)。"""
+    if screenplay and str(screenplay).strip():
+        brain_log("window/screenplay", {"via": "user", "usable": True,
+                                        "chars": len(str(screenplay))})
+        return str(screenplay).strip(), "user"
+    if llm is not None:
+        skill_text = _skill_body_named("screenplay")
+        prompt = (
+            skill_text + "\n\nTHIS TASK (JSON):\n"
+            + json.dumps({"idea": user_prompt,
+                          "asset_catalog": asset_catalog},
+                         ensure_ascii=False)
+            + '\n\nSTRICT JSON only: {"screenplay": "<the full screenplay '
+              'in ENGLISH: scene headings, characters in visible action, '
+              'at most one short spoken line per beat>"}')
+        raw = ""
+        try:
+            raw = llm.complete(prompt)
+            data = _extract_json(raw)
+        except Exception:
+            data = None
+        text = (str(data.get("screenplay", "")).strip()
+                if isinstance(data, dict) else "")
+        brain_log("window/screenplay", {
+            "raw": raw, "usable": bool(text), "skill": "screenplay",
+            "skill_chars": len(skill_text),
+            "context": {"idea": user_prompt}})
+        if text:
+            return text, "llm"
+    log.warning("screenplay: no LLM / unusable output — passing the raw "
+                "idea straight to storyboarding")
+    return str(user_prompt), "idea_passthrough"
+
+
+def _extract_characters(llm, screenplay: str) -> tuple[dict, str]:
+    """§A1 角色提取(M2,ViMax character_extractor 规则移植):剧本 →
+    {名字: "static: ...; dynamic: ..."} 正典。失败 → {}(分镜阶段的
+    cast 输出仍是兜底,不编造)。"""
+    if llm is None or not str(screenplay).strip():
+        return {}, "skipped"
+    skill_text = _skill_body_named("character_extract")
+    prompt = (
+        skill_text + "\n\nTHIS TASK (JSON):\n"
+        + json.dumps({"screenplay": screenplay}, ensure_ascii=False)
+        + '\n\nSTRICT JSON only: {"characters": {"<name>": "static: '
+          '<physique/face/hair — near-invariant traits, ENGLISH>; '
+          'dynamic: <attire/accessories/props that may vary>"}}')
+    raw = ""
+    try:
+        raw = llm.complete(prompt)
+        data = _extract_json(raw)
+    except Exception:
+        data = None
+    chars: dict = {}
+    if isinstance(data, dict) and isinstance(data.get("characters"), dict):
+        chars = {str(k): str(v) for k, v in data["characters"].items()
+                 if str(v).strip()}
+    brain_log("window/character_extract", {
+        "raw": raw, "usable": bool(chars), "skill": "character_extract",
+        "skill_chars": len(skill_text),
+        "parsed": ({"characters": chars} if chars else None)})
+    return chars, ("llm" if chars else "unusable")
+
+
 def _write_outline(llm, user_prompt: str, asset_catalog: list,
                    episode_guidance: dict, max_shots: int,
-                   fallback_fn) -> tuple[list[str], list, list[str], dict, str]:
+                   fallback_fn,
+                   cast_canon: Optional[dict] = None
+                   ) -> tuple[list[str], list, list[str], dict, str]:
     """§A 真·LLM playwriting → (outline, via)。三层纪律同 _decide:
 
     1) LLM + scene_write 技能全文 → 严格 JSON {"shots": [...]},逐条校验
@@ -963,6 +1069,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
             skill_text
             + "\n\nTHIS TASK (JSON):\n"
             + json.dumps({"user_prompt": user_prompt,
+                          "cast_canon": (cast_canon or {}),
                           "asset_catalog": asset_catalog,
                           "episode_guidance": {
                               "past_task_shapes":
@@ -1012,7 +1119,10 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               "the user's language (they feed image/video models directly; "
               "2026-07-31 field bug: Chinese descriptors produced broken "
               "portraits). Entity NAMES in cast keys and dialogue lines may "
-              "stay in the user's language."
+              "stay in the user's language. CAST CANON: when the task "
+              "JSON carries a non-empty cast_canon, adopt those names and "
+              "descriptors VERBATIM in your cast output — you may only ADD "
+              "characters it missed, never rename or rewrite them."
         )
         raw = ""
         try:
@@ -1072,6 +1182,8 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
             cast = ({str(k): str(v) for k, v in data.get("cast").items()
                      if str(v).strip()}
                     if isinstance(data.get("cast"), dict) else {})
+            # M2:提取阶段的角色正典优先(同名覆盖,分镜只许补缺)
+            cast = {**cast, **(cast_canon or {})}
             setting = str(data.get("setting", "") or "").strip()
             # LANGUAGE LAW 确定性检查(2026-07-31):描述符/setting 直喂
             # 图像模型,必须英文;名字(cast 键)不查 —— 名字可保留原语言。
@@ -1122,7 +1234,8 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
     # (不是 config 的 shot_duration,也不是我们编的数);end_state 同理为空。
     return fb, [None] * len(fb), [""] * len(fb), \
-        {"cast": {}, "setting": "", "variations": [""] * len(fb),
+        {"cast": dict(cast_canon or {}), "setting": "",
+         "variations": [""] * len(fb),
          "opening_frames": [""] * len(fb), "dialogues": [""] * len(fb),
          "music_plan": {}}, "fallback"
 
@@ -2454,6 +2567,8 @@ def generate_movie_windowed(
                                         # 荐 8.0 —— 帧 1→2 像素差超阈当场重掷)
     enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
     character_library=None,             # 跨片角色肖像库(2026-07-31)
+    screenplay: Optional[str] = None,   # M2:用户自带剧本(给了就跳过 §A0)
+    enable_review: bool = True,         # M2:评审/修复总开关(关 = 首选即收)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -2514,19 +2629,30 @@ def generate_movie_windowed(
                  guidance["n_episodes_matched"],
                  len(guidance["replay_hints"]), len(guidance["avoid"]))
 
-    # ── §A playwriting:prompt → outline → specs → 台账 ────────────────────
-    # 真·LLM 剧本(scene_write 技能驱动,分镜数按剧情定、描述带细节、绝不
-    # 重复凑数);LLM 不可用/输出不合格 → 确定性拆条兜底(mock 模式老路)。
+    # ── §A0 剧本 + §A1 角色提取(M2 新链):idea → 剧本(用户提供则跳过)
+    # → 角色正典 → 分镜。剧本/提取失败逐级诚实降级(idea 直通、空正典),
+    # 分镜阶段的 cast 输出仍是兜底。──────────────────────────────────────
     screenwriter = screenwriter or ScreenwriterAgent()
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
     asset_catalog0 = _media_catalog(asset_memory)
+    screenplay_text, sp_via = _write_screenplay(
+        llm, user_prompt, screenplay, asset_catalog0)
+    decisions.append({"stage": "screenplay", "via": sp_via,
+                      "chars": len(screenplay_text)})
+    cast_canon, ce_via = _extract_characters(llm, screenplay_text) \
+        if sp_via != "idea_passthrough" else ({}, "skipped")
+    decisions.append({"stage": "character_extract", "via": ce_via,
+                      "characters": sorted(cast_canon)})
+
+    # ── §A playwriting:剧本 → outline → specs → 台账 ────────────────────
     outline, shot_durations, shot_end_states, script_meta, outline_via = \
         _write_outline(
-        llm, user_prompt, asset_catalog0,
+        llm, screenplay_text, asset_catalog0,
         episode_guidance=guidance,
         max_shots=int(plan_cfg.get("max_shots", 6)),
         fallback_fn=lambda: screenwriter.run(user_prompt, asset_memory),
+        cast_canon=cast_canon,
     )
     decisions.append({"stage": "playwriting", "label": "outline",
                       "strategy": f"{len(outline)} shots", "via": outline_via,
@@ -2566,6 +2692,36 @@ def generate_movie_windowed(
     decisions.extend(_ensure_cast_portraits(
         storyboard, asset_memory, video_gen, cache_dir,
         library=character_library))
+    # §A2 场景锚帧(M2):每场景一张 establishing 图(无角色),入台账
+    # 持久化;可灵后端下逐镜注入 reference 行 → ref2v/i2v_first 附挂保
+    # 背景。t2i 失败 → 该场景无锚,响亮记录,文字建景照旧兜底。
+    _caps0 = (video_gen.capabilities() if video_gen is not None else set())
+    if video_gen is not None and "t2i" in _caps0 \
+            and hasattr(video_gen, "text_to_image"):
+        adir = cache_dir / "anchors"
+        for _sidx in sorted({e.scene_idx for e in storyboard.entries}):
+            if _sidx in (storyboard.scene_anchors or {}):
+                continue
+            _first_desc = next(
+                (_SHOT_PREFIX_RE.sub("", _strip_markers(e.description))
+                 for e in storyboard.entries if e.scene_idx == _sidx), "")
+            aprompt = (f"Establishing frame of the scene, NO characters "
+                       f"visible: {storyboard.setting}. "
+                       f"Location context: {_first_desc[:120]}. "
+                       f"Wide shot, cinematic still, high detail.")
+            adir.mkdir(parents=True, exist_ok=True)
+            try:
+                got = video_gen.text_to_image(
+                    aprompt, adir / f"scene_{_sidx}.png")
+                storyboard.scene_anchors[_sidx] = str(got)
+                decisions.append({"stage": "scene_anchor",
+                                  "scene": _sidx, "path": str(got)})
+            except Exception as exc:
+                log.warning("scene anchor %d failed (%s) — that scene's "
+                            "background rides on text only", _sidx, exc)
+                decisions.append({"stage": "scene_anchor", "scene": _sidx,
+                                  "via": "failed"})
+        storyboard._save()
     if storyboard.cast:
         log.info("window: cast canon — %s",
                  "; ".join(f"{k}: {v[:60]}" for k, v in
@@ -2639,6 +2795,20 @@ def generate_movie_windowed(
         shot_cast = _cast_in_shot(entry.description, storyboard.cast)
         shot_portraits = {n: storyboard.portraits[n] for n in shot_cast
                           if n in (storyboard.portraits or {})}
+        # M2 场景锚注入(可灵后端):锚帧作为确定性 reference 行进台账,
+        # 现有清单/装配/闸门管线自动附挂;按路径去重,幂等。
+        if "first_frame_plus_refs" in (video_gen.capabilities() or set()):
+            _anchor = (storyboard.scene_anchors or {}).get(entry.scene_idx)
+            if _anchor and Path(_anchor).exists() and not any(
+                    str(im.get("path")) == str(_anchor)
+                    for im in (entry.images or [])):
+                entry.images = list(entry.images or []) + [{
+                    "path": str(_anchor), "role": "reference",
+                    "source": "scene_anchor",
+                    "description": "the scene's official establishing "
+                                   "frame — match the environment and "
+                                   "lighting; never copy its empty "
+                                   "framing"}]
 
         # §C brain 选条件策略(episode → llm → 兜底 三层)。
         # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
@@ -2962,22 +3132,68 @@ def generate_movie_windowed(
                 r_cond["generate_audio"] = True
             return v_path, r_cond
 
-        # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain 修复
-        # → Verifier 闸门 —— 全部在现有 generate_shot_orchestrated 内完成。
-        res = generate_shot_orchestrated(
-            spec, board=board, generator=generator, refiner=refiner,
-            verifier=verifier, cache_dir=shot_dir, orchestrator=orchestrator,
-            asset_memory=asset_memory, lesson_library=lesson_library,
-            image_edit=image_edit, tournament=tournament, retrieval=retrieval,
-            skill_library=skill_library, fps=fps, n_candidates=n_candidates,
-            max_turns=max_turns, summarizer=summarizer,
-            initial_candidates=initial,
-            patience=patience, quality_bar=quality_bar,
-            repair_severity=repair_severity,
-            regen_fn=_regen_original,
-        )
+        # M2 转场闭包(add_transition 修复工具,规则定死):上一镜尾帧 +
+        # 本镜首帧 → flf2v 3 秒;brain 只写运动 prompt,帧提取/时长/落盘
+        # 全由闭包确定性完成。无上镜或后端无 flf2v → 不提供(菜单不出现)。
+        def _transition_fn(prompt_text: str, current_video,
+                           _prev=prev, _dir=shot_dir,
+                           _idx=entry.shot_idx, _cast=storyboard.cast):
+            last = _last_frame(Path(_prev.video_path),
+                               _dir / f"shot{_idx:03d}_trans_prev.png")
+            first = _extract_frame0(Path(current_video),
+                                    _dir / f"shot{_idx:03d}_trans_first.png")
+            if last is None or first is None:
+                raise RuntimeError("transition: boundary frame extraction "
+                                   "failed — tool unavailable this turn")
+            outp = _dir / f"shot{_idx:03d}_transition.mp4"
+            return Path(video_gen.frame_to_frame(
+                prompt=(_scrub_cast_labels(_strip_markers(prompt_text),
+                                           _cast).strip()
+                        or "a smooth cinematic transition between the two "
+                           "frames; steady camera, no new subjects"),
+                first_frame=last, last_frame=first, out_path=outp,
+                duration=3, seed=777))
+
+        transition_fn = (_transition_fn
+                         if prev is not None and prev.video_path
+                         and "flf2v" in (video_gen.capabilities() or set())
+                         and hasattr(video_gen, "frame_to_frame") else None)
+
+        if not enable_review:
+            # M2 评审总开关(关):首选候选直接收货 —— 不评审、不修复、
+            # 不分胜负;结局如实记 review_disabled(绝不冒充 verified)。
+            best = initial[0]
+            res = SelfImproveResult(clip=best, converged=False,
+                                    gen_calls=len(initial))
+            res.stop_reason = "review_disabled"
+            res.initial_winner = str(best.video_path)
+        else:
+            # §D 小循环:评审(VLM skill 维度)→ 汇总 → 定位(帧/段)→ brain
+            # 修复 → Verifier 闸门 —— 全部在 generate_shot_orchestrated 内。
+            res = generate_shot_orchestrated(
+                spec, board=board, generator=generator, refiner=refiner,
+                verifier=verifier, cache_dir=shot_dir,
+                orchestrator=orchestrator,
+                asset_memory=asset_memory, lesson_library=lesson_library,
+                image_edit=image_edit, tournament=tournament,
+                retrieval=retrieval,
+                skill_library=skill_library, fps=fps,
+                n_candidates=n_candidates,
+                max_turns=max_turns, summarizer=summarizer,
+                initial_candidates=initial,
+                patience=patience, quality_bar=quality_bar,
+                repair_severity=repair_severity,
+                regen_fn=_regen_original,
+                transition_fn=transition_fn,
+            )
         shot_results.append(res)
         best = res.clip
+        # M2:修复环选择了 add_transition → 转场片路径进台账持久化
+        if getattr(best, "transition_path", None):
+            entry.transition_path = str(best.transition_path)
+            storyboard._save()
+            decisions.append({"stage": "transition", "label": entry.label,
+                              "path": entry.transition_path})
 
         # S0(RL 数据管道):每镜结束记一条【结局】—— 数据集构建器按
         # label 把本镜所有决策(条件/润色/图计划)连到这条结局上打标签;
@@ -3109,6 +3325,12 @@ def generate_movie_windowed(
 
     # ── §M 收工:蒸馏 episode(good/bad 由客观收敛状态判定)────────────────
     episode_id = ""
+    if episode_memory is not None and not enable_review:
+        # M2:评审关着 → 无客观收敛信号,蒸馏会把全部镜头误判为 avoid,
+        # 诚实做法是跳过(响亮记录)。
+        log.info("window: episode distillation SKIPPED (review disabled — "
+                 "no objective outcome signal)")
+        episode_memory = None
     if episode_memory is not None:
         rec = episode_memory.distill_episode(
             user_prompt, storyboard, final_video=str(final or ""))

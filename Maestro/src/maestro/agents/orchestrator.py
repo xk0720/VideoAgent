@@ -137,7 +137,8 @@ class OrchestratorAgent:
     # Tool MENU — the brain's registry, gated by real capabilities + assets.
     # ─────────────────────────────────────────────────────────────────────
     def available_actions(self, video_gen=None, asset_memory=None,
-                          clip=None) -> list[dict]:
+                          clip=None, transition_available: bool = False
+                          ) -> list[dict]:
         """The tool menu as JSON-schema-ish dicts {name, description, args}.
 
         `regenerate` and `accept` are ALWAYS offered. Everything else is
@@ -237,6 +238,21 @@ class OrchestratorAgent:
                                   "implicit; SI units; RIGID bodies only",
                     "hint": "str — anti-defect instruction for the regeneration",
                 },
+            })
+        if transition_available:
+            menu.append({
+                "name": "add_transition",
+                "description": "Insert a 3-second TRANSITION clip between "
+                "the previous shot and this one (fixed rule: previous "
+                "shot's final frame + this shot's first frame drive a "
+                "first/last-frame generation; you only write the motion "
+                "prompt for the bridge). Pick when the junction itself is "
+                "the problem — the cut looks broken but BOTH clips are "
+                "fine. This is a TERMINAL action: the clip is kept as-is "
+                "and repairs stop.",
+                "args": {"prompt": "str — motion description for the "
+                                   "bridge (camera + subject continuity; "
+                                   "no new subjects)"},
             })
         menu.append({
             "name": "accept",
@@ -559,7 +575,7 @@ class OrchestratorAgent:
     # ─────────────────────────────────────────────────────────────────────
     def execute(
         self, decision, best, spec, cache_dir, r, board: ReviewBoard,
-        asset_memory=None, fps: int = 8, regen_fn=None,
+        asset_memory=None, fps: int = 8, regen_fn=None, transition_fn=None,
     ) -> Optional[CandidateClip]:
         """Run the brain's chosen tool, wrap the output in a fresh reviewed
         CandidateClip, and RETURN it (the loop's Verifier decides accept).
@@ -572,6 +588,21 @@ class OrchestratorAgent:
         args = decision.get("args", {}) or {}
 
         if tool == "accept":
+            return None
+
+        if tool == "add_transition":
+            # M2(规则定死):帧提取/时长/落盘全在窗口层闭包;brain 只出
+            # prompt。产物挂 best.transition_path,片子本体不变(终结动作,
+            # 收尾判断在 generate_loop)。
+            if transition_fn is None:
+                return None
+            prompt_text = str(args.get("prompt", ""))
+            path = transition_fn(prompt_text, best.video_path)
+            best.transition_path = str(path)
+            self._log("add_transition",
+                      {"shot_idx": spec.shot_idx,
+                       "prompt": prompt_text[:200]},
+                      {"path": str(path)})
             return None
 
         if tool == "regenerate":

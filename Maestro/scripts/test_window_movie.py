@@ -80,6 +80,12 @@ def main() -> int:
     ap.add_argument("--repair-severity", type=float, default=0.0,
                     help="最坏缺陷 severity 低于此值就不修(0=关闭,荐 0.6:"
                          "VLM 惯出的 0.5 级小项不再触发花钱修复)")
+    ap.add_argument("--screenplay", default="",
+                    help="M2:用户自带剧本文件路径(给了就跳过 §A0 剧本"
+                         "创作,直接进角色提取+分镜)")
+    ap.add_argument("--no-review", action="store_true",
+                    help="M2:关闭评审/修复总开关(首选候选直接收货,"
+                         "不评审不修复;episode 蒸馏同时停用)")
     ap.add_argument("--pin-gate-mad", type=float, default=0.0,
                     help="§G 钉帧完整性闸门(0=关闭,荐 8.0):钉了开场的"
                          "路线生成完立即测开场撕裂度(接点/帧0→1/帧1→2 "
@@ -257,6 +263,9 @@ def main() -> int:
         patience=args.patience, quality_bar=args.quality_bar,
         repair_severity=args.repair_severity,
         pin_gate_mad=args.pin_gate_mad,
+        screenplay=(Path(args.screenplay).read_text(encoding="utf-8")
+                    if args.screenplay else None),
+        enable_review=(not args.no_review),
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,

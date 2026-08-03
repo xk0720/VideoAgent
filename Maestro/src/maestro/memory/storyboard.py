@@ -98,6 +98,8 @@ class ShotEntry:
     repair_actions: list = field(default_factory=list)
     # 物理测量轨迹(实体 → 逐帧归一化 (x,y));无测量 = None,绝不伪造
     physics_trajectory: Optional[dict] = None
+    # 转场短片(M2:add_transition 修复工具产物)——拼装时插在本镜之前
+    transition_path: Optional[str] = None
 
     def images_by_role(self, *roles: str) -> list:
         """按角色取图(路径存在的才算数 —— 检索命中但文件丢了 = 没有)。"""
@@ -152,6 +154,8 @@ class StoryboardMemory:
         # 角色官方肖像(2026-07-31 视觉锚):角色名 → 肖像图路径。
         # 生成角色的唯一视觉身份载体;来源 = 用户素材/跨片库/开工 t2i。
         self.portraits: dict = {}
+        # 场景锚帧(M2):scene_idx → establishing 图路径,ref2v 附挂保背景
+        self.scene_anchors: dict = {}
         self._rev = 0                    # 单调更新计数(每次写 +1,可审计)
 
     # ── 构建 ──────────────────────────────────────────────────────────────
@@ -285,6 +289,8 @@ class StoryboardMemory:
                    "cast": self.cast, "setting": self.setting,
                    "music_plan": self.music_plan,
                    "portraits": self.portraits,
+                   "scene_anchors": {str(k): v for k, v in
+                                     (self.scene_anchors or {}).items()},
                    "entries": [asdict(e) for e in self.entries]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -304,5 +310,8 @@ class StoryboardMemory:
                         (data.get("portraits") or {}).items()
                         if str(v).strip()}
         sb.setting = str(data.get("setting", "") or "")
+        sb.scene_anchors = {int(k): str(v) for k, v in
+                            (data.get("scene_anchors") or {}).items()
+                            if str(v).strip()}
         sb.entries = [ShotEntry(**e) for e in data.get("entries", [])]
         return sb
