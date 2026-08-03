@@ -154,13 +154,11 @@ def test_build_dataset_labels_pairs_exclusions(tmp_path):
             if e.get("decision_id")}
     assert "via=episode" in excl["d3"]
 
-    # 成对:enhancer 重试对 + 修复拒-收对
+    # 成对:只剩 enhancer 重试对(2026-08-02 用户指正:修复相邻两轮之间
+    # 执行过真生成、上下文已变 —— 拒-收对是分布外假同题,已废除;被拒/
+    # 被采纳的修复决策各按自己的题干走 KTO 单条,上面 d6/d7 正是)。
     kinds = sorted(p["meta"]["kind"] for p in got["pairs"])
-    assert kinds == ["enhancer_retry", "repair_reject_then_accept"]
-    rp = next(p for p in got["pairs"]
-              if p["meta"]["kind"] == "repair_reject_then_accept")
-    assert "regenerate" in rp["chosen"][0]["content"]
-    assert rp["meta"]["confidence"] == 0.7
+    assert kinds == ["enhancer_retry"]
 
 
 def test_build_dataset_cli_holdout_split(tmp_path, capsys):
@@ -222,7 +220,7 @@ def test_synthetic_runs_feed_builder(tmp_path):
     labels = [s["label"] for s in got["samples"]]
     assert True in labels and False in labels          # 好坏都有
     kinds = {p["meta"]["kind"] for p in got["pairs"]}
-    assert kinds == {"enhancer_retry", "repair_reject_then_accept"}
+    assert kinds == {"enhancer_retry"}
     s0 = got["samples"][0]
     assert s0["prompt"][0]["role"] == "user"
     assert s0["completion"][0]["role"] == "assistant"

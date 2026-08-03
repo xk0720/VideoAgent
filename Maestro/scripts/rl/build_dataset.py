@@ -231,35 +231,14 @@ def build_run(run_dir: Path) -> dict:
                              "prompt_fidelity": fid},
                 })
 
-    # ── 成对样本 ② 修复:被拒的 t 轮 vs 被收的 t+1 轮(状态近似不变:
-    # 拒收后 best 未变,仅 history 多一条 —— confidence 0.7 如实标注)──
-    reps = [r for r in decisions if r["stage"] == "repair/decide"
-            and r.get("usable")]
-    by_shot: dict = {}
-    for r in reps:
-        by_shot.setdefault(r.get("shot_idx"), []).append(r)
-    for shot_idx, group in by_shot.items():
-        for i in range(len(group) - 1):
-            did_a = (group[i].get("decision_id")
-                     or (group[i].get("parsed") or {}).get("decision_id"))
-            did_b = (group[i + 1].get("decision_id")
-                     or (group[i + 1].get("parsed") or {}).get("decision_id"))
-            oc_a = (repair_outs.get(did_a) or {}).get("outcome")
-            oc_b = (repair_outs.get(did_b) or {}).get("outcome")
-            if oc_a == "rejected" and oc_b == "accepted":
-                prompt, fid = _rebuild_prompt("repair", group[i])
-                if prompt:
-                    pairs.append({
-                        "prompt": [{"role": "user", "content": prompt}],
-                        "chosen": [{"role": "assistant",
-                                    "content": str(group[i + 1].get("raw") or "")}],
-                        "rejected": [{"role": "assistant",
-                                      "content": str(group[i].get("raw") or "")}],
-                        "meta": {"run": run_dir.name,
-                                 "kind": "repair_reject_then_accept",
-                                 "shot": shot_idx, "confidence": 0.7,
-                                 "prompt_fidelity": fid},
-                    })
+    # ── 修复相邻对已废除(2026-08-02 用户指正):t 轮和 t+1 轮之间
+    # 【执行过一次真生成】,评审简报/禁重复清单已更新 —— 两轮答的是
+    # 不同的题,把 t+1 的答案配在 t 的题干下 = 分布外的假 chosen。
+    # 被拒轮/被采纳轮各自按【自己的题干】走 KTO 单条(上方 _label 的
+    # repair 分支,置信 1.0),信息一点不丢,且每条都是合法的
+    # (题干, 答案) 组合。DPO 对只保留 enhancer 重试:两次尝试之间
+    # 【没有任何执行】、工作单相同(重试只多看一行错误提示),chosen
+    # 仍是基题的合法答案 —— rejection-sampling 的标准形态。
     return {"samples": samples, "pairs": pairs, "excluded": excluded}
 
 
