@@ -99,6 +99,15 @@ decision covers three things at once:
   facing-camera portrait dominate the opening frame of every shot. A shot
   whose only consistency need is "the character must look right" needs
   **none** — the portrait channel already covers it.
+- NO TEXT-DRAWN FIRST FRAMES FOR PORTRAIT-BOUND CAST: when a character
+  in this shot has an OFFICIAL PORTRAIT (user-provided or generated), do
+  NOT plan a t2i first_frame image — a text-to-image model re-imagines
+  the face and wardrobe from words, and hard-pinning that frame locks
+  the WRONG look in while the portrait references can no longer correct
+  it. Such shots ride the reference route (the portraits steer the frame
+  directly); a deterministic guard drops violating t2i first-frame
+  plans. First frames from asset_image or video_extract (real user
+  pixels) remain allowed.
 - SCENE ANCHORS ARE NOT YOURS TO PLAN EITHER: the executor
   deterministically generates ONE characterless establishing image per
   scene and injects it as a reference row on backends that support it —

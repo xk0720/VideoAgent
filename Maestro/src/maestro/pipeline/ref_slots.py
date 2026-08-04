@@ -24,13 +24,27 @@ _REF_TOKEN_RE = re.compile(
     re.IGNORECASE)
 
 
+# 可灵记号变体归一(2026-08-04 实跑:brain 写了 <<image_1>>(两层尖括号),
+# 闸门既没拦也没算"已提及" → 自动补句追加了第二套引用,prompt 爆长、
+# 绑定被稀释)。1~4 层尖括号/大小写/空格下划线变体一律归一为 <<<image_N>>>。
+_KLING_VARIANT_RE = re.compile(
+    r"<{1,4}\s*(image|video)[\s_]?(\d+)\s*>{1,4}", re.IGNORECASE)
+
+
+def normalize_ref_tokens(prompt: str) -> str:
+    """写手笔误的引用记号确定性归一(只动记号,不动其他文字)。"""
+    return _KLING_VARIANT_RE.sub(
+        lambda m: f"<<<{m.group(1).lower()}_{m.group(2)}>>>",
+        str(prompt or ""))
+
+
 def validate_references(prompt: str, slots: list[dict]) -> tuple[str, dict]:
     """prompt 的引用 ⊆ 清单?→ (修正后的 prompt, 审计记录)。
 
     返回 ("", {...ok: False...}) = 引用了不存在的槽位,救不了 —— 调用方
     必须弃用这条 prompt(落兜底/重试),绝不带错编号出门。
     """
-    prompt = str(prompt or "")
+    prompt = normalize_ref_tokens(prompt)
     allowed = {str(r.get("slot", "")).lower(): r for r in slots
                if r.get("referenceable")}
     found = {m.group(0) for m in _REF_TOKEN_RE.finditer(prompt)}

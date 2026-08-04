@@ -564,7 +564,12 @@ def _with_dialogue(prompt: str, entry, cast: dict) -> str:
         return prompt
     if f'"{line}"' in prompt:
         return prompt
-    who = next(iter(_cast_in_shot(entry.description, cast)), "the character")
+    # 说话人以剧本契约为准(speaker 字段);缺失才退回"第一个出场者"
+    # ——猜错人 = 口型对到别人嘴上(实跑事故)。
+    who = (getattr(entry, "dialogue_speaker", "") or "").strip()
+    if not who or (cast and who not in cast):
+        who = next(iter(_cast_in_shot(entry.description, cast)),
+                   "the character")
     return (f'{prompt} {who} says: "{line}", mouth moving with the '
             f"words. Audio: only the character's voice speaking the line — "
             f"no background music, no ambient sound, no sound effects.")
@@ -1117,9 +1122,16 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               '"opening_frame": "<ONLY for the first shot and scene cuts: '
               'a purely STATIC opening snapshot (no ongoing actions); omit '
               'for continuing shots>", '
-              '"dialogue": "<ONE spoken line of at most 6 words, ONLY when '
-              'a cast character visibly speaks on screen (medium close-up '
-              'or closer); omit otherwise>"}, '
+              '"dialogue": {"speaker": "<the cast key of WHO SPEAKS — copied '
+              'verbatim from cast>", "line": "<ONE spoken line of at most '
+              '6 words>"} — include ONLY when a cast character visibly '
+              'speaks on screen (medium close-up or closer); omit '
+              'otherwise, '
+              '"bg": "<background id like bg_1 — keep the SAME id while '
+              'the shot happens in the same physical space (the master '
+              'background is unchanged); switch to a NEW id ONLY when the '
+              'action moves to a different space. Predicting this drives '
+              'which background reference image the generator receives>"}, '
               '...], "music_plan": {"scene 1": "<ONE music description '
               'for the whole scene: mood, genre, tempo/BPM — all shots in '
               'a scene share one track; omit a scene (or the whole field) '
@@ -1174,6 +1186,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
         if isinstance(data, dict) and isinstance(data.get("shots"), list):
             shots, durs, ends, variations, openings, dialogues, seen = \
                 [], [], [], [], [], [], set()
+            speakers, bgs = [], []
             for s_ in data["shots"][:max_shots]:
                 # 兼容两种形态:纯字符串,或 {description, duration_s, end_state}
                 if isinstance(s_, dict):
@@ -1198,9 +1211,19 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                     openings.append(
                         str(s_.get("opening_frame", "") or "").strip()
                         if isinstance(s_, dict) else "")
-                    dialogues.append(
-                        str(s_.get("dialogue", "") or "").strip()[:120]
-                        if isinstance(s_, dict) else "")
+                    _dlg = s_.get("dialogue") if isinstance(s_, dict) \
+                        else None
+                    if isinstance(_dlg, dict):
+                        dialogues.append(
+                            str(_dlg.get("line", "") or "").strip()[:120])
+                        speakers.append(
+                            str(_dlg.get("speaker", "") or "").strip())
+                    else:
+                        dialogues.append(
+                            str(_dlg or "").strip()[:120])
+                        speakers.append("")
+                    bgs.append(str(s_.get("bg", "") or "").strip()
+                               if isinstance(s_, dict) else "")
                     # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
                     # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
                     # 用模型自然默认(用户裁决:绝不 feed 任何预设值)。
@@ -1260,6 +1283,8 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                      "variations": variations,
                      "opening_frames": openings,
                      "dialogues": dialogues,
+                     "dialogue_speakers": speakers,
+                     "bgs": bgs,
                      "music_plan": music_plan}, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
@@ -1268,6 +1293,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
         {"cast": dict(cast_canon or {}), "setting": "",
          "variations": [""] * len(fb),
          "opening_frames": [""] * len(fb), "dialogues": [""] * len(fb),
+         "dialogue_speakers": [""] * len(fb), "bgs": [""] * len(fb),
          "music_plan": {}}, "fallback"
 
 
@@ -1391,7 +1417,8 @@ def _execute_image_plan(decision: dict, entry, video_gen,
                         asset_memory: Optional[AssetMemory], retrieval,
                         out_dir: Path,
                         cast: Optional[dict] = None,
-                        portrait_paths: Optional[set] = None
+                        portrait_paths: Optional[set] = None,
+                        has_portrait_cast: bool = False
                         ) -> tuple[str, list, str]:
     """执行 Image Plan → (最终 plan, images 列表, degraded_from)。
 
@@ -1420,6 +1447,17 @@ def _execute_image_plan(decision: dict, entry, video_gen,
     for i, role in enumerate(roles):
         spec_i = specs[i] if i < len(specs) else {}
         src = spec_i.get("source") or _default_source(video_gen, asset_memory)
+        # A1 律(2026-08-04 实跑事故):出场者有官方肖像时,禁止用 t2i
+        # 按文字重画首帧再硬钉 —— flux 画的脸/衣服 ≠ 参考图,钉死后
+        # 肖像 refer 无力回天。参考路线(ref2v)由肖像直接控画面。
+        if has_portrait_cast and role in ("first", "first_frame") \
+                and src == "t2i":
+            log.warning("image plan: %s t2i FIRST FRAME blocked — cast "
+                        "with official portraits must not be re-drawn "
+                        "from text and hard-pinned; dropping the slot "
+                        "(reference route carries the portraits)",
+                        entry.label)
+            continue
         # 出口清洗:query 会成为 t2i prompt / 检索词 —— 剥 <标记>、洗
         # cast 契约标签(brain 抄写描述/契约时可能原样带出)。
         query = _scrub_cast_labels(
@@ -2738,8 +2776,12 @@ def generate_movie_windowed(
         vars_ = script_meta.get("variations") or []
         opens_ = script_meta.get("opening_frames") or []
         dlgs_ = script_meta.get("dialogues") or []
+        spks_ = script_meta.get("dialogue_speakers") or []
+        bgs_ = script_meta.get("bgs") or []
         entry_.variation = vars_[i_] if i_ < len(vars_) else ""
         entry_.opening_frame = opens_[i_] if i_ < len(opens_) else ""
+        entry_.dialogue_speaker = spks_[i_] if i_ < len(spks_) else ""
+        entry_.bg_id = bgs_[i_] if i_ < len(bgs_) else ""
         entry_.dialogue = dlgs_[i_] if i_ < len(dlgs_) else ""
     # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)。setting 必须
     # 在 §A' 之前就位 —— 2026-07-31 实锤:原顺序里肖像先生成、setting 后
@@ -2778,27 +2820,39 @@ def generate_movie_windowed(
     if video_gen is not None and "t2i" in _caps0 \
             and hasattr(video_gen, "text_to_image"):
         adir = cache_dir / "anchors"
-        for _sidx in sorted({e.scene_idx for e in storyboard.entries}):
-            if _sidx in (storyboard.scene_anchors or {}):
+        # B 案(2026-08-04):背景资产按 brain 预测的 bg_id 分组(同 id =
+        # 同一物理空间共用一张);旧剧本无 bg 字段 → 回退 scene_N 键。
+        # 起底图 = t2i establishing(无角色);该 bg 首镜验收后升级为
+        # 实拍抽帧(src=frame),后续镜以真实宫殿为准。
+        _bg_keys: list = []
+        for e in storyboard.entries:
+            k = (getattr(e, "bg_id", "") or f"scene_{e.scene_idx}")
+            if k not in _bg_keys:
+                _bg_keys.append(k)
+        for _bk in _bg_keys:
+            if _bk in (storyboard.backgrounds or {}):
                 continue
             _first_desc = next(
                 (_SHOT_PREFIX_RE.sub("", _strip_markers(e.description))
-                 for e in storyboard.entries if e.scene_idx == _sidx), "")
-            aprompt = (f"Establishing frame of the scene, NO characters "
+                 for e in storyboard.entries
+                 if (getattr(e, "bg_id", "") or f"scene_{e.scene_idx}")
+                 == _bk), "")
+            aprompt = (f"Establishing frame of the location, NO characters "
                        f"visible: {storyboard.setting}. "
                        f"Location context: {_first_desc[:120]}. "
                        f"Wide shot, cinematic still, high detail.")
             adir.mkdir(parents=True, exist_ok=True)
             try:
                 got = video_gen.text_to_image(
-                    aprompt, adir / f"scene_{_sidx}.png")
-                storyboard.scene_anchors[_sidx] = str(got)
-                decisions.append({"stage": "scene_anchor",
-                                  "scene": _sidx, "path": str(got)})
+                    aprompt, adir / f"bg_{_bk}.png")
+                storyboard.backgrounds[_bk] = {"path": str(got),
+                                               "src": "t2i"}
+                decisions.append({"stage": "background_asset", "bg": _bk,
+                                  "via": "t2i", "path": str(got)})
             except Exception as exc:
-                log.warning("scene anchor %d failed (%s) — that scene's "
-                            "background rides on text only", _sidx, exc)
-                decisions.append({"stage": "scene_anchor", "scene": _sidx,
+                log.warning("background asset %s failed (%s) — that "
+                            "background rides on text only", _bk, exc)
+                decisions.append({"stage": "background_asset", "bg": _bk,
                                   "via": "failed"})
         storyboard._save()
     if storyboard.cast:
@@ -2834,9 +2888,12 @@ def generate_movie_windowed(
             priority=_PLAN_PRIORITY,
         )
         decisions.append({"stage": "image_plan", "label": entry.label, **d})
+        _shot_cast_b = _cast_in_shot(entry.description, storyboard.cast)
         plan_final, images, degraded_from = _execute_image_plan(
             d, entry, video_gen, asset_memory, retrieval, kf_dir,
-            cast=storyboard.cast, portrait_paths=portrait_paths)
+            cast=storyboard.cast, portrait_paths=portrait_paths,
+            has_portrait_cast=any(n in (storyboard.portraits or {})
+                                  for n in _shot_cast_b))
         storyboard.set_image_plan(entry.shot_idx, plan_final, images,
                                   degraded_from=degraded_from)
         log.info("window: %s image-plan → %s (via=%s, %d image(s)%s)",
@@ -2877,17 +2934,37 @@ def generate_movie_windowed(
         # M2 场景锚注入(可灵后端):锚帧作为确定性 reference 行进台账,
         # 现有清单/装配/闸门管线自动附挂;按路径去重,幂等。
         if "first_frame_plus_refs" in (video_gen.capabilities() or set()):
-            _anchor = (storyboard.scene_anchors or {}).get(entry.scene_idx)
-            if _anchor and Path(_anchor).exists() and not any(
-                    str(im.get("path")) == str(_anchor)
-                    for im in (entry.images or [])):
+            _bgkey = (getattr(entry, "bg_id", "")
+                      or f"scene_{entry.scene_idx}")
+            _bg = (storyboard.backgrounds or {}).get(_bgkey) \
+                or ({"path": storyboard.scene_anchors.get(entry.scene_idx),
+                     "src": "t2i"}
+                    if (storyboard.scene_anchors or {}).get(entry.scene_idx)
+                    else None)
+            if _bg and _bg.get("path") and Path(_bg["path"]).exists() \
+                    and not any(im.get("source") == "background"
+                                or str(im.get("path")) == str(_bg["path"])
+                                for im in (entry.images or [])):
+                if _bg.get("src") == "frame":
+                    _bgdesc = (f"the OFFICIAL look of background {_bgkey} "
+                               f"(a real frame from an earlier shot of "
+                               f"this film) — the shot MUST take place in "
+                               f"this SAME space: identical architecture, "
+                               f"floor, furniture and lighting; never "
+                               f"invent a different hall; IGNORE the "
+                               f"people in it — do not copy them or "
+                               f"their positions")
+                else:
+                    _bgdesc = (f"the OFFICIAL look of background {_bgkey} "
+                               f"— the shot MUST take place in this SAME "
+                               f"space: identical architecture, floor, "
+                               f"furniture and lighting; never invent a "
+                               f"different hall; do not copy its empty "
+                               f"framing")
                 entry.images = list(entry.images or []) + [{
-                    "path": str(_anchor), "role": "reference",
-                    "source": "scene_anchor",
-                    "description": "the scene's official establishing "
-                                   "frame — match the environment and "
-                                   "lighting; never copy its empty "
-                                   "framing"}]
+                    "path": str(_bg["path"]), "role": "reference",
+                    "source": "background",
+                    "description": _bgdesc}]
 
         # §C brain 选条件策略(episode → llm → 兜底 三层)。
         # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
@@ -3134,6 +3211,8 @@ def generate_movie_windowed(
                 "junction_prev_actual": junction_actual or None,
                 "cast": (shot_cast or None),
                 "dialogue": (entry.dialogue or None),
+                "dialogue_speaker": (getattr(entry, "dialogue_speaker", "")
+                                     or None),
                 "setting": (storyboard.setting or None),
                 "images": ([{"path": im.get("path"), "role": im.get("role")}
                             for im in entry.images
@@ -3278,6 +3357,24 @@ def generate_movie_windowed(
             storyboard._save()
             decisions.append({"stage": "transition", "label": entry.label,
                               "path": entry.transition_path})
+        # B 案:该 bg 的首镜出片后,用实拍首帧升级背景资产(src=frame)
+        # —— 后续同 bg 镜对齐真实空间,而不是 t2i 想象图(实跑事故:
+        # 锚图与实拍宫殿不是同一个厅,越对越歪)。
+        _bgkey2 = (getattr(entry, "bg_id", "")
+                   or f"scene_{entry.scene_idx}")
+        _bg2 = (storyboard.backgrounds or {}).get(_bgkey2)
+        if _bg2 and _bg2.get("src") == "t2i" and best.video_path \
+                and Path(best.video_path).exists():
+            _real = _extract_frame0(
+                Path(best.video_path),
+                cache_dir / "backgrounds" / f"{_bgkey2}_real.png")
+            if _real is not None:
+                storyboard.backgrounds[_bgkey2] = {"path": str(_real),
+                                                   "src": "frame"}
+                storyboard._save()
+                decisions.append({"stage": "background_asset",
+                                  "bg": _bgkey2, "via": "frame_upgrade",
+                                  "path": str(_real)})
 
         # S0(RL 数据管道):每镜结束记一条【结局】—— 数据集构建器按
         # label 把本镜所有决策(条件/润色/图计划)连到这条结局上打标签;

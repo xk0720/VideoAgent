@@ -151,9 +151,11 @@ strategy, review, repair) hangs off these entries.
             "opening_frame": "<first shot & scene cuts ONLY: one purely
              STATIC opening snapshot — layout, subjects' positions, NO
              ongoing action; omit for continuing shots>",
-            "dialogue": "<ONE spoken line, at most 6 words, ONLY when a
-             cast character visibly speaks at medium close-up or closer;
-             omit otherwise>"},
+            "dialogue": {"speaker": "<cast key of WHO SPEAKS,
+             verbatim>", "line": "<ONE spoken line, at most 6 words>"}
+             — ONLY when a cast character visibly speaks at medium
+             close-up or closer; omit otherwise,
+            "bg": "<background id, e.g. bg_1>"},
            {"description": "Shot 2: <detailed filmable description>",
             "duration_s": <int 4-10>,
             "end_state": "...",
@@ -243,13 +245,24 @@ strategy, review, repair) hangs off these entries.
   it becomes the base for a generated opening still. CONTINUING shots must
   OMIT it (their opening IS the previous end_state; restating it invites
   contradictions).
-- `dialogue` (audio line) — ONE spoken line of AT MOST 6
-  words, ONLY when a cast character visibly speaks on screen at medium
-  close-up or closer (lip-sync needs face resolution; a wide shot gets
-  imprecise lips). Omit the field for shots with no on-screen speech —
-  never narrate through it. The executor turns it into the lip-sync
-  clause and enables native audio for that shot; do NOT write the line
-  into the description itself.
+- `dialogue` (audio line) — {"speaker": "<cast key>", "line": "<ONE
+  spoken line of AT MOST 6 words>"}, ONLY when a cast character visibly
+  speaks on screen at medium close-up or closer (lip-sync needs face
+  resolution; a wide shot gets imprecise lips). The `speaker` MUST be a
+  cast key copied verbatim — the executor points the lip-sync clause at
+  exactly that character; a wrong or missing speaker puts the line on
+  the wrong mouth. Omit the field for shots with no on-screen speech —
+  never narrate through it. Do NOT write the line into the description
+  itself.
+- `bg` (BACKGROUND PREDICTION — drives which background reference image
+  the generator receives): give every shot a background id. Keep the
+  SAME id (e.g. "bg_1") for every shot that happens in the same
+  physical space, even across different camera angles — the executor
+  then feeds all those shots ONE shared background reference so the
+  master background cannot drift. Switch to a NEW id ("bg_2") ONLY when
+  the action moves to a genuinely different space (another room,
+  outdoors, a new location). A camera angle change, a close-up, or a
+  different corner of the same hall is NOT a background change.
 - `music_plan` (film-level) — one music description PER
   SCENE ("scene 1": "warm playful orchestral, light pizzicato, 95bpm").
   All shots in a scene share ONE generated track (one track cannot

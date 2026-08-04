@@ -100,6 +100,10 @@ class ShotEntry:
     physics_trajectory: Optional[dict] = None
     # 转场短片(M2:add_transition 修复工具产物)——拼装时插在本镜之前
     transition_path: Optional[str] = None
+    # 对白说话人(2026-08-04:台词张冠李戴事故 —— 口型子句必须对准真人)
+    dialogue_speaker: str = ""
+    # 大背景 id(B 案:brain 预测;同 id = 同一物理空间,共用背景资产)
+    bg_id: str = ""
 
     def images_by_role(self, *roles: str) -> list:
         """按角色取图(路径存在的才算数 —— 检索命中但文件丢了 = 没有)。"""
@@ -156,6 +160,9 @@ class StoryboardMemory:
         self.portraits: dict = {}
         # 场景锚帧(M2):scene_idx → establishing 图路径,ref2v 附挂保背景
         self.scene_anchors: dict = {}
+        # 背景资产登记表(B 案):bg_id → {"path": 图, "src": "t2i"|"frame"}
+        # ——首镜验收后从实拍抽帧升级(src=frame),同 bg 各镜共用一张
+        self.backgrounds: dict = {}
         self._rev = 0                    # 单调更新计数(每次写 +1,可审计)
 
     # ── 构建 ──────────────────────────────────────────────────────────────
@@ -291,6 +298,7 @@ class StoryboardMemory:
                    "portraits": self.portraits,
                    "scene_anchors": {str(k): v for k, v in
                                      (self.scene_anchors or {}).items()},
+                   "backgrounds": dict(self.backgrounds or {}),
                    "entries": [asdict(e) for e in self.entries]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -313,5 +321,8 @@ class StoryboardMemory:
         sb.scene_anchors = {int(k): str(v) for k, v in
                             (data.get("scene_anchors") or {}).items()
                             if str(v).strip()}
+        sb.backgrounds = {str(k): dict(v) for k, v in
+                          (data.get("backgrounds") or {}).items()
+                          if isinstance(v, dict) and v.get("path")}
         sb.entries = [ShotEntry(**e) for e in data.get("entries", [])]
         return sb
