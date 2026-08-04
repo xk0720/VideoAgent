@@ -935,3 +935,28 @@ given_only)→ user_json 肖像预填台账(§A' 跳过,零 t2i)→ 既有确定
 GIVEN-CHARACTERS LAW,scene_write 加 MARKER DISCIPLINE。
 真实样例 script-wedding 实测:5/5 角色解析成功,3 条坏路径救援留痕。
 测试 5 条新增,全套 564 通过。
+
+## 2026-08-04(一)run7 三事故三修复(下载≠生成失败/转场重放崩溃/正典脑补)
+
+事故 A(shot4 身份全毁的根):可灵 CDN(kechuangai.com)SSL 断连,单次
+GET 失败被当"生成失败"→ 已付费 ref2v 成片被丢弃、一步降级无参考 t2v,
+替身片衣着身份全错还级联进 shot5(i2v_first 钉了坏帧)。修复(b2f09de):
+① 后端 _download_result 重试 4 次(直连/系统代理交替,重试前向 dashscope
+刷新签名 URL),任务已 SUCCEEDED 就绝不轻弃;② window_loop 条件生成异常
+先【同策略】重试一次(参考图是镜头的命),再失败才降级 t2v,台账
+retried_after/degraded_from 分开留痕。
+事故 B(整跑崩溃):add_transition 撞风控(DataInspectionFailed),守护块
+捕获后顺流而下,同一 decision 掉进通用执行路径被无守护重放,二连失败
+异常上抛炸掉主进程(§E 没跑)。修复(d57eaa9):add_transition 块封闭
+终点化 —— 成功 break;失败记 repair/outcome=failed + patience 计数 +
+continue,永不进通用重放路径。
+事故 C(白军装冤案):通用一句话检索 caption 不带服装颜色,character_
+extract 的 LLM 把黑军装参考图脑补成 "white royal military coat",评审
+拿错误正典反扣忠于参考图的视频。修复(e29f430):全后端新增
+caption_identity(正典专用打标:逐项精确颜色、看不见省略绝不猜;基类
+默认降级 caption_image);管线钦定打标优先用之并逐条留痕(静默成功不可
+考证的教训);skill FILL-GAPS 律限定 script-only 角色,given 角色逐字
+照抄 image_look 颜色、不得添加其未陈述的细节。
+run7 交付:6 镜嵌入式引用 prompt 全部生效(记号在动作词位,节拍前缀+
+台词入拍+收势句);movie.mp4 38.3s(崩溃后台账补记 + 本地复刻 §E 组装,
+零重生成)。全套 579 测试通过。
