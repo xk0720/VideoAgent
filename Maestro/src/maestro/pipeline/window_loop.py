@@ -1147,11 +1147,20 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               "characters it missed, never rename or rewrite them."
         )
         raw = ""
-        try:
-            raw = llm.complete(prompt)
-            data = _extract_json(raw)
-        except Exception:
-            data = None
+        data = None
+        for _attempt in range(2):        # 空响应/坏 JSON 先重试一次
+            try:
+                raw = llm.complete(prompt)
+                data = _extract_json(raw)
+            except Exception:
+                data = None
+            if isinstance(data, dict) and isinstance(data.get("shots"),
+                                                     list):
+                break
+            if _attempt == 0:
+                log.warning("scene_write: LLM reply unusable (raw %d "
+                            "chars) — retrying once before the "
+                            "deterministic fallback", len(raw or ""))
         brain_log("window/scene_write", {
             "raw": raw, "parsed": data if isinstance(data, dict) else None,
             "usable": bool(isinstance(data, dict)
@@ -2699,7 +2708,10 @@ def generate_movie_windowed(
         llm, screenplay_text, asset_catalog0,
         episode_guidance=guidance,
         max_shots=int(plan_cfg.get("max_shots", 6)),
-        fallback_fn=lambda: screenwriter.run(user_prompt, asset_memory),
+        # 兜底拆条必须拆【剧本】而不是原始 idea(2026-08-04 实跑事故:
+        # scene_write 空响应走兜底,拆了默认 prompt,整片内容全错)
+        fallback_fn=lambda: screenwriter.run(screenplay_text or user_prompt,
+                                             asset_memory),
         cast_canon=cast_canon,
     )
     decisions.append({"stage": "playwriting", "label": "outline",
