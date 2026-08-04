@@ -1023,6 +1023,22 @@ def _write_screenplay(llm, user_prompt: str, screenplay,
     return str(user_prompt), "idea_passthrough"
 
 
+def _apply_caption_canon(cast_canon: dict, given_caps: Optional[dict]) -> None:
+    """用户裁决(2026-08-04):有参考图的角色,外观唯一法源是 VLM 对图的
+    理解 —— static 半边【确定性覆盖】为图注原文,LLM 版本整段丢弃(skill
+    约束只是软防,这里是硬闸:LLM 再怎么脑补也出不了门)。dynamic 半边
+    保留 LLM 从剧本读出的内容(道具/姿态归剧本管)。原地修改。"""
+    for _gn, _cap in (given_caps or {}).items():
+        if not _cap or _gn not in cast_canon:
+            continue
+        _old = str(cast_canon[_gn])
+        _dyn = _old.split("dynamic:", 1)[1].strip().rstrip(";") \
+            if "dynamic:" in _old else ""
+        cast_canon[_gn] = f"static: {_cap}; dynamic: {_dyn or 'as scripted'}"
+        log.info("cast canon: %r static half OVERRIDDEN by the VLM image "
+                 "caption (LLM appearance text discarded)", _gn)
+
+
 def _extract_characters(llm, screenplay: str,
                         given: Optional[dict] = None) -> tuple[dict, str]:
     """§A1 角色提取(ViMax character_extractor 规则移植):剧本 →
@@ -2747,6 +2763,7 @@ def generate_movie_windowed(
     cast_canon, ce_via = _extract_characters(
         llm, screenplay_text, given=(given_caps or None)) \
         if (sp_via != "idea_passthrough" or given_caps) else ({}, "skipped")
+    _apply_caption_canon(cast_canon, given_caps)
     decisions.append({"stage": "character_extract", "via": ce_via,
                       "characters": sorted(cast_canon)})
 

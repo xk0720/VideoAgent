@@ -62,3 +62,40 @@ def test_character_extract_skill_forbids_invented_details():
     assert "image_look` WINS" in t or "image_look WINS" in t
     assert "NEVER\n   applies to a given character" in t.replace("  ", "  ") \
         or "This rule NEVER" in t
+
+
+def test_caption_canon_hard_override():
+    """VLM 图注硬闸:LLM 写的 static 外观整段丢弃,图注原文顶上;
+    dynamic 保留;无图注/非钦定角色不动。"""
+    import maestro.pipeline.window_loop as wl
+
+    canon = {
+        "王子": ("static: white royal military coat, blond hair; "
+               "dynamic: medals, sword"),
+        "路人甲": "static: brown jacket; dynamic: umbrella",
+        "无注者": "static: red dress; dynamic: pose",
+    }
+    caps = {"王子": "black military coat with a red sash, blond hair",
+            "无注者": "",                       # 图注失败 → 不覆盖
+            "不在正典的名字": "grey suit"}       # 正典没这人 → 跳过
+    wl._apply_caption_canon(canon, caps)
+    assert canon["王子"] == ("static: black military coat with a red sash, "
+                           "blond hair; dynamic: medals, sword")
+    assert "white" not in canon["王子"]
+    assert canon["路人甲"] == "static: brown jacket; dynamic: umbrella"
+    assert canon["无注者"] == "static: red dress; dynamic: pose"
+    assert "不在正典的名字" not in canon
+
+
+def test_skills_forbid_appearance_text_beside_tokens():
+    """三技能都必须立"记号旁不写外观"法(像素即外观,文字只留短称呼)。"""
+    base = Path("src/maestro/skills/brain_skills")
+    wg = (base / "window_generation/SKILL.md").read_text()
+    assert "THE PIXELS ARE THE APPEARANCE" in wg
+    assert "NEVER restate them" in wg
+    vpw = (base / "video_prompt_writing/SKILL.md").read_text()
+    assert "THE PIXELS ARE THE APPEARANCE" in vpw
+    pe = (base / "prompt_enhancer/SKILL.md").read_text()
+    assert "STRIP APPEARANCE TEXT BESIDE TOKENS" in pe
+    # 样例也得以身作则:Example 2 不再给记号挂衣着颜色
+    assert "dark green coat" not in wg and "grey sweater" not in wg

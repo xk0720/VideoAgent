@@ -385,6 +385,17 @@ and followed by a settle tail. A prompt that narrates with unbound
 aliases and appends binding footnotes at the end is WRONG even if every
 token technically appears.
 
+THE PIXELS ARE THE APPEARANCE: a slotted entity's face, hair, wardrobe
+and colors live in its reference image — never restate them in the
+prompt. Attach at most a role-level handle of ~5 words ("<<<image_2>>>,
+the duke's daughter") for readability. Appearance text beside a token
+is a second, competing description: any drift between text and image
+(a wrong color, an invented hairstyle) pulls the model AWAY from the
+reference — this is the #1 identity killer with reference-carrying
+routes. Spend the freed words on motion, spatial relations and camera.
+Full appearance sentences belong ONLY to entities with no reference
+token.
+
 ## 13. Reference-image binding contract
 
 When the executor attaches reference images, it hands you a **slot

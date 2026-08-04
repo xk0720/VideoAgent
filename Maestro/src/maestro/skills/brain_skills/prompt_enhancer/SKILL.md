@@ -81,6 +81,15 @@ followed by the settle tail (natural micro-expression, gaze lingering,
 frame settling calm). This rewrite never changes WHAT happens — only
 how entities are referred to.
 
+STRIP APPEARANCE TEXT BESIDE TOKENS: a slotted entity's appearance
+lives in its reference image. If the draft narrates a token with a full
+appearance description ("<<<image_2>>>, a slender fair-skinned woman
+with a heart-shaped face, striking blue eyes, … sapphire-blue gown,
+approaches"), CUT the description down to a role-level handle of ~5
+words ("<<<image_2>>>, the duke's daughter, approaches") — competing
+text beside pixels is how identities drift. Keep full appearance
+sentences only for entities that have NO reference token.
+
 - Two reference dialects exist; the manifest already speaks the right
   one for this backend: `@Image1`/`@Video1`/"reference image 1"
   (legacy) or `<<<image_1>>>` (Kling). Copy slot IDs VERBATIM — never
