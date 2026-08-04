@@ -98,3 +98,28 @@ def test_skills_carry_exit_vector_and_settle_laws():
     assert "SETTLE-TO-CUT" in sw
     wg = (base / "window_generation/SKILL.md").read_text()
     assert "EXIT VECTOR" in wg and "VELOCITY HANDOFF" in wg
+
+
+def test_draft_prompt_persists_in_ledger(tmp_path):
+    from maestro.memory.storyboard import StoryboardMemory
+    sb = StoryboardMemory.from_outline(["shot 1: x"],
+                                       path=tmp_path / "sb.json")
+    sb.entries[0].draft_prompt = "raw brain draft"
+    sb._save()
+    back = StoryboardMemory.load(tmp_path / "sb.json")
+    assert back.entries[0].draft_prompt == "raw brain draft"
+
+
+def test_ablation_strip_pin_dependency():
+    sys_path_hack = __import__("sys").path
+    from pathlib import Path as _P
+    sys_path_hack.insert(0, str(_P("scripts").resolve().parent / "scripts"))
+    from ablation_nopin import strip_pin_dependency
+    out = strip_pin_dependency(
+        "The shot opens exactly on the pinned first frame. "
+        "<<<image_2>>> lowers the fan slowly. "
+        "Taking over from the previous shot, guests stir. "
+        "The camera stays static.")
+    assert "pinned" not in out and "previous shot" not in out
+    assert "<<<image_2>>> lowers the fan slowly." in out
+    assert "camera stays static" in out

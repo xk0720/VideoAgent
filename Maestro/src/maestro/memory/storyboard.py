@@ -104,6 +104,8 @@ class ShotEntry:
     dialogue_speaker: str = ""
     # 大背景 id(B 案:brain 预测;同 id = 同一物理空间,共用背景资产)
     bg_id: str = ""
+    # brain 生成的 prompt 初版草稿(消融实验用:未经润色/闸门/对白追加)
+    draft_prompt: str = ""
 
     def images_by_role(self, *roles: str) -> list:
         """按角色取图(路径存在的才算数 —— 检索命中但文件丢了 = 没有)。"""

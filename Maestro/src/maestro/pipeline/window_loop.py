@@ -3141,6 +3141,9 @@ def generate_movie_windowed(
             priority=_CONDITION_PRIORITY,
         )
         decisions.append({"stage": "condition", "label": entry.label, **d})
+        # 草稿留档(消融实验前提):brain 的 video_prompt 原文,在一切
+        # 清洗/润色/闸门/对白追加之前,逐字入台账。
+        entry.draft_prompt = str(d.get("video_prompt") or "")
         log.info("window: %s condition → %s (via=%s) %s",
                  entry.label, d["strategy"], d["via"], d.get("reason", ""))
 
@@ -3367,6 +3370,8 @@ def generate_movie_windowed(
                                               "seed": s + 1000,
                                               "mad": round(mad2, 2),
                                               "action": "still_tripped"})
+            cond["final_prompt"] = brain_prompt or cond.get(
+                "final_prompt", "")
             seed_conds.append(cond)
             clip = CandidateClip(shot_idx=spec.shot_idx,
                                  video_path=Path(video_path), revision=0)
