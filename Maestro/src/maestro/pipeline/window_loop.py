@@ -3098,20 +3098,38 @@ def generate_movie_windowed(
                     brain_prompt=brain_prompt, use_prev_tail_video=use_tail,
                     source_videos=source_videos, portraits=shot_portraits)
             except Exception as exc:
-                log.info("window: conditioned generation failed (%s): %s — "
-                         "falling back to plain t2v for this seed",
-                         d["strategy"], exc)
-                # 审查修正:对白镜的兜底 t2v 同样要带口型子句(否则音频
-                # 开着、台词丢了,模型自由配音)。
-                video_path, cond = _generate_with_condition(
-                    "t2v", entry, prev, spec, video_gen, shot_dir,
-                    seed=s, fps=fps, window_tail_s=window_tail_s,
-                    brain_prompt=(_with_dialogue(spec.prompt, entry,
-                                                 storyboard.cast)
-                                  if want_audio else ""))
-                # 异常降级必须留痕:没有这两行,台账会谎称 brain 主动选了 t2v
-                cond["degraded_from"] = d["strategy"]
-                cond["degraded_reason"] = f"exception: {exc}"[:200]
+                # 2026-08-04 run7 shot4 事故:CDN 下载断连这类瞬时故障曾
+                # 一步降级到无参考 t2v(身份/衣着全错)。参考图是镜头的
+                # 命 —— 先同策略重试一次,再失败才降级。
+                log.warning("window: conditioned generation failed (%s): %s "
+                            "— retrying the SAME strategy once before any "
+                            "degrade", d["strategy"], exc)
+                try:
+                    video_path, cond = _generate_with_condition(
+                        d["strategy"], entry, prev, spec, video_gen,
+                        shot_dir, seed=s, fps=fps,
+                        window_tail_s=window_tail_s,
+                        brain_prompt=brain_prompt,
+                        use_prev_tail_video=use_tail,
+                        source_videos=source_videos,
+                        portraits=shot_portraits)
+                    cond["retried_after"] = f"exception: {exc}"[:200]
+                except Exception as exc2:
+                    log.info("window: conditioned generation failed twice "
+                             "(%s): %s — falling back to plain t2v for "
+                             "this seed", d["strategy"], exc2)
+                    # 审查修正:对白镜的兜底 t2v 同样要带口型子句(否则
+                    # 音频开着、台词丢了,模型自由配音)。
+                    video_path, cond = _generate_with_condition(
+                        "t2v", entry, prev, spec, video_gen, shot_dir,
+                        seed=s, fps=fps, window_tail_s=window_tail_s,
+                        brain_prompt=(_with_dialogue(spec.prompt, entry,
+                                                     storyboard.cast)
+                                      if want_audio else ""))
+                    # 异常降级必须留痕:没有这两行,台账会谎称 brain 主动
+                    # 选了 t2v
+                    cond["degraded_from"] = d["strategy"]
+                    cond["degraded_reason"] = f"exception: {exc2}"[:200]
             finally:
                 video_gen.generate_audio = _old_ga
             if want_audio:

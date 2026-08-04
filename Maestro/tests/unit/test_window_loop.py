@@ -245,16 +245,12 @@ def test_exception_fallback_recorded_with_degraded_from(tmp_path, monkeypatch):
     import maestro.pipeline.window_loop as wl
     monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
 
-    class _CrashOnceGen(_WindowVideoGen):
-        def __init__(self):
-            super().__init__()
-            self._crashed = False
-
+    class _CrashAlwaysGen(_WindowVideoGen):
+        # 2026-08-04 起条件生成异常先同策略重试一次 —— 要触发降级必须
+        # 两次都崩(单崩会被重试救回,见下一个测试)
         def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
                      reference_images=None, seed=0, reference_video=None):
-            # 第一次带 first_frame 的调用(i2v_keyframe 策略)模拟 API 400
-            if first_frame is not None and not self._crashed:
-                self._crashed = True
+            if first_frame is not None:
                 raise RuntimeError("WaveSpeed submit failed: HTTP 400 — boom")
             return super().generate(prompt, duration, out_path, fps=fps,
                                     seed=seed)
@@ -262,7 +258,7 @@ def test_exception_fallback_recorded_with_degraded_from(tmp_path, monkeypatch):
     res = generate_movie_windowed(
         "a glass falls off a table", cache_dir=tmp_path,
         llm=_JsonLLM(keyframe="t2i", condition="i2v_keyframe"),
-        max_turns=1, n_candidates=1, **_components(_CrashOnceGen()))
+        max_turns=1, n_candidates=1, **_components(_CrashAlwaysGen()))
     crashed = [e for e in res.storyboard.entries
                if e.condition.get("degraded_from")]
     assert crashed, "崩溃降级必须留痕"
@@ -272,6 +268,38 @@ def test_exception_fallback_recorded_with_degraded_from(tmp_path, monkeypatch):
     assert "400" in c["degraded_reason"]
     assert c["decided_strategy"] == "i2v_keyframe"
     assert c["decided_via"] == "llm"
+
+
+def test_transient_crash_retried_same_strategy_no_degrade(tmp_path,
+                                                          monkeypatch):
+    """2026-08-04 run7 shot4 事故回归:瞬时故障(CDN 下载断连)只崩一次
+    → 同策略重试救回,绝不降级无参考 t2v;台账留 retried_after 痕。"""
+    import maestro.pipeline.window_loop as wl
+    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
+
+    class _CrashOnceGen(_WindowVideoGen):
+        def __init__(self):
+            super().__init__()
+            self._crashed = False
+
+        def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
+                     reference_images=None, seed=0, reference_video=None):
+            if first_frame is not None and not self._crashed:
+                self._crashed = True
+                raise RuntimeError("SSL EOF during download — boom")
+            return super().generate(prompt, duration, out_path, fps=fps,
+                                    first_frame=first_frame, seed=seed)
+
+    res = generate_movie_windowed(
+        "a glass falls off a table", cache_dir=tmp_path,
+        llm=_JsonLLM(keyframe="t2i", condition="i2v_keyframe"),
+        max_turns=1, n_candidates=1, **_components(_CrashOnceGen()))
+    conds = [e.condition for e in res.storyboard.entries]
+    assert not any(c.get("degraded_from") for c in conds), \
+        "单次瞬时故障不许降级 t2v"
+    retried = [c for c in conds if c.get("retried_after")]
+    assert retried and retried[0]["strategy"] == "i2v_keyframe"
+    assert "SSL EOF" in retried[0]["retried_after"]
 
 
 def test_condition_attributed_to_tournament_winner_not_last_seed(tmp_path, monkeypatch):

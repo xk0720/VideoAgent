@@ -1040,12 +1040,7 @@ class BailianKlingClient(BaseVideoGenClient):
                         f"{json.dumps(out, ensure_ascii=False)[:2000]}")
                 out_path = Path(out_path)
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                video = sess.get(url, timeout=300)
-                if video.status_code >= 400:
-                    raise RuntimeError(
-                        f"bailian_kling download for task {task_id} failed: "
-                        f"HTTP {video.status_code}")
-                out_path.write_bytes(video.content)
+                self._download_result(sess, task_id, model, url, out_path)
                 self._log_call({"ts": time.time(), "event": "completed",
                                 "model": model, "task_id": task_id,
                                 "elapsed_s": round(time.time() - t0, 1),
@@ -1068,6 +1063,49 @@ class BailianKlingClient(BaseVideoGenClient):
         raise TimeoutError(
             f"bailian_kling task {task_id} did not finish within "
             f"{self.timeout}s (poll_interval={self.poll_interval}s)")
+
+    def _download_result(self, sess, task_id: str, model: str, url: str,
+                         out_path: Path) -> None:
+        """成片下载,重试到底(2026-08-04 run7 shot4 事故:可灵 CDN
+        kechuangai.com SSL 断连,单次 GET 失败被上层当"生成失败"→ 已付费
+        的 ref2v 成片被丢弃、降级成无参考 t2v)。下载失败 ≠ 生成失败:
+        任务已 SUCCEEDED,片子就在那里 —— 重试 4 次、指数退避;偶数次
+        直连(trust_env=False 会话),奇数次走系统代理环境(直连被掐时
+        代理路径往往通);每次重试前向 dashscope 重新拉签名 URL(旧签名
+        可能过期或钉在坏节点上)。全部失败才 raise。"""
+        import requests
+        last: Exception | None = None
+        for attempt in range(4):
+            if attempt:
+                time.sleep(5 * attempt)
+                try:
+                    r = sess.get(f"{self.BASE}/tasks/{task_id}",
+                                 headers=self._headers(async_=False),
+                                 timeout=30)
+                    fresh = ((r.json().get("output") or {})
+                             .get("video_url")) if r.status_code < 400 else None
+                    if fresh:
+                        url = fresh
+                except Exception:
+                    pass                      # 刷新失败就用旧 URL 再试
+            try:
+                getter = sess.get if attempt % 2 == 0 else requests.get
+                video = getter(url, timeout=300)
+                if video.status_code >= 400:
+                    last = RuntimeError(f"HTTP {video.status_code}")
+                    continue
+                out_path.write_bytes(video.content)
+                return
+            except requests.RequestException as e:
+                last = e
+                log.warning(
+                    "bailian_kling download attempt %d/4 for task %s "
+                    "failed (%s) — retrying with %s", attempt + 1, task_id,
+                    e.__class__.__name__,
+                    "proxy env" if attempt % 2 == 0 else "direct session")
+        raise RuntimeError(
+            f"bailian_kling download for task {task_id} ('{model}') failed "
+            f"after 4 attempts (video WAS generated — task SUCCEEDED): {last}")
 
     # ── WaveSpeed 代理(裁决:t2i / 图像编辑 / 音乐暂留 wavespeed)──
     def _proxy(self, what: str) -> WaveSpeedClient:
