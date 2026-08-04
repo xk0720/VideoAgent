@@ -2595,6 +2595,8 @@ def generate_movie_windowed(
                                         # (路径可 None = 图缺失,落回生成链)
     repair_mode: str = "full",          # 修复两段:full / consistency(只
                                         # 转场)/ classic(只旧策略)
+    enable_bgm: bool = True,            # 背景音乐开关(enable_audio 开着时
+                                        # 才有意义;关 = 只保对白原生音)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
     prompt_enhancer=None,               # 需求 2:可选 PromptEnhancerAgent
@@ -3381,7 +3383,10 @@ def generate_movie_windowed(
 
             # §F 配乐(2026-07-29 极简版):music_plan 逐 scene 一条曲 →
             # 音乐床 → 人声闪避混音 → -14 LUFS。失败绝不毁正片。
-            if enable_audio and final is not None:
+            if enable_audio and not enable_bgm:
+                log.info("window: BGM disabled by flag — shipping with "
+                         "dialogue audio only")
+            if enable_audio and enable_bgm and final is not None:
                 scored = add_music(final, storyboard, video_gen,
                                    cache_dir / "movie_scored.mp4")
                 if scored is not None:
