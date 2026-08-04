@@ -96,8 +96,9 @@ def test_skills_carry_the_reference_rule():
     assert "NAMES are FORBIDDEN" in wg
     assert "IDENTITY APPEARANCE is FORBIDDEN" in wg
     assert "PERFORMANCE IS CONTENT" in wg
-    vpw = (base / "video_prompt_writing/SKILL.md").read_text()
-    assert "TOKEN ONLY" in vpw and "FORBIDDEN" in vpw
+    # video_prompt_writing 已废(代码从不加载)—— 法典并入 window_generation
+    assert not (base / "video_prompt_writing").exists()
+    assert "SCRIPT ACTION IS SACRED" in wg
     pe = (base / "prompt_enhancer/SKILL.md").read_text()
     assert "THE REFERENCE RULE" in pe
     assert "replace EVERY character name" in pe

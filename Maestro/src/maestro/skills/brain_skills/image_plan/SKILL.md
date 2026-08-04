@@ -1,153 +1,66 @@
 ---
 name: image_plan
-agent: window brain (the Image Plan decision in pipeline/window_loop.py)
-description: Per shot, decide HOW MANY images (0/1/2), each image's ROLE and SOURCE, before video generation — the role locks which video-model family may be called. Strict JSON output.
+agent: window brain (§B' per-shot image decision in pipeline/window_loop.py)
+description: The character-image skill — decide whether THIS shot needs its own image(s) and write portrait-grade t2i prompts when one must be generated. Strict JSON output.
 ---
 
-# Image Plan — count + role + source, decided in ONE step
+# Image Plan — character images and per-shot frames
 
 ## Role
-You are preparing the images for ONE shot's video generation. Your single
-decision covers three things at once:
-1. **How many images**: 0 / 1 / 2 (two is the current maximum);
-2. **Each image's ROLE** — the role LOCKS which video-model family the
-   condition stage may call (mismatches are impossible by design);
-3. **Each image's SOURCE**: `t2i` (text-to-image) / `asset_image` (retrieve a
-   user-provided image) / `video_extract` (extract a frame from a user-provided
-   video) — sources MAY MIX across the two images (e.g. image 1 = the user's
-   character photo, image 2 = a t2i scene).
+Two duties. (a) Portrait craft: when a character has no user image,
+their official portrait is generated from a t2i prompt you write —
+that portrait then anchors the character's identity in EVERY shot.
+(b) Per-shot planning: decide from the menu whether this shot needs
+its own image(s) beyond what rides automatically.
 
-## Role → video-model family (locked mapping)
+## What rides automatically (plan around it, never duplicate it)
 
-| plan | image role(s) | video call that follows | payload image field |
-|---|---|---|---|
-| single_first_frame | first frame anchor | seedance-2.0 i2v (ti2v) | `image` |
-| single_reference | reference (character/object/scene consistency) | seedance-2.0 t2v + refs (t2v_own_refs / ti2v_prev_plus_keyframe) | `reference_images` (@ImageN) |
-| pair_first_last | first frame + last frame | seedance-2.0 i2v (both ends locked) | `image` + `last_image` |
-| pair_reference | two references (e.g. two characters; character + scene) | seedance-2.0 t2v + refs (both ride @ImageN on the same call) | `reference_images` |
-| none | no images | t2v / previous-shot-anchored routes | — |
+- Official character portraits attach as reference images on every
+  reference-carrying route.
+- The scene's empty background plate attaches per the storyboard's
+  `bg` id.
+- In-scene continuation shots are hard-pinned to the previous shot's
+  final frame at the API level.
+With all three in place, a continuing shot almost always needs
+NOTHING: choose "none" unless a concrete gap remains.
 
-## How to decide (reason from the story and the assets — NOT rules to memorize)
+## Portrait prompt craft (when a portrait must be generated)
 
-- The shot must OPEN on one exact picture (in-scene continuation, a held
-  opening frame) → **first_frame**.
-- The shot contains a subject whose LOOK must stay consistent (a character, a
-  specific object, a specific place) but the model should compose the frame
-  freely → **reference**.
-- Both the opening and the closing of the shot are known (an action from state
-  A to state B; a transition shot) → **pair_first_last**: image 1 = the
-  opening moment, image 2 = the closing moment — write the two descriptions as
-  two moments of the SAME scene.
-- The shot must blend several independent elements into one frame (two
-  characters together; the user's character inside the user's location) →
-  **pair_reference**.
-- Worked reasoning over asset scenarios (reason like this, do not hardcode):
-  - The user provided a BACKGROUND/location image: the first shot in that
-    location may open on it directly (single_first_frame, source=asset_image);
-    later shots in the same location should use it as single_reference for
-    scene consistency — do NOT open every shot on it, or every shot starts
-    frozen on the same still.
-  - The user provided a CHARACTER photo: every shot the character appears in
-    should carry it as a reference (single_reference, or one slot of
-    pair_reference); only use it as first_frame when the script explicitly
-    opens on a held close-up of the character.
-  - The user provided TWO character photos (e.g. the leads): shots with both
-    on screen → pair_reference.
-  - The user provided a SOURCE VIDEO: video_extract a frame — as first_frame
-    (continuing the user's own footage) or as a reference.
-  - Nothing provided (pure generation): t2i; give the opening shot a
-    single_first_frame to set the look, and prefer **none** for most
-    mid-scene shots (they anchor on the previous shot's last frame / tail —
-    see the window_generation skill). NOT every shot needs its own image;
-    gratuitous keyframes BREAK continuity instead of helping it.
-- A first_frame-role image is consumed by i2v_keyframe; with a previous
-  shot it may instead be REPURPOSED as flf2v_bridge's closing anchor, or
-  ride as @Image2 next to the previous last frame on the t2v route — the
-  role states intent, the condition stage picks the consumer.
-- The user's source videos ALSO ride natively as @VideoN references on the
-  t2v strategies (condition stage, ≤3, 15s head clips) — plan
-  video_extract only when the shot needs a KEY IMAGE from the footage (an
-  exact frame to open/close on, or a specific object's look); for mere
-  subject consistency @VideoN already covers it, and the clip's catalog
-  label already describes its full content (native video understanding),
-  so you know what a frame extraction would yield before planning it.
-- t2i image descriptions must EMBED the canonical `cast` descriptor of any
-  character in the image and the `setting` words (both provided in your
-  context) — independently-worded t2i prompts are how the same character
-  gets two different looks. Use the STATIC half of a cast descriptor as
-  natural prose — the labels "static:"/"dynamic:" and the dynamic list
-  are contract metadata and never enter a t2i prompt (a deterministic
-  scrubber cleans verbatim leaks; paraphrased leaks are yours to
-  prevent); pick pose/expression from the dynamic half to fit this frame.
-- OPENING SNAPSHOT AS T2I BASE: when the
-  shot's ledger line carries `opening_frame` (the script's purely static
-  opening snapshot — first shot / scene cuts), build the first-frame
-  image's t2i prompt FROM it: it already states the composition with no
-  ongoing action, which is exactly what a still needs (a motion sentence
-  makes t2i render motion blur or a mid-action pose that i2v then can't
-  start from). Add cast/setting words as above. The executor's own
-  fallback does the same when you give no per-image spec.
-- `asset_catalog` entries carry kind + a description. When you pick
-  asset_image, put the retrieval query into that image's `description`
-  (retrieval scores by keyword overlap with asset descriptions).
-- OFFICIAL PORTRAITS ARE NOT YOURS TO PLAN: each
-  cast character's official portrait AUTO-ATTACHES to the reference
-  channel of every shot the character appears in — you never see them in
-  `asset_catalog`, never plan them as asset_image, and never re-describe
-  them as a t2i image. Planning a portrait as this shot's own image puts
-  the same picture into the reference list TWICE and makes a full-body
-  facing-camera portrait dominate the opening frame of every shot. A shot
-  whose only consistency need is "the character must look right" needs
-  **none** — the portrait channel already covers it.
-- NO TEXT-DRAWN FIRST FRAMES FOR PORTRAIT-BOUND CAST: when a character
-  in this shot has an OFFICIAL PORTRAIT (user-provided or generated), do
-  NOT plan a t2i first_frame image — a text-to-image model re-imagines
-  the face and wardrobe from words, and hard-pinning that frame locks
-  the WRONG look in while the portrait references can no longer correct
-  it. Such shots ride the reference route (the portraits steer the frame
-  directly); a deterministic guard drops violating t2i first-frame
-  plans. First frames from asset_image or video_extract (real user
-  pixels) remain allowed.
-- SCENE ANCHORS ARE NOT YOURS TO PLAN EITHER: the executor
-  deterministically generates ONE characterless establishing image per
-  scene and injects it as a reference row on backends that support it —
-  it never appears in `asset_catalog` and you must never plan a
-  "scene/background consistency" image to duplicate it. A shot whose
-  only consistency need is "same background" needs **none**.
-- COHERENCE with the condition stage (do not waste money): an image you plan
-  here is only useful if the NEXT stage (window_generation) will pick a
-  strategy that consumes it. Check `episode_guidance.avoid` for this shot's
-  label: if the image's natural consumer strategies all failed there for
-  ROUTE-level reasons (anchor mismatch, strategy degraded), plan **none**
-  instead of spending a t2i call on an image that will be dropped. If the
-  recorded reasons are content-level (physics, missing action), the image
-  route is fine — plan it.
+- The canon's `static:` half becomes the prompt verbatim — every
+  color, garment and mark — plus: neutral standing pose, plain
+  background, even lighting, front three-quarter view, full or
+  half body.
+- One character per image; no props unless the canon names them; no
+  scene dressing (the portrait must not smuggle a location).
+- ENGLISH, concrete visual words only.
+
+## Role → video-model family lock
+
+An image's ROLE decides the downstream generation family: a
+first_frame image locks an i2v-style route; a first+last pair locks
+flf2v; reference images ride the reference channel. Plan roles for the
+route the shot actually needs — a wrong role locks the wrong family.
+
+## Per-shot rules
+
+1. NO TEXT-DRAWN FIRST FRAMES: when the shot's cast have official
+   portraits, never plan a t2i first_frame image of them — a freshly
+   drawn face contradicts the portrait and splits identity. Asset
+   images (real user pixels) are exempt.
+2. A planned image must close a REAL gap: a brand-new location's
+   establishing look, a scripted prop the references don't show, a
+   scene-cut opening that nothing pins. Name the gap in `reason`.
+3. pair_first_last only when the script fixes BOTH boundary moments.
+4. Every t2i description is a complete standalone prompt (subject +
+   setting + lighting + style), ENGLISH, no character names — use the
+   canon's visual words instead.
 
 ## Output format (STRICT JSON — output this and nothing else)
 
 {"strategy": "<one plan name from the menu>",
  "images": [{"source": "t2i"|"asset_image"|"video_extract",
-             "description": "<full t2i prompt, or the retrieval query>"}, ...],
+             "description": "<full t2i prompt, or the retrieval query>"}],
  "reason": "<one short sentence>"}
 
-- The number of `images` entries MUST match the plan (single_* = 1,
-  pair_* = 2, none = 0 / omit).
-- For pair_first_last the two descriptions MUST read as the opening moment
-  and the closing moment of the same scene.
-- A `t2i` description is a COMPLETE image-generation prompt (subject + setting
-  + lighting + style), never a single word — and ALWAYS in ENGLISH
-  regardless of the user's language (a non-English t2i prompt reaching
-  the image model produces a wrong keyframe; a deterministic gate warns,
-  but writing English is YOUR job).
-
-### Example 1 — pure generation, opening shot
-{"strategy": "single_first_frame", "images": [{"source": "t2i", "description": "a glass of water standing near the edge of a wooden kitchen table, warm morning light, photorealistic, eye-level close-up"}], "reason": "opening shot sets the look; the video must start exactly on this framing"}
-
-### Example 2 — the user provided two character photos; both appear in this shot
-{"strategy": "pair_reference", "images": [{"source": "asset_image", "description": "female character portrait"}, {"source": "asset_image", "description": "male character portrait"}], "reason": "both characters share the frame; their faces must stay recognizable — reference pair via the seedance t2v @refs route"}
-
-### Example 3 — a transition shot from state A to state B (mixed sources)
-{"strategy": "pair_first_last", "images": [{"source": "video_extract", "description": "the corridor from the user's source clip"}, {"source": "t2i", "description": "the same corridor, the door at the end now open, camera slightly closer, same lighting"}], "reason": "the shot opens on the user's real corridor and must end on the opened door"}
-
-### Example 4 — third shot inside the same scene, no own image needed
-{"strategy": "none", "images": [], "reason": "mid-scene continuation — anchor on the previous shot's last frame instead of a fresh image"}
+`images` count MUST match the plan (single_* = 1, pair_* = 2,
+none = 0).

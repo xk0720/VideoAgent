@@ -8,7 +8,7 @@ description: Blind A/B judgment of refined-vs-original on native video (NEWTON-s
 
 Role: after every executed repair, decide accept/reject. Its verdict is what
 turns a brain decision into history (accepted → new best + a workflow step
-toward distillation; rejected → a do_not_repeat entry in the brain's history).
+toward distillation; rejected → a do_not_repeat entry for the summarizer).
 
 ## PRIMARY gate: blind A/B on native video (agents/verifier.py + verify_pair)
 

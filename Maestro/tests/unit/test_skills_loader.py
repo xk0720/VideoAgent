@@ -10,7 +10,10 @@ from maestro.skills.loader import (
 def test_catalog_contains_every_agent_skill():
     cat = load_skill_catalog()
     assert {"orchestrator", "semantic_critic", "physics_critic",
-            "physics_measure", "review_summarizer", "verifier"} <= set(cat)
+            "physics_measure", "verifier"} <= set(cat)
+    # 用户裁决:review_summarizer / video_retrieval 完全废除
+    assert "review_summarizer" not in cat
+    assert "video_retrieval" not in cat
     for name, meta in cat.items():
         assert meta["description"], name          # frontmatter present
         assert meta["agent"], name
@@ -37,12 +40,15 @@ def test_brain_loads_its_skill_from_the_skills_folder():
     assert not orch._skill_prompt.startswith("---")   # frontmatter stripped
 
 
-def test_summarizer_polish_instruction_comes_from_skill_file():
+def test_summarizer_skill_retired_inline_fallback_works():
+    """用户裁决:review_summarizer 技能废除 —— agent 落内联兜底指令,
+    不因缺文件而崩。"""
     from maestro.agents.review_summarizer import ReviewSummarizerAgent
+    from maestro.skills.loader import load_skill
 
+    assert load_skill("review_summarizer") is None
     instr = ReviewSummarizerAgent()._polish_instruction()
     assert "Use ONLY the facts given" in instr
-    assert "measured_precedence" in instr    # the skill body, not the fallback
 
 
 def test_measured_physics_skill_documents_the_real_chain():
@@ -54,10 +60,10 @@ def test_measured_physics_skill_documents_the_real_chain():
 
 def test_folder_skill_form_and_user_drafts():
     """标准 folder+SKILL.md 形态:名字从 frontmatter/文件夹名解析;用户草稿
-    (scene_write / video_retrieval)已填充并入目录。"""
+    (scene_write / scene_image)已填充并入目录。"""
     from maestro.skills.loader import load_skill_catalog
 
     cat = load_skill_catalog()
-    for name in ("scene_write", "video_retrieval", "window_generation"):
+    for name in ("scene_write", "scene_image", "window_generation"):
         assert name in cat, name
         assert cat[name]["path"].endswith(f"{name}/SKILL.md")

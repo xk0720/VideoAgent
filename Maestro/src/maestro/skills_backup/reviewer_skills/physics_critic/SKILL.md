@@ -13,7 +13,7 @@ annotation), sampled frames + annotated expected modes only on the
 OpenAI-compat fallback path. This is the OPINION tier (`source="vlm"`): it covers
 what the measured chain cannot (deformation, fluids, contact appearance,
 occluded motion), and it is the fallback tier for entities whose tracks failed
-certification. Where BOTH tiers speak on the same entity/span, the merge
+certification. Where BOTH tiers speak on the same entity/span, the summarizer
 merges them (cross-type confirmation) and the MEASURED severity wins conflicts.
 
 ## What to look for (the annotated failure modes)
