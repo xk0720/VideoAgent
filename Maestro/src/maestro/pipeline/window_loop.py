@@ -1563,6 +1563,22 @@ def _execute_image_plan(decision: dict, entry, video_gen,
                         "(reference route carries the portraits)",
                         entry.label)
             continue
+        # A1 律扩展(run10 实跑):参考槽同样不许 t2i 重画【人】——
+        # 出场者全有官方肖像时,文字版人像 = 第二个相互打架的身份锚
+        # (skill 已立"不得重复自动附挂之物",这里是硬闸)。道具/
+        # 场景类 t2i 参考(描述不含人物词)照常放行。
+        if has_portrait_cast and src == "t2i" \
+                and role in ("reference", "ref") \
+                and re.search(r"\b(character|person|woman|man|girl|boy|"
+                              r"lady|gentleman|face|portrait)\b",
+                              str(spec_i.get("description") or ""),
+                              re.IGNORECASE):
+            log.warning("image plan: %s t2i PERSON REFERENCE blocked — "
+                        "the cast's official portraits already ride; a "
+                        "text-drawn person is a second, competing "
+                        "identity anchor; dropping the slot",
+                        entry.label)
+            continue
         # 出口清洗:query 会成为 t2i prompt / 检索词 —— 剥 <标记>、洗
         # cast 契约标签(brain 抄写描述/契约时可能原样带出)。
         query = _scrub_cast_labels(

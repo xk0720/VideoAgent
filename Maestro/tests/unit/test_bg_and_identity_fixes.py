@@ -139,3 +139,37 @@ def test_t2i_first_frame_blocked_for_portrait_cast(tmp_path):
         d3, _entry(), gen, am, None, tmp_path / "kf3",
         has_portrait_cast=True)
     assert plan3 == "single_first_frame" and imgs3
+
+
+def test_t2i_person_reference_blocked_for_portrait_cast(tmp_path):
+    """A1 律扩展(run10 实跑):出场者全有官方肖像时,t2i 重画【人】当
+    参考 = 第二个身份锚,生成前拦截;道具/场景类 t2i 参考放行。"""
+    class _T2I:
+        def __init__(self):
+            self.calls = 0
+
+        def text_to_image(self, prompt, out, seed=0):
+            self.calls += 1
+            return _png(Path(out))
+
+        def capabilities(self):
+            return {"t2i"}
+
+    gen = _T2I()
+    person = {"strategy": "single_reference",
+              "images": [{"source": "t2i",
+                          "description": "The character has an oval face "
+                                         "and a purple velvet gown"}]}
+    plan, imgs, degraded = wl._execute_image_plan(
+        person, _entry(), gen, None, None, tmp_path / "k1",
+        has_portrait_cast=True)
+    assert gen.calls == 0 and plan == "none"
+    # 道具类参考不受拦
+    prop = {"strategy": "single_reference",
+            "images": [{"source": "t2i",
+                        "description": "an ornate black lace folding fan "
+                                       "with gold sticks on dark velvet"}]}
+    plan2, imgs2, _ = wl._execute_image_plan(
+        prop, _entry(), gen, None, None, tmp_path / "k2",
+        has_portrait_cast=True)
+    assert gen.calls == 1 and plan2 == "single_reference"
