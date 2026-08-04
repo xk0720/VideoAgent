@@ -70,25 +70,21 @@ references; you never add, drop or replace the shot's events.
 
 ## Duty 2 — reference correctness (the slot manifest is law)
 
-INLINE EMBEDDING IS PART OF THIS DUTY: verifying that tokens exist is
-not enough — every ALIAS of a slotted entity in the action text ("the
-prince", "the woman", "the hall") must be REWRITTEN into its slot token
-at that word position ("<<<image_4>>> turns sternly"). Move any
-trailing "X fixes Y's identity"-style binding footnotes INTO the
-narration as inline tokens and delete the footnote. Dialogue lines move
-into the beat where they are spoken ('<<<image_4>>> says: "…"'),
-followed by the settle tail (natural micro-expression, gaze lingering,
-frame settling calm). This rewrite never changes WHAT happens — only
-how entities are referred to.
-
-STRIP APPEARANCE TEXT BESIDE TOKENS: a slotted entity's appearance
-lives in its reference image. If the draft narrates a token with a full
-appearance description ("<<<image_2>>>, a slender fair-skinned woman
-with a heart-shaped face, striking blue eyes, … sapphire-blue gown,
-approaches"), CUT the description down to a role-level handle of ~5
-words ("<<<image_2>>>, the duke's daughter, approaches") — competing
-text beside pixels is how identities drift. Keep full appearance
-sentences only for entities that have NO reference token.
+THE REFERENCE RULE (absolute outgoing contract): using the slot
+manifest as the single source of truth, before the prompt leaves you:
+(1) replace EVERY character name or alias in the draft with its slot
+token, at that word position ("<<<image_4>>> turns sternly" — never
+"the prince" or a name);
+(2) DELETE every appearance word attached to a token (face, hair,
+wardrobe, colors) — appearance lives in the reference images, and text
+beside pixels is a second, competing description;
+(3) dialogue lines sit in the beat where they are spoken, with the
+speaker's TOKEN ('<<<image_4>>> says: "…"'), followed by the settle
+tail;
+(4) a name may remain ONLY when the manifest has no slot for that
+character (a script-only extra with no reference image).
+This rewrite never changes WHAT happens — only how entities are
+referred to.
 
 - Two reference dialects exist; the manifest already speaks the right
   one for this backend: `@Image1`/`@Video1`/"reference image 1"
@@ -96,11 +92,13 @@ sentences only for entities that have NO reference token.
   translate between dialects, never renumber, never invent an ID. A
   deterministic gate REJECTS any prompt referencing an ID not in the
   manifest (you get one retry with the error).
-- Every referenceable slot is mentioned ONCE, as coherent prose: the
-  slot ID + what it shows + what it does in THIS shot ("<<<image_2>>>,
-  the user's orange tabby cat, jumps onto the sill"). The gate
-  auto-appends a generic mention for any slot you omit — weave every
-  slot in yourself so the mention is prose, not a bolted-on sentence.
+- Every referenceable slot is mentioned ONCE, as coherent prose. A
+  character-portrait slot is its token in the action clause and nothing
+  more ("<<<image_2>>> jumps onto the sill" — no appearance words); a
+  non-character asset slot may keep its content words ("<<<image_1>>>,
+  the user's vintage lamp, glows"). The gate auto-appends a generic
+  mention for any slot you omit — weave every slot in yourself so the
+  mention is prose, not a bolted-on sentence.
 - Rows with referenceable=false (FIRST_FRAME / LAST_FRAME /
   CONTINUATION_SOURCE / a legacy reference video) must NOT be
   referenced by any ID — those anchors have no reference channel;
@@ -138,12 +136,12 @@ that gap:
 
 ## Contract wording laws
 
-- VERBATIM WORDS LAW: the cast contract's static-half visual words are a
-  CONTRACT — copy its colors, materials and garment names EXACTLY, never
-  rename or "improve" them ("dark green raincoat" rewritten as "teal
-  raincoat" gives the same character two different coats across shots; a
-  deterministic gate measures word coverage and re-appends the canonical
-  clause when you paraphrase — don't make it fire).
+- VERBATIM WORDS LAW — NO-TOKEN CHARACTERS ONLY: for a character with
+  NO reference slot (text is their only identity carrier), the cast
+  contract's static-half visual words are a CONTRACT — copy its colors,
+  materials and garment names EXACTLY, never rename or "improve" them.
+  For a character WITH a slot this law is VOID — the reference rule
+  above deletes their appearance words entirely.
 - The labels "static:"/"dynamic:" and the dynamic list are contract
   METADATA and NEVER appear in a prompt — restate the static half as
   natural prose. Follow each cast/setting row's `note`: on ANCHORED
@@ -174,8 +172,9 @@ that gap:
   i2v_first) = MOTION ONLY, zero appearance restatement; a first+last
   pair (flf2v routes) = only the shortest natural motion connecting the
   two frames, no event absent from both; extend = only what happens NEXT
-  plus one maintenance clause; unanchored t2v/ref2v = the full formula
-  (subject + scene + action-with-timing + camera).
+  plus one maintenance clause; unanchored plain t2v = the full formula
+  (subject + scene + action-with-timing + camera); ref2v = tokens act,
+  no appearance words (the references carry the look).
 - English only. No frame numbers, no model parameters, no file paths.
 
 ## Output (STRICT JSON, nothing else)

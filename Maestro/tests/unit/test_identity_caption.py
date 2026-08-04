@@ -87,15 +87,19 @@ def test_caption_canon_hard_override():
     assert "不在正典的名字" not in canon
 
 
-def test_skills_forbid_appearance_text_beside_tokens():
-    """三技能都必须立"记号旁不写外观"法(像素即外观,文字只留短称呼)。"""
+def test_skills_carry_the_reference_rule():
+    """引用铁律(2026-08-04 用户令)三技能齐备:角色只用记号指称、
+    名字禁入 prompt、外观描述禁入 prompt。"""
     base = Path("src/maestro/skills/brain_skills")
     wg = (base / "window_generation/SKILL.md").read_text()
-    assert "THE PIXELS ARE THE APPEARANCE" in wg
-    assert "NEVER restate them" in wg
+    assert "TOKEN ONLY" in wg
+    assert "NAMES are FORBIDDEN" in wg
+    assert "APPEARANCE DESCRIPTION is FORBIDDEN" in wg
     vpw = (base / "video_prompt_writing/SKILL.md").read_text()
-    assert "THE PIXELS ARE THE APPEARANCE" in vpw
+    assert "TOKEN ONLY" in vpw and "FORBIDDEN" in vpw
     pe = (base / "prompt_enhancer/SKILL.md").read_text()
-    assert "STRIP APPEARANCE TEXT BESIDE TOKENS" in pe
-    # 样例也得以身作则:Example 2 不再给记号挂衣着颜色
+    assert "THE REFERENCE RULE" in pe
+    assert "replace EVERY character name" in pe
+    # 样例以身作则:Example 2 无外观同位语、收势句主语是记号
     assert "dark green coat" not in wg and "grey sweater" not in wg
+    assert "the character holds a natural micro-expression" not in wg

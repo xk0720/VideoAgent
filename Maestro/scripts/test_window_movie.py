@@ -105,6 +105,9 @@ def main() -> int:
                          "对比(附加物,不影响正流程)")
     ap.add_argument("--anchor-duration", type=int, default=None,
                     help="锚点视频时长秒数(默认不传 = API 默认)")
+    ap.add_argument("--transitions", action="store_true",
+                    help="启用 add_transition 转场桥修复工具(2026-08-04 "
+                         "用户令:默认关闭)")
     ap.add_argument("--no-bgm", action="store_true",
                     help="关闭背景音乐(§F 配乐不跑);--audio 开着时仍保"
                          "对白原生音+口型同步——'人物说话有声、无 BGM'")
@@ -294,6 +297,7 @@ def main() -> int:
         enable_review=(not args.no_review),
         repair_mode=args.repair_mode,
         enable_bgm=(not args.no_bgm),
+        enable_transitions=args.transitions,
         baseline_anchor=args.baseline_anchor,
         baseline_anchor_duration=args.anchor_duration,
         prompt_enhancer=prompt_enhancer,

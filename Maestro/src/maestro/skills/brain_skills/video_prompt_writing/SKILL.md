@@ -373,28 +373,19 @@ Both endpoints are fixed; you are writing the road between them.
   motion, or both, and keep identity, wardrobe, scene structure and
   lighting continuous throughout.
 
-## 12b. Inline reference embedding (the binding law above all)
+## 12b. The reference rule (absolute, overrides all other sections)
 
-Reference tokens are SUBJECTS of the narration, not footnotes. The
-official-grade pattern: "<<<image_2>>> and <<<image_1>>> shake hands
-and talk". Every appearance of a slotted entity uses its token at that
-word position; the background opens its beat ("Inside <<<image_1>>>,
-…"); beats are prefixed with shot-size + camera ("Close-up, static
-camera: …"); dialogue is written in its beat with the speaker's token
-and followed by a settle tail. A prompt that narrates with unbound
-aliases and appends binding footnotes at the end is WRONG even if every
-token technically appears.
-
-THE PIXELS ARE THE APPEARANCE: a slotted entity's face, hair, wardrobe
-and colors live in its reference image — never restate them in the
-prompt. Attach at most a role-level handle of ~5 words ("<<<image_2>>>,
-the duke's daughter") for readability. Appearance text beside a token
-is a second, competing description: any drift between text and image
-(a wrong color, an invented hairstyle) pulls the model AWAY from the
-reference — this is the #1 identity killer with reference-carrying
-routes. Spend the freed words on motion, spatial relations and camera.
-Full appearance sentences belong ONLY to entities with no reference
-token.
+When reference slots exist, the slot manifest maps every token to its
+character. In the prompt: a character is referred to by TOKEN ONLY at
+the word position where they act ("<<<image_2>>> walks toward
+<<<image_4>>>"); character NAMES are FORBIDDEN (a name means nothing to
+the video model and reads as a phantom extra person); APPEARANCE
+DESCRIPTION is FORBIDDEN (no face, hair, wardrobe or color words — the
+reference images carry the look; text beside pixels is a second,
+competing description and the #1 identity killer). Write only: who
+(token) + action + camera. Dialogue uses the speaker's token:
+'<<<image_4>>> says: "…"'. Full appearance prose belongs solely to
+characters that have NO reference token.
 
 ## 13. Reference-image binding contract
 

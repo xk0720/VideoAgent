@@ -189,7 +189,12 @@ def _strip_markers(text: str) -> str:
 # 竞争 —— t2v 会照文字重新搭场景,首帧软锁被稀释;瘦身法则由此而来。
 _ANCHORED_STRATEGIES = {"i2v_keyframe", "flf2v_own_pair", "flf2v_bridge",
                         "ti2v_prev_last", "ti2v_prev_plus_keyframe",
-                        "extend_prev", "i2v_first"}
+                        "extend_prev", "i2v_first",
+                        # 2026-08-04 用户令(引用铁律):锚 = 身份像素,
+                        # 不 = 钉帧。ref2v 满手参考图,身份在像素里 ——
+                        # 正典闸对它强插外观文字正是 run8 prompt 污染的
+                        # 主源,豁免。文字仍是唯一身份载体的只剩纯 t2v。
+                        "ref2v"}
 
 # 首帧强锁句(用户实测有效的原话;兜底模板与全修合成共用一处定义)
 _PIN_SENTENCE = ("The shot opens EXACTLY on @Image1 — the final moment of "
@@ -554,11 +559,22 @@ def _final_cut(storyboard, cache_dir: Path) -> tuple[list, list]:
     return out, notes
 
 
-def _with_dialogue(prompt: str, entry, cast: dict) -> str:
+def _name_slot_map(slots) -> dict:
+    """槽位清单 → {角色名: 记号}。引用铁律(2026-08-04 用户令):prompt
+    里只许用记号指称角色 —— 一切确定性写手(对白句等)出字前查这张表。"""
+    return {r["name"]: r["slot"] for r in (slots or [])
+            if r.get("name") and r.get("referenceable")}
+
+
+def _with_dialogue(prompt: str, entry, cast: dict,
+                   name_to_slot: Optional[dict] = None) -> str:
     """对白镜的口型子句(2026-07-29 音频线):确定性追加在最终 prompt 尾,
     brain/enhancer 都不写它(skill 已注明)。台词已在 prompt 里(引号串
     去重)→ 原样返回。压制背景音是本子句的核心:BGM 由 §F 统一配,
-    生成端只许出人声,两层互不打架。"""
+    生成端只许出人声,两层互不打架。
+    引用铁律(2026-08-04 用户令):说话人用槽位记号指称 —— 名字对视频
+    模型没有意义,多人同框时记号决定口型给谁;清单里没这个角色(真没
+    参考图,如 t2v 降级)才落名字。"""
     line = str(getattr(entry, "dialogue", "") or "").strip()
     if not line or not prompt:
         return prompt
@@ -570,8 +586,9 @@ def _with_dialogue(prompt: str, entry, cast: dict) -> str:
     if not who or (cast and who not in cast):
         who = next(iter(_cast_in_shot(entry.description, cast)),
                    "the character")
-    return (f'{prompt} {who} says: "{line}", mouth moving with the '
-            f"words. After the line, {who} holds a natural "
+    subj = (name_to_slot or {}).get(who) or who
+    return (f'{prompt} {subj} says: "{line}", mouth moving with the '
+            f"words. After the line, {subj} holds a natural "
             f"micro-expression, gaze lingering, the frame settling calm. "
             f"Audio: only the character's voice speaking the line — "
             f"no background music, no ambient sound, no sound effects.")
@@ -1803,7 +1820,7 @@ def _slot_manifest(strategy: str, entry, prev,
                  "content": _c(p, "a planned reference image")}
                 for i, p in enumerate(own)]
         rows += [{"slot": _ref_tok(video_gen, len(own) + j + 1),
-                  "referenceable": True,
+                  "referenceable": True, "name": n,
                   "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
         return rows
@@ -1817,7 +1834,7 @@ def _slot_manifest(strategy: str, entry, prev,
                   "content": _c(p, "a planned reference image")}
                  for i, p in enumerate(own)]
         rows += [{"slot": _ref_tok(video_gen, len(own) + j + 1),
-                  "referenceable": True,
+                  "referenceable": True, "name": n,
                   "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
         return rows
@@ -1836,7 +1853,7 @@ def _slot_manifest(strategy: str, entry, prev,
         # 都从这行抄引用语义,缺了它模型会把画面坍缩成肖像构图(实录:
         # 末镜女主正面呆立 = 肖像标准姿势)。
         rows += [{"slot": f"@Image{len(refs) + j + 1}",
-                  "referenceable": True,
+                  "referenceable": True, "name": n,
                   "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
         rows += [{"slot": f"@Video{i + 1}", "referenceable": True,
@@ -2660,6 +2677,9 @@ def generate_movie_windowed(
                                         # (路径可 None = 图缺失,落回生成链)
     repair_mode: str = "full",          # 修复两段:full / consistency(只
                                         # 转场)/ classic(只旧策略)
+    enable_transitions: bool = False,   # 转场桥开关(2026-08-04 用户令:
+                                        # 默认关;开着才把 add_transition
+                                        # 提供给修复菜单)
     enable_bgm: bool = True,            # 背景音乐开关(enable_audio 开着时
                                         # 才有意义;关 = 只保对白原生音)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
@@ -2998,6 +3018,16 @@ def generate_movie_windowed(
         # —— 它写 video_prompt 时引用编号只许照抄所选策略的清单,不许猜。
         menu = _condition_menu(entry, prev, video_gen,
                                portraits=shot_portraits)
+        # 钉帧默认化(2026-08-04 用户令):同 scene 续拍必须钉上镜尾帧
+        # (i2v_first),不给 brain 裁量;跨 scene(或无上镜)才开放全
+        # 菜单。旧后端菜单没有 i2v_first → 不受影响。
+        if prev is not None and prev.video_path and entry.shot_idx > 0:
+            _prev_entry = storyboard.entries[entry.shot_idx - 1]
+            _pin_only = [m for m in menu if m["name"] == "i2v_first"]
+            if _pin_only and _prev_entry.scene_idx == entry.scene_idx:
+                menu = _pin_only
+                log.info("window: %s same-scene continuation → menu "
+                         "pinned to i2v_first (rule)", entry.label)
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
@@ -3111,7 +3141,8 @@ def generate_movie_windowed(
                 brain_prompt = fixed
         if want_audio:
             brain_prompt = _with_dialogue(brain_prompt or spec.prompt,
-                                          entry, storyboard.cast)
+                                          entry, storyboard.cast,
+                                          name_to_slot=_name_slot_map(slots))
         for s in range(max(1, n_candidates)):
             _old_ga = getattr(video_gen, "generate_audio", False)
             if want_audio:
@@ -3317,7 +3348,12 @@ def generate_movie_windowed(
             # 子句重新追加(_with_dialogue 引号串去重),原生音频同款开关。
             _wa = bool(enable_audio and getattr(_entry, "dialogue", ""))
             if _wa:
-                prompt = _with_dialogue(prompt, _entry, _cast)
+                prompt = _with_dialogue(
+                    prompt, _entry, _cast,
+                    name_to_slot=_name_slot_map(_slot_manifest(
+                        _strategy, _entry, _prev, use_prev_tail=_ut,
+                        source_videos=source_videos, portraits=_portraits,
+                        video_gen=video_gen)))
             _old_ga2 = getattr(video_gen, "generate_audio", False)
             if _wa:
                 video_gen.generate_audio = True
@@ -3361,8 +3397,11 @@ def generate_movie_windowed(
                 first_frame=last, last_frame=first, out_path=outp,
                 duration=3, seed=777))
 
+        # 转场开关(2026-08-04 用户令):默认关 —— transition_fn=None 时
+        # add_transition 根本不进修复菜单(orchestrator 按可用性门控)。
         transition_fn = (_transition_fn
-                         if prev is not None and prev.video_path
+                         if enable_transitions
+                         and prev is not None and prev.video_path
                          and "flf2v" in (video_gen.capabilities() or set())
                          and hasattr(video_gen, "frame_to_frame") else None)
 

@@ -69,43 +69,27 @@ pools: pick only names present in THIS turn's menu.
 
 How to write for the Kling pool:
 
-- INLINE REFERENCE EMBEDDING (the core Kling writing law): reference
-  tokens are the NOUNS of your action narration, never trailing
-  footnotes. Every time an entity with a slot acts or appears, call it
-  by its token AT THAT WORD POSITION — the binding happens where the
-  action happens. Official-grade shape: "<<<image_2>>> and
-  <<<image_1>>> shake hands and talk". FORBIDDEN shape: "the woman
-  approaches the prince … <<<image_2>>> fixes the woman's identity"
-  (the model must guess who 'the woman' is — that guess is exactly
-  what fails).
-  - Token + SHORT HANDLE + action: "<<<image_2>>>, the duke's
-    daughter, walks toward <<<image_4>>>". The handle is for
-    READABILITY only — a role-level tag of at most ~5 words ("the
-    prince", "the woman in blue"). THE PIXELS ARE THE APPEARANCE:
-    a slotted entity's face, hair, wardrobe and colors live in its
-    reference image, so NEVER restate them in the prompt. Appearance
-    text beside a token is not reinforcement — it is a second,
-    competing description, and any drift between the two (a wrong
-    color, an invented braid) actively pulls the model AWAY from the
-    reference. Official-grade prompts are sparse: "<<<image_2>>> and
-    <<<image_1>>> shake hands and talk" carries zero appearance words.
-    Full appearance sentences are ONLY for entities that have NO
-    reference token (script-only characters in the t2v pool).
-  - The BACKGROUND is an entity too: open the beat inside its token —
-    "Inside <<<image_1>>>, the grand ballroom, …" — not a trailing
-    "match the environment" clause. Same law: name the space in ≤5
-    words and stop; do not re-list its chandeliers, columns and floors
-    — the background image already shows them.
-  - BEAT STRUCTURE: split the shot into 2-4 beats, each opened by a
-    shot-size + camera prefix: "Wide shot, static camera: …",
-    "Over-shoulder shot, static camera: …". One beat, one visual event.
-  - DIALOGUE IN ITS BEAT: write the line where it is spoken —
-    '<<<image_4>>> says: "…"' — then the settle tail: "After the line,
-    the character holds a natural micro-expression, gaze lingering, the
-    frame settling calm."
-  - NO unbound aliases: "the prince", "the woman", "the hall" must not
-    appear when a slot exists for them — use the token every time.
-    The gate's auto-append is a backstop, not a writing style.
+- THE REFERENCE RULE (absolute — overrides everything else): the slot
+  manifest maps every token to its character (the content line names
+  who it is). In the prompt a character is referred to by TOKEN ONLY,
+  at the word position where they act: "<<<image_2>>> walks toward
+  <<<image_4>>>".
+- Character NAMES are FORBIDDEN in the prompt — a name means nothing
+  to the video model, and a name next to a token reads as a second,
+  phantom person.
+- APPEARANCE DESCRIPTION is FORBIDDEN — no face, hair, wardrobe or
+  color words; appearance lives in the reference images. Write only:
+  who (token) + action + camera. Appearance sentences belong solely to
+  characters that have NO token (script-only cast in the t2v pool).
+- The BACKGROUND rides the same rule: open the beat inside its token
+  ("Inside <<<image_1>>>, …") and do not re-describe what the image
+  already shows.
+- BEAT STRUCTURE: split the shot into 2-4 beats, each opened by a
+  shot-size + camera prefix: "Wide shot, static camera: …",
+  "Over-shoulder shot, static camera: …". One beat, one visual event.
+- DIALOGUE IN ITS BEAT: write the line where it is spoken —
+  '<<<image_4>>> says: "…"' — then the settle tail. The speaker is a
+  TOKEN, never a name.
 - `ref2v` prompts carry the full scene as embedded-token beats (no
   pixel anchor): background token opens the space, character tokens
   act inside it, one primary camera move per beat. A portrait token
@@ -352,7 +336,7 @@ reviewer judges appearance against them.
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}
 
 ### Example 2 — Kling pool, scene cut (inline-token beats — the canonical shape)
-{"strategy": "ref2v", "reason": "scene 2 opens fresh; every slot rides inline", "video_prompt": "Wide shot, static camera: inside <<<image_1>>>, the fireside living room, <<<image_2>>>, the woman, sits beside <<<image_3>>>, the man. Medium shot, slow dolly in: <<<image_2>>> laughs softly and leans on <<<image_3>>>'s shoulder. Close-up, static camera: <<<image_3>>> says: \"Stay — the fire is warm\" — after the line, the character holds a natural micro-expression, gaze lingering, the frame settling calm."}
+{"strategy": "ref2v", "reason": "scene 2 opens fresh; every slot rides inline", "video_prompt": "Wide shot, static camera: inside <<<image_1>>>, <<<image_2>>> sits beside <<<image_3>>> by the fire. Medium shot, slow dolly in: <<<image_2>>> laughs softly and leans on <<<image_3>>>'s shoulder. Close-up, static camera: <<<image_3>>> says: \"Stay — the fire is warm\" — after the line, <<<image_3>>> holds a natural micro-expression, gaze lingering, the frame settling calm."}
 
 ### Example 3 — Kling pool, in-scene continuation (hard pin + portrait)
 {"strategy": "i2v_first", "reason": "the scene flows on from the previous tail and the portrait must ride along", "video_prompt": "The cat trots across the wooden floor to the food bowl, slows, and lowers its head to eat, still chewing as the shot ends. A curtain sways gently. The camera continues its slow lateral track at walking pace. <<<image_1>>> fixes the cat's appearance. Preserve the established scene, lighting and camera."}
