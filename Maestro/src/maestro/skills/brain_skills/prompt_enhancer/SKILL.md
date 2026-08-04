@@ -70,6 +70,17 @@ references; you never add, drop or replace the shot's events.
 
 ## Duty 2 — reference correctness (the slot manifest is law)
 
+INLINE EMBEDDING IS PART OF THIS DUTY: verifying that tokens exist is
+not enough — every ALIAS of a slotted entity in the action text ("the
+prince", "the woman", "the hall") must be REWRITTEN into its slot token
+at that word position ("<<<image_4>>> turns sternly"). Move any
+trailing "X fixes Y's identity"-style binding footnotes INTO the
+narration as inline tokens and delete the footnote. Dialogue lines move
+into the beat where they are spoken ('<<<image_4>>> says: "…"'),
+followed by the settle tail (natural micro-expression, gaze lingering,
+frame settling calm). This rewrite never changes WHAT happens — only
+how entities are referred to.
+
 - Two reference dialects exist; the manifest already speaks the right
   one for this backend: `@Image1`/`@Video1`/"reference image 1"
   (legacy) or `<<<image_1>>>` (Kling). Copy slot IDs VERBATIM — never

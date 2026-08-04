@@ -571,7 +571,9 @@ def _with_dialogue(prompt: str, entry, cast: dict) -> str:
         who = next(iter(_cast_in_shot(entry.description, cast)),
                    "the character")
     return (f'{prompt} {who} says: "{line}", mouth moving with the '
-            f"words. Audio: only the character's voice speaking the line — "
+            f"words. After the line, {who} holds a natural "
+            f"micro-expression, gaze lingering, the frame settling calm. "
+            f"Audio: only the character's voice speaking the line — "
             f"no background music, no ambient sound, no sound effects.")
 
 

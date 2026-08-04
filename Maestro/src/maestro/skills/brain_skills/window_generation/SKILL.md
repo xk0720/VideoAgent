@@ -69,23 +69,41 @@ pools: pick only names present in THIS turn's menu.
 
 How to write for the Kling pool:
 
-- `ref2v` prompts carry the full scene in text (no pixel anchor): subject
-  with visual descriptors + setting + a three-beat action + one camera
-  move. Bind EVERY manifest slot in prose — one clause per slot, slot ID
-  copied verbatim plus what it shows and what it does in THIS shot:
-  "<<<image_1>>>, the user's orange tabby cat, jumps onto the sill".
-  A portrait slot binds IDENTITY ONLY — never import the portrait's
-  pose, framing or background into the shot.
+- INLINE REFERENCE EMBEDDING (the core Kling writing law): reference
+  tokens are the NOUNS of your action narration, never trailing
+  footnotes. Every time an entity with a slot acts or appears, call it
+  by its token AT THAT WORD POSITION — the binding happens where the
+  action happens. Official-grade shape: "<<<image_2>>> and
+  <<<image_1>>> shake hands and talk". FORBIDDEN shape: "the woman
+  approaches the prince … <<<image_2>>> fixes the woman's identity"
+  (the model must guess who 'the woman' is — that guess is exactly
+  what fails).
+  - Token + short descriptor + action: "<<<image_2>>>, the duke's
+    daughter in her deep-blue gown, walks toward <<<image_4>>>".
+  - The BACKGROUND is an entity too: open the beat inside its token —
+    "Inside <<<image_1>>>, the grand ballroom, …" — not a trailing
+    "match the environment" clause.
+  - BEAT STRUCTURE: split the shot into 2-4 beats, each opened by a
+    shot-size + camera prefix: "Wide shot, static camera: …",
+    "Over-shoulder shot, static camera: …". One beat, one visual event.
+  - DIALOGUE IN ITS BEAT: write the line where it is spoken —
+    '<<<image_4>>> says: "…"' — then the settle tail: "After the line,
+    the character holds a natural micro-expression, gaze lingering, the
+    frame settling calm."
+  - NO unbound aliases: "the prince", "the woman", "the hall" must not
+    appear when a slot exists for them — use the token every time.
+    The gate's auto-append is a backstop, not a writing style.
+- `ref2v` prompts carry the full scene as embedded-token beats (no
+  pixel anchor): background token opens the space, character tokens
+  act inside it, one primary camera move per beat. A portrait token
+  binds IDENTITY ONLY — never import the portrait's pose, framing or
+  background into the shot.
 - `i2v_first` prompts are MOTION ONLY. The opening frame is hard-pinned
-  by the API, so there is nothing to pin in words and NOTHING to
-  re-describe: zero appearance restatement, zero scene re-establishment,
-  zero opening-layout description — re-narrated statics dilute the one
-  thing the model needs (the motion) and compete with the pin. Write:
-  what moves (with direction, speed, amplitude) + how the camera moves
-  (continuing the junction's camera state) + what must not change (one
-  short preserve clause). Reference slots still exist on this route —
-  give each ONE short identity clause ("<<<image_1>>> fixes the cat's
-  appearance"), nothing more.
+  by the API — zero appearance restatement, zero scene
+  re-establishment. Write what moves (direction, speed, amplitude) +
+  the camera continuation + one short preserve clause, and refer to
+  each moving entity by its TOKEN inline ("<<<image_1>>> turns toward
+  the door") instead of an alias.
 
 ### Legacy pool (seedance backend)
 
@@ -320,8 +338,8 @@ reviewer judges appearance against them.
 ### Example 1 — scene continues, both anchors exist
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}
 
-### Example 2 — Kling pool, scene cut with two referenced characters
-{"strategy": "ref2v", "reason": "scene 2 opens fresh and both leads' portraits must steer identity", "video_prompt": "Inside a warm fireside living room at night, <<<image_1>>>, the female lead in her dark green coat, and <<<image_2>>>, the male lead in his grey sweater, sit together by the fire. At first they talk quietly; then she laughs and leans on his shoulder; finally they settle, watching the flames. The camera slowly dollies in with shallow depth of field."}
+### Example 2 — Kling pool, scene cut (inline-token beats — the canonical shape)
+{"strategy": "ref2v", "reason": "scene 2 opens fresh; every slot rides inline", "video_prompt": "Wide shot, static camera: inside <<<image_1>>>, the warm fireside living room, <<<image_2>>>, the woman in her dark green coat, sits beside <<<image_3>>>, the man in his grey sweater. Medium shot, slow dolly in: <<<image_2>>> laughs softly and leans on <<<image_3>>>'s shoulder. Close-up, static camera: <<<image_3>>> says: \"Stay — the fire is warm\" — after the line, the character holds a natural micro-expression, gaze lingering, the frame settling calm."}
 
 ### Example 3 — Kling pool, in-scene continuation (hard pin + portrait)
 {"strategy": "i2v_first", "reason": "the scene flows on from the previous tail and the portrait must ride along", "video_prompt": "The cat trots across the wooden floor to the food bowl, slows, and lowers its head to eat, still chewing as the shot ends. A curtain sways gently. The camera continues its slow lateral track at walking pace. <<<image_1>>> fixes the cat's appearance. Preserve the established scene, lighting and camera."}

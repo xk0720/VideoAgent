@@ -373,6 +373,18 @@ Both endpoints are fixed; you are writing the road between them.
   motion, or both, and keep identity, wardrobe, scene structure and
   lighting continuous throughout.
 
+## 12b. Inline reference embedding (the binding law above all)
+
+Reference tokens are SUBJECTS of the narration, not footnotes. The
+official-grade pattern: "<<<image_2>>> and <<<image_1>>> shake hands
+and talk". Every appearance of a slotted entity uses its token at that
+word position; the background opens its beat ("Inside <<<image_1>>>,
+…"); beats are prefixed with shot-size + camera ("Close-up, static
+camera: …"); dialogue is written in its beat with the speaker's token
+and followed by a settle tail. A prompt that narrates with unbound
+aliases and appends binding footnotes at the end is WRONG even if every
+token technically appears.
+
 ## 13. Reference-image binding contract
 
 When the executor attaches reference images, it hands you a **slot

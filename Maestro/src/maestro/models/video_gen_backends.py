@@ -852,6 +852,14 @@ class BailianKlingClient(BaseVideoGenClient):
                                    timeout=(10, 300))
                 if up.status_code >= 500:
                     raise RuntimeError(f"OSS HTTP {up.status_code}")
+                if up.status_code == 409:
+                    # forbid-overwrite 撞 409 = 同 key 已存在 = 上一次
+                    # 尝试实际已落盘(连接在响应前断了)→ 即成功。
+                    log.info("bailian_kling: %s already uploaded (a "
+                             "previous attempt landed) — using it",
+                             p.name)
+                    last_exc = None
+                    break
                 if up.status_code >= 400:
                     raise RuntimeError(
                         f"bailian_kling OSS upload of '{p.name}' failed: "
