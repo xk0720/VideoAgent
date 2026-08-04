@@ -59,6 +59,8 @@ Using the slot manifest as the single source of truth:
    content;
 3. dialogue lines stay exactly where the draft put them, speaker as
    token, and only after the camera has the speaker's face on screen;
+   the quoted line is VERBATIM in the user's language — if the draft
+   translated or paraphrased it, restore the script's original words;
    never add a line the draft lacks (the executor backstops a missing
    line deterministically);
 4. a name may remain ONLY when the manifest has no slot for that

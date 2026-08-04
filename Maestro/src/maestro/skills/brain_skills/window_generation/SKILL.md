@@ -59,7 +59,10 @@ never an embellishment.
    shot-size + camera: "Wide shot, static camera: …". One beat, one
    visual event, in script order.
 6. DIALOGUE IN ITS BEAT, AFTER ARRIVAL — '<<<image_N>>> says: "…"'
-   written where the line is spoken, speaker as TOKEN. The speaker
+   written where the line is spoken, speaker as TOKEN. THE LINE IS
+   COPIED VERBATIM in the user's language — never translated, never
+   paraphrased (a translated line breaks the executor's dedup and the
+   spoken audio ships in the wrong language). The speaker
    must already be the on-screen subject, face visible, BEFORE the
    line — on a pinned opening where they start off-frame or
    back-to-camera, first write the camera move or turn that brings
