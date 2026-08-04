@@ -586,12 +586,13 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     if not who or (cast and who not in cast):
         who = next(iter(_cast_in_shot(entry.description, cast)),
                    "the character")
+    # 2026-08-04 用户裁决:兜底只补台词本身 —— "mouth moving"/收势句是
+    # 特定镜头的收势指导,被机械化成万能后缀是错的;镜头怎么收由剧本
+    # end_state 决定,brain 逐镜写。BGM 压制句保留(no-BGM 裁决在岗)。
     subj = (name_to_slot or {}).get(who) or who
-    return (f'{prompt} {subj} says: "{line}", mouth moving with the '
-            f"words. After the line, {subj} holds a natural "
-            f"micro-expression, gaze lingering, the frame settling calm. "
+    return (f'{prompt} {subj} says: "{line}". '
             f"Audio: only the character's voice speaking the line — "
-            f"no background music, no ambient sound, no sound effects.")
+            f"no background music, no sound effects.")
 
 
 def _scrub_setting_sentence(text: str, setting: str, strategy: str) -> str:
@@ -1038,6 +1039,75 @@ def _write_screenplay(llm, user_prompt: str, screenplay,
     log.warning("screenplay: no LLM / unusable output — passing the raw "
                 "idea straight to storyboarding")
     return str(user_prompt), "idea_passthrough"
+
+
+_BG_CROWD_WORDS = ("people", "person", "guest", "guests", "crowd",
+                   "crowds", "officer", "officers", "noble", "nobles",
+                   "dancer", "dancers", "couple", "couples", "servant",
+                   "servants", "attendant", "attendants", "figure",
+                   "figures", "man", "men", "woman", "women", "soldier",
+                   "soldiers", "aristocrat", "aristocrats")
+
+_BG_EMPTY_SUFFIX = (", completely empty interior, no people, no figures, "
+                    "no modern objects.")
+
+
+def _scrub_bg_prompt(prompt: str, cast_names) -> str:
+    """场景板 prompt 出口闸(2026-08-04 run8 背景污染事故):角色名剥除、
+    含人群词的逗号段整段丢弃、恒定追加空景后缀。确定性,不信 LLM 自觉。
+    (事故:'masked aristocratic guests, uniformed officers' 写在建景句里
+    + 'Location context: 安娜走向殿下…' → flux 画出一对现代婚纱新人,
+    帧升级又把它扩散进全片。)"""
+    out = str(prompt or "")
+    for n in (cast_names or []):
+        out = out.replace(str(n), "")
+    segs = [s for s in out.split(",")
+            if not any(w in s.lower().split() or f"{w}." in s.lower()
+                       for w in _BG_CROWD_WORDS)]
+    out = ",".join(segs).strip().rstrip(".")
+    return out + _BG_EMPTY_SUFFIX
+
+
+def _write_bg_prompts(llm, storyboard, bg_keys: list) -> tuple[dict, str]:
+    """§A2 场景板 prompt(scene_image skill):每 bg_id 一条空景 t2i
+    prompt;LLM 缺/失败 → 确定性模板(setting 过闸,无 Location
+    context —— 那句就是幽灵新人的来源)。返回 ({bg: prompt}, via)。"""
+    cast_names = sorted((storyboard.cast or {}).keys())
+    fallback = {bk: _scrub_bg_prompt(
+        f"Establishing frame of the empty location: {storyboard.setting}. "
+        f"Wide shot, eye level, deep focus", cast_names) for bk in bg_keys}
+    if llm is None:
+        return fallback, "fallback"
+    skill_text = _skill_body_named("scene_image")
+    task = {"setting": storyboard.setting,
+            "backgrounds": {bk: [
+                _SHOT_PREFIX_RE.sub("", _strip_markers(e.description))[:160]
+                for e in storyboard.entries
+                if (getattr(e, "bg_id", "") or f"scene_{e.scene_idx}") == bk
+            ][:3] for bk in bg_keys}}
+    raw = ""
+    try:
+        raw = llm.complete(skill_text + "\n\nTHIS TASK (JSON):\n"
+                           + json.dumps(task, ensure_ascii=False))
+        data = _extract_json(raw)
+    except Exception:
+        data = None
+    got = {}
+    if isinstance(data, dict) and isinstance(data.get("backgrounds"), dict):
+        for bk in bg_keys:
+            p = ((data["backgrounds"].get(bk) or {}).get("prompt") or "") \
+                if isinstance(data["backgrounds"].get(bk), dict) \
+                else str(data["backgrounds"].get(bk) or "")
+            if str(p).strip():
+                got[bk] = _scrub_bg_prompt(str(p), cast_names)
+    brain_log("window/scene_image", {
+        "raw": raw[:2000], "usable": bool(got), "skill": "scene_image",
+        "parsed": got or None})
+    if got:
+        for bk in bg_keys:
+            got.setdefault(bk, fallback[bk])
+        return got, "llm"
+    return fallback, "fallback"
 
 
 def _apply_caption_canon(cast_canon: dict, given_caps: Optional[dict]) -> None:
@@ -2680,6 +2750,9 @@ def generate_movie_windowed(
     enable_transitions: bool = False,   # 转场桥开关(2026-08-04 用户令:
                                         # 默认关;开着才把 add_transition
                                         # 提供给修复菜单)
+    enable_bg_frame_upgrade: bool = False,  # 背景实拍帧升级(2026-08-04
+                                        # 裁决默认关:实拍帧带主人公,
+                                        # 当背景参考=身份噪声扩散器)
     enable_bgm: bool = True,            # 背景音乐开关(enable_audio 开着时
                                         # 才有意义;关 = 只保对白原生音)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
@@ -2876,18 +2949,20 @@ def generate_movie_windowed(
             k = (getattr(e, "bg_id", "") or f"scene_{e.scene_idx}")
             if k not in _bg_keys:
                 _bg_keys.append(k)
-        for _bk in _bg_keys:
-            if _bk in (storyboard.backgrounds or {}):
-                continue
-            _first_desc = next(
-                (_SHOT_PREFIX_RE.sub("", _strip_markers(e.description))
-                 for e in storyboard.entries
-                 if (getattr(e, "bg_id", "") or f"scene_{e.scene_idx}")
-                 == _bk), "")
-            aprompt = (f"Establishing frame of the location, NO characters "
-                       f"visible: {storyboard.setting}. "
-                       f"Location context: {_first_desc[:120]}. "
-                       f"Wide shot, cinematic still, high detail.")
+        # scene_image skill(2026-08-04 用户令):空景板 prompt 由专门
+        # skill 撰写 + 确定性出口闸(角色名/人群词剥除、空景后缀恒定)。
+        # 旧的字符串拼接("Location context: 角色动作…")是幽灵人物的
+        # 来源,废除。
+        _need_keys = [k for k in _bg_keys
+                      if k not in (storyboard.backgrounds or {})]
+        _bg_prompts, _bg_via = (_write_bg_prompts(llm, storyboard,
+                                                  _need_keys)
+                                if _need_keys else ({}, "none"))
+        if _need_keys:
+            decisions.append({"stage": "scene_image", "via": _bg_via,
+                              "backgrounds": sorted(_need_keys)})
+        for _bk in _need_keys:
+            aprompt = _bg_prompts[_bk]
             adir.mkdir(parents=True, exist_ok=True)
             try:
                 got = video_gen.text_to_image(
@@ -3441,13 +3516,15 @@ def generate_movie_windowed(
             storyboard._save()
             decisions.append({"stage": "transition", "label": entry.label,
                               "path": entry.transition_path})
-        # B 案:该 bg 的首镜出片后,用实拍首帧升级背景资产(src=frame)
-        # —— 后续同 bg 镜对齐真实空间,而不是 t2i 想象图(实跑事故:
-        # 锚图与实拍宫殿不是同一个厅,越对越歪)。
+        # B 案帧升级 —— 2026-08-04 用户裁决后【默认禁用】:实拍首帧里
+        # 站着主人公,把它当背景参考注进后续镜 = 身份噪声扩散器(run8
+        # 事故:幽灵新人经帧升级污染全片)。空景 t2i 板从头用到尾;
+        # 要回头开走 enable_bg_frame_upgrade。
         _bgkey2 = (getattr(entry, "bg_id", "")
                    or f"scene_{entry.scene_idx}")
         _bg2 = (storyboard.backgrounds or {}).get(_bgkey2)
-        if _bg2 and _bg2.get("src") == "t2i" and best.video_path \
+        if enable_bg_frame_upgrade and _bg2 and _bg2.get("src") == "t2i" \
+                and best.video_path \
                 and Path(best.video_path).exists():
             _real = _extract_frame0(
                 Path(best.video_path),

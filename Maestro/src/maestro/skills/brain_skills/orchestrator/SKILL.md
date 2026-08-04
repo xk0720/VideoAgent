@@ -111,8 +111,10 @@ drift identity without it.
 For `regenerate` the bar is higher — your hint IS the new prompt body
 (replacement, not annotation): it must be SELF-CONTAINED — the complete
 corrected ACTION of the shot from opening to end (never only the
-appearance fix), one identity clause, and a preserve clause ("preserve
-the established scene, lighting and camera"). The executor appends the
+appearance fix) and a preserve clause ("preserve the established scene,
+lighting and camera"). Identity: on reference-carrying routes the slot
+TOKEN is the identity — use it, never appearance text; only a
+no-reference route gets one textual identity clause. The executor appends the
 scripted-action anchor as a deterministic backstop, but a motion-less
 hint still yields a weaker prompt — always write the action.
 

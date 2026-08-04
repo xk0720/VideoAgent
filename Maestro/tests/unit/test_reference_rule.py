@@ -31,8 +31,10 @@ def test_dialogue_speaker_rendered_as_token():
     out = wl._with_dialogue("base prompt", _entry(), CAST,
                             name_to_slot=wl._name_slot_map(slots))
     assert '<<<image_3>>> says: "你不配"' in out
-    assert "<<<image_3>>> holds a natural micro-expression" in out
-    assert "王子 says" not in out and "王子 holds" not in out
+    # 2026-08-04 用户裁决:兜底只补台词 —— 收势句/mouth-moving 不再机械化
+    assert "micro-expression" not in out
+    assert "mouth moving" not in out
+    assert "王子 says" not in out
 
 
 def test_dialogue_speaker_falls_back_to_name_without_slot():

@@ -77,19 +77,34 @@ How to write for the Kling pool:
 - Character NAMES are FORBIDDEN in the prompt — a name means nothing
   to the video model, and a name next to a token reads as a second,
   phantom person.
-- APPEARANCE DESCRIPTION is FORBIDDEN — no face, hair, wardrobe or
-  color words; appearance lives in the reference images. Write only:
-  who (token) + action + camera. Appearance sentences belong solely to
-  characters that have NO token (script-only cast in the t2v pool).
+- IDENTITY APPEARANCE is FORBIDDEN — face shape, skin, hair, eye
+  color, wardrobe, garment colors; identity lives in the reference
+  images. Appearance sentences belong solely to characters that have
+  NO token (script-only cast in the t2v pool).
+- PERFORMANCE IS CONTENT — the opposite of the ban above: every
+  scripted expression, emotion made visible, gesture and framing word
+  IS the shot and must survive into the prompt: tears welling, a
+  trembling lower lip, an expression of disbelief, a contemptuous
+  smile forming, "tight facial close-up". Strip only the identity
+  adjective inside them: "her blue eyes fill with tears" → "her eyes
+  fill with tears". A prompt that keeps the token but drops the
+  scripted performance has deleted the shot's reason to exist.
 - The BACKGROUND rides the same rule: open the beat inside its token
   ("Inside <<<image_1>>>, …") and do not re-describe what the image
   already shows.
 - BEAT STRUCTURE: split the shot into 2-4 beats, each opened by a
   shot-size + camera prefix: "Wide shot, static camera: …",
   "Over-shoulder shot, static camera: …". One beat, one visual event.
-- DIALOGUE IN ITS BEAT: write the line where it is spoken —
-  '<<<image_4>>> says: "…"' — then the settle tail. The speaker is a
-  TOKEN, never a name.
+- DIALOGUE IN ITS BEAT, AFTER ARRIVAL: write the line where it is
+  spoken — '<<<image_4>>> says: "…"' — with the speaker as a TOKEN,
+  never a name. THE SPEAKER MUST ALREADY BE THE ON-SCREEN SUBJECT,
+  facing the camera, BEFORE the line: on a pinned opening where the
+  speaker starts off-frame or back-to-camera, first write the camera
+  move / turn that brings their face on screen, THEN the line —
+  otherwise the model lip-syncs whoever's face is visible (real
+  incident: the line went to the wrong woman). How the shot ends
+  after the line comes from the script's end_state — write THAT, not
+  a boilerplate settle sentence.
 - `ref2v` prompts carry the full scene as embedded-token beats (no
   pixel anchor): background token opens the space, character tokens
   act inside it, one primary camera move per beat. A portrait token
@@ -336,7 +351,7 @@ reviewer judges appearance against them.
 {"strategy": "flf2v_bridge", "reason": "the scene continues and the shot must arrive at the planned keyframe", "video_prompt": "The camera follows the glass as it tips over the table edge and falls, ending exactly on the shattered glass on the tile floor."}
 
 ### Example 2 — Kling pool, scene cut (inline-token beats — the canonical shape)
-{"strategy": "ref2v", "reason": "scene 2 opens fresh; every slot rides inline", "video_prompt": "Wide shot, static camera: inside <<<image_1>>>, <<<image_2>>> sits beside <<<image_3>>> by the fire. Medium shot, slow dolly in: <<<image_2>>> laughs softly and leans on <<<image_3>>>'s shoulder. Close-up, static camera: <<<image_3>>> says: \"Stay — the fire is warm\" — after the line, <<<image_3>>> holds a natural micro-expression, gaze lingering, the frame settling calm."}
+{"strategy": "ref2v", "reason": "scene 2 opens fresh; every slot rides inline", "video_prompt": "Wide shot, static camera: inside <<<image_1>>>, <<<image_2>>> sits beside <<<image_3>>> by the fire. Medium shot, slow dolly in: <<<image_2>>> laughs softly and leans on <<<image_3>>>'s shoulder. Close-up, static camera: the camera pushes to <<<image_3>>>'s face; <<<image_3>>> says: \"Stay — the fire is warm\", then keeps watching the flames, the firelight flickering on both faces as the shot ends."}
 
 ### Example 3 — Kling pool, in-scene continuation (hard pin + portrait)
 {"strategy": "i2v_first", "reason": "the scene flows on from the previous tail and the portrait must ride along", "video_prompt": "The cat trots across the wooden floor to the food bowl, slows, and lowers its head to eat, still chewing as the shot ends. A curtain sways gently. The camera continues its slow lateral track at walking pace. <<<image_1>>> fixes the cat's appearance. Preserve the established scene, lighting and camera."}

@@ -94,7 +94,8 @@ def test_skills_carry_the_reference_rule():
     wg = (base / "window_generation/SKILL.md").read_text()
     assert "TOKEN ONLY" in wg
     assert "NAMES are FORBIDDEN" in wg
-    assert "APPEARANCE DESCRIPTION is FORBIDDEN" in wg
+    assert "IDENTITY APPEARANCE is FORBIDDEN" in wg
+    assert "PERFORMANCE IS CONTENT" in wg
     vpw = (base / "video_prompt_writing/SKILL.md").read_text()
     assert "TOKEN ONLY" in vpw and "FORBIDDEN" in vpw
     pe = (base / "prompt_enhancer/SKILL.md").read_text()

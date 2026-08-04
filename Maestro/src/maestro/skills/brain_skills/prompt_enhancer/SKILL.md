@@ -79,8 +79,9 @@ token, at that word position ("<<<image_4>>> turns sternly" — never
 wardrobe, colors) — appearance lives in the reference images, and text
 beside pixels is a second, competing description;
 (3) dialogue lines sit in the beat where they are spoken, with the
-speaker's TOKEN ('<<<image_4>>> says: "…"'), followed by the settle
-tail;
+speaker's TOKEN ('<<<image_4>>> says: "…"'), only after the camera has
+brought the speaker's face on screen; the ending after the line follows
+the script's end_state;
 (4) a name may remain ONLY when the manifest has no slot for that
 character (a script-only extra with no reference image).
 This rewrite never changes WHAT happens — only how entities are
@@ -104,9 +105,9 @@ referred to.
   referenced by any ID — those anchors have no reference channel;
   describe the motion that unfolds from (or arrives at) them instead.
 - A slot whose content says "official portrait of <name>" binds
-  IDENTITY ONLY — mention it for the character's face/build/wardrobe
-  and never let the prompt import the portrait's pose, framing or
-  background.
+  IDENTITY ONLY — its token in the action clause is the whole mention
+  (no appearance words), and the prompt never imports the portrait's
+  pose, framing or background.
 - On Kling `i2v_first`, reference numbering EXCLUDES the pinned first
   frame: `<<<image_1>>>` is the first reference image, never the
   opening frame.
@@ -189,7 +190,10 @@ that gap:
   — do not rewrite for rewriting's sake.
 - You are ONLY a prompt writer: no strategy changes, no tool suggestions,
   no mechanical fields (duration/resolution/aspect ratio).
-- DIALOGUE: never write spoken lines or audio directions into the prompt
-  — the executor deterministically appends the lip-sync clause (quoted
-  line + voice-only audio suppression) AFTER your output on dialogue
-  shots. Writing it yourself risks duplicated or conflicting lines.
+- DIALOGUE: when the draft already carries the spoken line in its beat
+  ('<<<image_N>>> says: "…"'), PRESERVE it exactly where it stands —
+  in-beat dialogue after the speaker's on-screen arrival is the law,
+  and the executor's backstop deduplicates by the quoted line, so a
+  preserved line is never doubled. Never ADD a line the draft does not
+  have (the executor appends the missing-line backstop itself), and
+  never write audio directions.

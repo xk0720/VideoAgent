@@ -382,10 +382,14 @@ the word position where they act ("<<<image_2>>> walks toward
 the video model and reads as a phantom extra person); APPEARANCE
 DESCRIPTION is FORBIDDEN (no face, hair, wardrobe or color words — the
 reference images carry the look; text beside pixels is a second,
-competing description and the #1 identity killer). Write only: who
-(token) + action + camera. Dialogue uses the speaker's token:
-'<<<image_4>>> says: "…"'. Full appearance prose belongs solely to
-characters that have NO reference token.
+competing description and the #1 identity killer). PERFORMANCE IS
+CONTENT and stays: every scripted expression, tear, gesture and framing
+word survives, minus its identity adjectives ("her blue eyes fill with
+tears" → "her eyes fill with tears"). Dialogue uses the speaker's
+token — '<<<image_4>>> says: "…"' — and only AFTER the camera has the
+speaker's face on screen; the ending after the line follows the
+script's end_state. Full appearance prose belongs solely to characters
+that have NO reference token.
 
 ## 13. Reference-image binding contract
 

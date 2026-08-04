@@ -78,7 +78,9 @@ CAST = {"the cat": "static: an orange cat; dynamic: none"}
 def test_with_dialogue_appends_line_and_suppression():
     out = _with_dialogue("The cat looks at the camera.", _entry(), CAST)
     assert 'the cat says: "Time for breakfast!"' in out
-    assert "no background music" in out and "no ambient sound" in out
+    assert "no background music" in out
+    # 2026-08-04 用户裁决:收势句/mouth-moving 不再机械追加
+    assert "micro-expression" not in out and "mouth moving" not in out
 
 
 def test_with_dialogue_dedupes_and_noops():
