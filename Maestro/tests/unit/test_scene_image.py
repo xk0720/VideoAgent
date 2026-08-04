@@ -63,3 +63,38 @@ def test_write_bg_prompts_fallback_has_no_location_context():
 def test_bg_frame_upgrade_default_off():
     sig = inspect.signature(wl.generate_movie_windowed)
     assert sig.parameters["enable_bg_frame_upgrade"].default is False
+
+
+# ── 出场矢量 + 静接律(接缝一致性机制)───────────────────────────────
+
+def test_junction_instructions_demand_exit_vector_json():
+    from maestro.models.mllm_backends import (_JUNCTION_INSTRUCTION,
+                                              _JUNCTION_VIDEO_INSTRUCTION)
+    for t in (_JUNCTION_VIDEO_INSTRUCTION, _JUNCTION_INSTRUCTION):
+        assert "EXIT VECTOR" in t and "STRICT JSON" in t
+        assert '"unfinished_action"' in t and '"camera"' in t
+
+
+def test_parse_exit_vector_json_and_prose_fallback():
+    import maestro.pipeline.window_loop as wl
+    v = wl._parse_exit_vector(
+        '{"subjects": [{"who": "the woman", "motion": "moving", '
+        '"direction": "left", "pace": "walking"}], '
+        '"camera": {"framing": "wide", "motion": "pan-left", '
+        '"speed": "slow"}, "unfinished_action": null}')
+    assert v["camera"]["motion"] == "pan-left"
+    assert wl._parse_exit_vector("the woman stands at rest") is None
+    assert wl._parse_exit_vector("") is None
+
+
+def test_skills_carry_exit_vector_and_settle_laws():
+    from pathlib import Path as _P
+    base = _P("src/maestro/skills/brain_skills")
+    pe = (base / "prompt_enhancer/SKILL.md").read_text()
+    for marker in ("ENTRY ALIGNMENT", "VELOCITY HANDOFF",
+                   "FINISH THE GESTURE", "SETTLE-TO-CUT"):
+        assert marker in pe, marker
+    sw = (base / "scene_write/SKILL.md").read_text()
+    assert "SETTLE-TO-CUT" in sw
+    wg = (base / "window_generation/SKILL.md").read_text()
+    assert "EXIT VECTOR" in wg and "VELOCITY HANDOFF" in wg

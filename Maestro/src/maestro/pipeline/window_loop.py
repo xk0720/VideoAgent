@@ -2514,6 +2514,18 @@ def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0) -> str:
     return _cached(Path(frame), fn)
 
 
+def _parse_exit_vector(text: str):
+    """出场矢量解析:接点 VLM 的 JSON 回复 → dict;不是 JSON(旧后端
+    散文/坏回复)→ None,调用方原文照发 —— 绝不编造结构。"""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    data = _extract_json(t)
+    if isinstance(data, dict) and ("subjects" in data or "camera" in data):
+        return data
+    return None
+
+
 def _conditions_for_prompt(strategy: str, entry, prev,
                            use_prev_tail: bool,
                            junction: str = "",
@@ -3041,8 +3053,13 @@ def generate_movie_windowed(
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
         junction_actual = _junction_state(mllm, prev, shot_dir,
                                           tail_s=window_tail_s)
+        # 结构化出场矢量(用户裁决):VLM 尾段报告现在是 JSON —— 解析
+        # 成功则矢量随上下文进 brain / enhancer(速度续接的依据);解析
+        # 失败原文照发(旧后端散文兜底,诚实降级)。
+        _exit_vec = _parse_exit_vector(junction_actual)
         junction_ctx = {
             "prev_last_frame_actual": junction_actual or None,
+            "prev_exit_vector": _exit_vec,
             "prev_end_state_script": (getattr(prev, "end_state", "") or None)
             if prev else None,
             "required_end_state": entry.end_state or None,

@@ -37,22 +37,29 @@ translate — whatever you drop here is lost to the film forever.
    space = same id across shots and scenes (a ballroom revisited later
    keeps its id); a genuinely new space gets a new id. One id will
    become ONE background plate shared by all its shots.
-6. END STATE: every shot ends with a one-sentence freeze-frame of the
+6. SETTLE-TO-CUT (junction law): by default every shot ENDS settled —
+   camera static, subjects at a describable rest — and the next shot
+   opens from that stillness; still-to-still is the most seamless cut
+   two separately generated clips can make. Write a moving end_state
+   ONLY when the story explicitly needs an action cut, and then state
+   the motion precisely (direction + pace) so the next shot can
+   continue it.
+7. END STATE: every shot ends with a one-sentence freeze-frame of the
    cut moment — who/what is where, moving or still, in which
    direction, and the camera's own state. The next shot opens FROM
    this state; write it precisely enough to shoot from.
-7. DIALOGUE: `{"speaker": "<cast key verbatim>", "line": "<one short
+8. DIALOGUE: `{"speaker": "<cast key verbatim>", "line": "<one short
    spoken line>"}` only when a character visibly speaks at medium
    close-up or closer. The line stays in the user's language; the
    speaker key must exist in cast.
-8. LANGUAGE LAW: descriptions, end states and setting in ENGLISH
+9. LANGUAGE LAW: descriptions, end states and setting in ENGLISH
    (they feed image/video models); cast names and dialogue lines may
    stay in the user's language.
-9. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
+10. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
    WORDS ("the cat from the provided photo"), never by any reference
    ID — numbering does not exist at script time; the enhancer
    formalizes mentions into slot IDs later.
-10. MUSIC PLAN: one music description per scene (mood + genre + tempo);
+11. MUSIC PLAN: one music description per scene (mood + genre + tempo);
    omit a scene for deliberate silence. Never mention music inside
    shot descriptions.
 

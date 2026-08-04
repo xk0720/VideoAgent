@@ -93,12 +93,22 @@ never an embellishment.
 
 ## Junction rules (continuation shots)
 
-- OPEN FROM REALITY: the first beat continues
-  `prev_last_frame_actual` — its positions, motion state and camera
-  state. When it contradicts the scripted end state, reality wins.
-- CAMERA CONTINUITY: continue the junction's camera state or open from
-  a settled camera; NEVER reverse the camera's direction across the
-  cut.
+- OPEN FROM THE EXIT VECTOR: `prev_last_frame_actual` is a structured
+  exit vector (subjects with position/pose/motion/direction/pace,
+  camera framing/motion/speed, unfinished_action) written by a vision
+  model from the previous shot's ACTUAL final seconds. The first beat
+  matches it field by field; when it contradicts the scripted end
+  state, the vector wins.
+- VELOCITY HANDOFF: a moving subject opens mid-motion with
+  continuative phrasing ("continues her walk at the same pace" —
+  never "begins"); a camera with speed ≠ none keeps that move and
+  speed in the first sentence. NEVER reverse the camera's direction
+  across the cut.
+- FINISH THE GESTURE: when `unfinished_action` is set, the first
+  clause completes that action before anything new starts.
+- SETTLE-TO-CUT: unless the script's end_state explicitly keeps
+  motion running, the final beat reaches stillness — camera settled,
+  subjects at rest — so the NEXT shot inherits a clean still joint.
 - Physics does not negotiate: a subject at rest cannot resume motion
   without a new visible cause; write the cause or keep the rest.
 

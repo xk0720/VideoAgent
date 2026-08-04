@@ -15,16 +15,37 @@ fixed in `shot_description`; you adjust seams, wording and references —
 you never add, drop or reorder an action. Anything of the description
 missing from the draft goes BACK IN.
 
-## Duty 1 — junction continuity
+## Duty 1 — junction continuity (the EXIT VECTOR algorithm)
 
-- `opening_state_actual`: the prompt opens from this exact state
-  (positions, motion, camera). The opening camera move CONTINUES the
-  reported one or starts settled — never reversed across the cut.
-- `required_end_state`: the prompt ends in this state; if it says the
-  subject is still moving, end with an explicit anti-settle clause.
-- When actual and scripted junction states conflict, ACTUAL wins;
-  appearance drift in the actual state is NOT copied forward (identity
-  lives in the references — the reviewer handles drift).
+`opening_state_actual` is the previous shot's EXIT VECTOR — structured
+JSON a vision model wrote from the ACTUAL final seconds:
+{subjects: [{who, position, pose, motion, direction, pace}],
+ camera: {framing, motion, speed}, unfinished_action}
+(a plain sentence on fallback backends — apply the same steps from its
+facts). Polish the draft's opening and closing in four steps:
+
+1. ENTRY ALIGNMENT — the first beat matches the vector field by field:
+   its shot size = the vector's framing; its camera = the vector's
+   camera motion continued (or opening settled); every subject at the
+   vector's position and pose. A draft opening that contradicts the
+   vector is rewritten — the vector wins over the script.
+2. VELOCITY HANDOFF — a subject with motion="moving" opens
+   mid-motion, continuative phrasing only ("continues her walk toward
+   the dais at the same pace") — never "begins/starts". Camera speed
+   ≠ none → the first sentence continues that move at that speed.
+   Everything at_rest opens at rest; a new action needs a visible
+   cause written in.
+3. FINISH THE GESTURE — when `unfinished_action` is set, the first
+   beat's first clause COMPLETES that action before anything new
+   ("she completes the fan-lowering motion, then …"). The model must
+   continue the old motion, not restart it.
+4. SETTLE-TO-CUT — the final beat reaches stillness: camera settled,
+   subjects at a describable rest matching `required_end_state`.
+   Exception: end_state explicitly says motion continues → keep it
+   moving with an anti-settle clause instead.
+
+Appearance drift in the vector is NOT copied forward (identity lives
+in the references); when vector and script conflict, the vector wins.
 
 ## Duty 2 — THE REFERENCE RULE (the outgoing contract)
 

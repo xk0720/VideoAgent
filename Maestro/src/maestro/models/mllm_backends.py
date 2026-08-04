@@ -1179,22 +1179,33 @@ class GeminiVLM(OpenAICompatVLM):
 
 
 # 接点实况的共用指令(GeminiVLM 与 LocalQwenVLM 同一份 —— 两种模式同语义)
+# 结构化出场矢量(用户裁决):散文接点只能传"位置",矢量还要传"速度"
+# —— 下一镜靠它续运动而不是重新起意(接缝不自然的主根)。
 _JUNCTION_VIDEO_INSTRUCTION = (
-    "This is the FINAL few seconds of a video shot. Describe the state at "
-    "its VERY LAST MOMENT for continuity into the next shot, in ONE "
-    "factual sentence: each key subject's position in the frame, whether "
-    "it is MOVING or AT REST — judge from the actual motion across the "
-    "clip, not from blur — its direction and pace if moving, and the "
-    "camera's own motion if any. Only what is visible — no speculation. "
-    "No other text."
+    "This is the FINAL few seconds of a video shot. Report the EXIT "
+    "VECTOR at its very last moment, judged from the actual motion "
+    "across the clip (not from blur). STRICT JSON only:\n"
+    '{"subjects": [{"who": "<short visual handle>", "position": '
+    '"<left/center/right + near/far>", "pose": "<one clause>", '
+    '"motion": "at_rest"|"moving", "direction": "<if moving>", '
+    '"pace": "<slow|walking|fast, if moving>"}], '
+    '"camera": {"framing": "<wide|medium|close-up …>", "motion": '
+    '"static"|"push-in"|"pull-back"|"pan-left"|"pan-right"|"tilt-up"|'
+    '"tilt-down"|"tracking", "speed": "none"|"slow"|"medium"|"fast"}, '
+    '"unfinished_action": "<an action visibly mid-course, else null>"}\n'
+    "Only what is visible — no speculation. No other text."
 )
 
 _JUNCTION_INSTRUCTION = (
-    "This is the FINAL frame of a video shot. Describe its state for "
-    "continuity into the next shot in ONE factual sentence: each key "
-    "subject's position in the frame, whether it appears to be MOVING or "
-    "AT REST (judge from motion blur and posture), and its direction of "
-    "motion if any. Only what is visible — no speculation. No other text."
+    "This is the FINAL frame of a video shot. Report the EXIT VECTOR "
+    "for continuity into the next shot — motion judged from blur and "
+    "posture (single-frame fallback; be honest about uncertainty). "
+    "STRICT JSON only, same schema:\n"
+    '{"subjects": [{"who": "<short visual handle>", "position": "…", '
+    '"pose": "…", "motion": "at_rest"|"moving", "direction": "…", '
+    '"pace": "…"}], "camera": {"framing": "…", "motion": "static", '
+    '"speed": "none"}, "unfinished_action": null}\n'
+    "Only what is visible — no speculation. No other text."
 )
 
 
