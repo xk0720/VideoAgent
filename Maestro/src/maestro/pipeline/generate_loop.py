@@ -959,23 +959,51 @@ def generate_shot_orchestrated(
             break
         if decision.get("tool") == "add_transition" and transition_fn is not None:
             # M2 转场(规则定死):生成 3s 过渡片挂到 best 上,然后收尾 ——
-            # 转场是"接不上"的终审判决,不是继续修的理由。失败 → 记录后
-            # 继续正常修复轮(工具哑火不终结循环)。
+            # 转场是"接不上"的终审判决,不是继续修的理由。这个块是【封闭
+            # 终点】:成功 → break;失败/没挂上 → 记账后 continue 下一轮。
+            # 2026-08-04 run7 事故:失败后落到下面的通用执行路径,同一个
+            # decision 被无守护地原样重放(风控 DataInspectionFailed 二连)
+            # → 异常上抛炸掉整个运行。add_transition 永不进通用路径。
+            gen_calls += 1
+            _trans_err = ""
             try:
                 orchestrator.execute(
                     decision, best, spec, cache_dir, turn, board,
                     asset_memory=asset_memory, fps=fps, regen_fn=regen_fn,
                     transition_fn=transition_fn)
-                if getattr(best, "transition_path", None):
-                    log.info("shot %d turn%d ADD_TRANSITION accepted — "
-                             "3s bridge generated, stopping repairs",
-                             spec.shot_idx, turn)
-                    gen_calls += 1
-                    break
             except Exception as exc:
-                log.warning("shot %d turn%d add_transition failed (%s) — "
-                            "continuing normal repair", spec.shot_idx,
-                            turn, exc)
+                _trans_err = f"{exc}"[:300]
+            if not _trans_err and getattr(best, "transition_path", None):
+                log.info("shot %d turn%d ADD_TRANSITION accepted — "
+                         "3s bridge generated, stopping repairs",
+                         spec.shot_idx, turn)
+                break
+            _trans_err = _trans_err or "execute returned without a transition"
+            log.warning("shot %d turn%d add_transition failed (%s) — "
+                        "skipping this repair turn; the decision is NOT "
+                        "replayed", spec.shot_idx, turn, _trans_err)
+            brain_log("repair/outcome", {
+                "decision_id": decision.get("decision_id"),
+                "shot_idx": spec.shot_idx, "turn": turn,
+                "tool": "add_transition", "outcome": "failed"})
+            actions.append({"tool": "add_transition",
+                            "args": decision.get("args", {}),
+                            "reason": decision.get("reason", ""),
+                            "via": decision.get("via", "brain"),
+                            "outcome": "failed", "error": _trans_err,
+                            "defects": defect_report.to_brain_json(),
+                            "brief_headline": review_brief.get("headline",
+                                                               "")})
+            brain_history.append((decision, "failed",
+                                  round(history_scores[-1], 4)))
+            consecutive_rejects += 1
+            if patience > 0 and consecutive_rejects >= patience:
+                stop_reason = "no_improvement"
+                log.info("shot %d turn%d EARLY STOP after transition "
+                         "failure (patience=%d)", spec.shot_idx, turn,
+                         patience)
+                break
+            continue
         if decision.get("tool") == "accept":
             # NO PREMATURE ACCEPT: the brain may not stop while defects remain
             # and turns are left. We log the attempt, then take ONE deterministic

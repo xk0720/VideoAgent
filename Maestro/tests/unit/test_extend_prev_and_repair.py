@@ -306,3 +306,46 @@ def test_route_suggestion_deterministic():
     assert OrchestratorAgent._route_suggestion(None) is None
     assert OrchestratorAgent._route_suggestion(
         DefectReport(defects=[], n_frames=100)) is None
+
+
+def test_add_transition_failure_never_replayed_nor_crashes(tmp_path):
+    """2026-08-04 run7 崩溃回归:add_transition 失败(风控
+    DataInspectionFailed)后曾掉进通用执行路径被无守护重放 → 异常上抛
+    炸掉整个运行。守护块必须是封闭终点:失败 → 记账 failed → 下一轮,
+    绝不重放、绝不崩。"""
+    from maestro.agents.generator import GeneratorAgent
+    from maestro.agents.orchestrator import OrchestratorAgent
+    from maestro.agents.refiner import RefinerAgent
+    from maestro.agents.verifier import VerifierAgent
+    from maestro.critics.board import ReviewBoard
+    from maestro.critics.semantic import SemanticCritic
+    from maestro.models.video_gen import MockVideoGenClient
+    from maestro.pipeline.generate_loop import generate_shot_orchestrated
+
+    class _TransLLM:
+        def complete(self, prompt, **k):
+            return json.dumps({"tool": "add_transition",
+                               "args": {"prompt": "smooth bridge"},
+                               "reason": "junction defect"})
+
+    calls = []
+
+    def _boom(prompt_text, current_video):
+        calls.append(prompt_text)
+        raise RuntimeError("DataInspectionFailed: risk control")
+
+    gen = GeneratorAgent(video_gen=MockVideoGenClient())
+    spec = ShotSpec(shot_idx=1, duration=2.0,
+                    prompt="a ball falls impossible")  # mock 评审必出缺陷
+    res = generate_shot_orchestrated(
+        spec, board=ReviewBoard([SemanticCritic()]), generator=gen,
+        refiner=RefinerAgent(), verifier=VerifierAgent(),
+        orchestrator=OrchestratorAgent(generator=gen, llm=_TransLLM()),
+        cache_dir=tmp_path, max_turns=2, transition_fn=_boom,
+        repair_mode="consistency")
+    # 没炸就已经是回归的一半;另一半:每轮只试一次(不重放),留痕 failed
+    assert len(calls) == 2                      # max_turns=2,一轮一次
+    failed = [a for a in res.actions
+              if a["tool"] == "add_transition" and a["outcome"] == "failed"]
+    assert failed and "DataInspectionFailed" in failed[0]["error"]
+    assert getattr(res.clip, "transition_path", None) in (None, "")
