@@ -118,6 +118,20 @@ def _encode_jpeg_b64(frame) -> Optional[str]:
         return None
 
 
+# 钦定角色正典打标(2026-08-04 run7 事故:通用一句话 caption 没写军装
+# 颜色 → character_extract 的 LLM 把黑军装脑补成"white royal military
+# coat" → 评审拿错误正典扣真实忠于参考图的视频)。正典打标必须逐项带
+# 精确颜色;看不见的细节【省略】,绝不猜。
+_IDENTITY_CAPTION_INSTRUCTION = (
+    "You are writing the appearance canon for a film character from their "
+    "official portrait. Describe ONLY what is visible, precisely: face "
+    "shape, skin tone, eye color, hair color/length/style, then the attire "
+    "item by item WITH EXACT COLORS (e.g. 'black military coat with gold "
+    "epaulettes and a red sash, white gloves'). One dense sentence. If a "
+    "detail is not visible, OMIT it — never guess. No preamble, no "
+    "category prefix.")
+
+
 class OpenAICompatVLM(BaseMLLMClient):
     """A real vision-language judge over OpenAI-compatible multimodal chat.
 
@@ -227,6 +241,19 @@ class OpenAICompatVLM(BaseMLLMClient):
         """One-sentence asset label from the REAL VLM (Q-D: fills the middle
         link of user-description > VLM caption > filename). Reads the image
         file directly; any failure returns "" (fall through the chain)."""
+        return self._caption_with_text(image_path, (
+            "Describe this image in ONE short sentence for retrieval: "
+            "what/who it shows and the setting. Also start with one "
+            "category word from [background, character, object, style] "
+            "and a colon. Example: 'background: a cozy living room at "
+            "night with a lit fireplace'. No other text."))
+
+    def caption_identity(self, image_path) -> str:
+        """角色正典打标:逐项精确颜色,看不见就省略(绝不猜)。"""
+        return self._caption_with_text(image_path,
+                                       _IDENTITY_CAPTION_INSTRUCTION)
+
+    def _caption_with_text(self, image_path, text: str) -> str:
         import base64 as _b64
         from pathlib import Path as _P
 
@@ -247,12 +274,7 @@ class OpenAICompatVLM(BaseMLLMClient):
             "messages": [{"role": "user", "content": [
                 {"type": "image_url",
                  "image_url": {"url": f"data:image/{mime};base64,{b64}"}},
-                {"type": "text", "text":
-                 "Describe this image in ONE short sentence for retrieval: "
-                 "what/who it shows and the setting. Also start with one "
-                 "category word from [background, character, object, style] "
-                 "and a colon. Example: 'background: a cozy living room at "
-                 "night with a lit fireplace'. No other text."},
+                {"type": "text", "text": text},
             ]}],
         }
         try:
@@ -1090,6 +1112,16 @@ class GeminiVLM(OpenAICompatVLM):
         ])
         return (reply or "").strip()
 
+    def caption_identity(self, image_path) -> str:
+        """角色正典打标(颜色逐项、看不见省略)—— 原生 Gemini 通道。"""
+        got = self._image_part("IMAGE", image_path)
+        if not got:
+            return ""
+        self._require_key()
+        reply = self._generate([got[1],
+                                {"text": _IDENTITY_CAPTION_INSTRUCTION}])
+        return (reply or "").strip()
+
     def caption_video(self, video_path) -> str:
         """素材视频的【原生视频】打标(2026-07-17 裁决:入库不再抽帧 ——
         某个 shot 可能直接续用用户片段,标签必须描述整段内容(身份词 +
@@ -1252,6 +1284,9 @@ class LocalQwenVLM(BaseMLLMClient):
             "what/who it shows and the setting. Start with one category "
             "word from [background, character, object, style] and a colon. "
             "No other text."))
+
+    def caption_identity(self, image_path) -> str:
+        return self._chat_image(image_path, _IDENTITY_CAPTION_INSTRUCTION)
 
     def describe_junction(self, image_path) -> str:
         return self._chat_image(image_path, _JUNCTION_INSTRUCTION)

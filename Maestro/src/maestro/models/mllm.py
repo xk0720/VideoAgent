@@ -39,6 +39,12 @@ class BaseMLLMClient(ABC):
         "" here means the caller falls through the chain, never a fake label."""
         return ""
 
+    def caption_identity(self, image_path) -> str:
+        """角色正典打标(2026-08-04):钦定角色肖像 → 精确外观描述,
+        服装逐项带颜色,看不见的细节省略(绝不猜)。默认降级到通用
+        caption_image(诚实:总比没有强,调用方无需判分支)。"""
+        return self.caption_image(image_path)
+
     def compare(self, a: CandidateClip, b: CandidateClip, spec: ShotSpec) -> int:
         """Judge which candidate is better: +1 if a, -1 if b, 0 tie.
 

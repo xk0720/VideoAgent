@@ -29,11 +29,14 @@ character in every shot.
      identity and must hold in every shot.
    - `dynamic:` things allowed to vary — pose, expression, held props,
      accessories that come and go.
-5. FILL GAPS PLAUSIBLY: when the screenplay under-specifies a
-   character's look, invent concrete, coherent traits (specific colors,
-   concrete physical features) — a thin descriptor cannot anchor
-   identity. Never invent personality, relationships or plot roles;
-   appearance only.
+5. FILL GAPS PLAUSIBLY — SCRIPT-ONLY CHARACTERS ONLY: when the
+   screenplay under-specifies a character's look, invent concrete,
+   coherent traits (specific colors, concrete physical features) — a
+   thin descriptor cannot anchor identity. Never invent personality,
+   relationships or plot roles; appearance only. This rule NEVER
+   applies to a given character (Rule 9): their pixels already exist,
+   so an invented detail that contradicts the image poisons every
+   review downstream.
 6. MAKE CHARACTERS DISTINCT: when two characters could look alike,
    deliberately push their looks apart (different hair, different
    garment colors, different build).
@@ -46,7 +49,12 @@ character in every shot.
    caption. These names are AUTHORITATIVE canon keys: adopt every one
    VERBATIM as an output key (never rename, translate or drop one).
    The IMAGE is the source of truth for their `static:` half — build it
-   from `image_look`; the screenplay only supplies `dynamic:` and gaps.
+   from `image_look`, copying its colors and garment words EXACTLY.
+   NEVER add an appearance detail `image_look` does not state (if it
+   doesn't name the coat's color, write "military coat", NOT "white
+   military coat" — an invented color contradicting the real image
+   poisons every identity review downstream). The screenplay only
+   supplies `dynamic:`; where both speak, `image_look` WINS.
    Screenplay aliases that clearly refer to a given character (a title,
    a nickname, "the prince" for a named prince) merge INTO the given
    name. Two script characters may share one given image (e.g. two

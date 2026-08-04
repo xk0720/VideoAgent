@@ -2722,14 +2722,22 @@ def generate_movie_windowed(
     given_caps: dict = {}
     for _gn, _gp in (given_characters or {}).items():
         cap = ""
-        if _gp and Path(_gp).exists() and mllm is not None \
-                and hasattr(mllm, "caption_image"):
-            try:
-                cap = str(mllm.caption_image(Path(_gp)) or "").strip()
-            except Exception as exc:
-                log.warning("given character %r: image caption failed "
-                            "(%s) — descriptor rides on the script only",
-                            _gn, exc)
+        if _gp and Path(_gp).exists() and mllm is not None:
+            # 正典打标优先走 caption_identity(2026-08-04 run7 事故:通用
+            # 一句话 caption 不带服装颜色,LLM 把黑军装脑补成白色);基类
+            # 默认降级到 caption_image,无需判分支。
+            _fn = getattr(mllm, "caption_identity", None) \
+                or getattr(mllm, "caption_image", None)
+            if _fn is not None:
+                try:
+                    cap = str(_fn(Path(_gp)) or "").strip()
+                except Exception as exc:
+                    log.warning("given character %r: image caption failed "
+                                "(%s) — descriptor rides on the script only",
+                                _gn, exc)
+        # 成功也要留痕(事故教训:静默成功让"打标到底跑没跑"无从考证)
+        log.info("given character %r canon caption (%d chars): %s",
+                 _gn, len(cap), (cap[:160] + "…") if len(cap) > 160 else cap)
         given_caps[_gn] = cap
     if given_caps:
         decisions.append({"stage": "given_characters",
