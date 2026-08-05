@@ -30,17 +30,17 @@ def test_dialogue_speaker_rendered_as_token():
               "name": "王子", "content": "official portrait of 王子"}]
     out = wl._with_dialogue("base prompt", _entry(), CAST,
                             name_to_slot=wl._name_slot_map(slots))
-    assert '<<<image_3>>> says: "你不配"' in out
+    assert '<<<image_3>>>说:"你不配"' in out    # 中文台词→中文脚手架
     # 2026-08-04 用户裁决:兜底只补台词 —— 收势句/mouth-moving 不再机械化
     assert "micro-expression" not in out
     assert "mouth moving" not in out
-    assert "王子 says" not in out
+    assert "王子说" not in out
 
 
 def test_dialogue_speaker_falls_back_to_name_without_slot():
     out = wl._with_dialogue("base prompt", _entry(), CAST,
                             name_to_slot={})       # t2v 降级:无参考图
-    assert '王子 says: "你不配"' in out
+    assert '王子说:"你不配"' in out
 
 
 def test_slot_manifest_portrait_rows_carry_name():
@@ -80,7 +80,22 @@ def test_foreign_dialogue_scrubbed_before_backstop():
                             name_to_slot=wl._name_slot_map(slots))
     assert "How pitiful" not in out                 # 英文台词整段剥除
     assert out.count("真可怜啊，公爵千金……") == 1     # 原文只出现一次
-    assert '<<<image_2>>> says: "真可怜啊，公爵千金……"' in out
+    assert '<<<image_2>>>说:"真可怜啊，公爵千金……"' in out
     # 已有原文台词 → 不重复、不剥
-    p2 = '<<<image_2>>> says: "真可怜啊，公爵千金……". The frame settles.'
+    p2 = '<<<image_2>>>说:"真可怜啊，公爵千金……"。The frame settles.'
     assert wl._with_dialogue(p2, e, CAST) == p2
+
+
+def test_prompt_language_follows_screenplay():
+    """2026-08-05 用户令:剧本中文 → prompt 全中文(摘抄优先)。"""
+    assert wl._prompt_lang("第一场·盛大舞会,宫廷大舞厅") == "zh"
+    assert wl._prompt_lang("SCENE 1 — a bakery, morning") == "en"
+    assert wl._prompt_lang("") == "en"
+    # skill 法条齐备
+    from pathlib import Path as _P
+    base = _P("src/maestro/skills/brain_skills")
+    wg = (base / "window_generation/SKILL.md").read_text()
+    assert "PROMPT LANGUAGE FOLLOWS THE SCRIPT" in wg
+    assert "EXCERPT" in wg
+    sw = (base / "scene_write/SKILL.md").read_text()
+    assert "SCRIPT LANGUAGE LAW" in sw

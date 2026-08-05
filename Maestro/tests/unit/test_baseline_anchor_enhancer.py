@@ -145,5 +145,8 @@ def test_conditions_for_prompt_facts(tmp_path):
     assert "the ongoing motion" in slots["@Video1"]["description"]
     assert slots["@Image1"]["description"] == "the tabby cat"
     assert slots["@Image1"]["referenceable"] is True
-    # t2v 不装配任何图 → 媒体条件必须为空(旧行为会谎称带图,已修正)
-    assert _conditions_for_prompt("t2v", e, None, False) == []
+    # t2v 不装配任何图 → 媒体条件必须为空(旧行为会谎称带图,已修正);
+    # 2026-08-05 起恒有一行 prompt_language 状态行(语言随剧本)
+    t2v_conds = _conditions_for_prompt("t2v", e, None, False)
+    assert [c for c in t2v_conds if c["kind"] != "state"] == []
+    assert any(c["role"] == "prompt_language" for c in t2v_conds)

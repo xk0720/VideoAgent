@@ -586,11 +586,14 @@ def _with_dialogue(prompt: str, entry, cast: dict,
         return "" if line not in m.group(0) else m.group(0)
     prompt = re.sub(
         r'(?:\b(?:says?|said|saying|whispers?|whispering|replies|replied|'
-        r'asks?|asking|murmurs?|shouts?|speaks?|speaking)\b[^"“”]{0,60}?)'
-        r'["“][^"“”]+["”]',
+        r'asks?|asking|murmurs?|shouts?|speaks?|speaking)\b[^"“”「」]{0,60}?'
+        r'|(?:低声)?说道?[::]?\s*|低语[::]?\s*|回答[::]?\s*|问道?[::]?\s*'
+        r'|喊道?[::]?\s*)'
+        r'["“「][^"“”「」]+["”」]',
         _drop_foreign, prompt)
     prompt = re.sub(r"\s{2,}", " ", prompt).strip()
-    if f'"{line}"' in prompt:
+    # 查重按台词原文(不带引号):中英/全半角引号形态都算已在场
+    if line in prompt:
         return prompt
     # 说话人以剧本契约为准(speaker 字段);缺失才退回"第一个出场者"
     # ——猜错人 = 口型对到别人嘴上(实跑事故)。
@@ -602,6 +605,10 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     # 特定镜头的收势指导,被机械化成万能后缀是错的;镜头怎么收由剧本
     # end_state 决定,brain 逐镜写。BGM 压制句保留(no-BGM 裁决在岗)。
     subj = (name_to_slot or {}).get(who) or who
+    # prompt 语言随剧本(2026-08-05 用户令):中文 prompt 用中文脚手架
+    if re.search(r"[一-鿿]", prompt) or re.search(r"[一-鿿]", line):
+        return (f'{prompt} {subj}说:"{line}"。'
+                f"音频:只有角色说这句台词的人声——无背景音乐、无音效。")
     return (f'{prompt} {subj} says: "{line}". '
             f"Audio: only the character's voice speaking the line — "
             f"no background music, no sound effects.")
@@ -1190,10 +1197,17 @@ def _extract_characters(llm, screenplay: str,
     return chars, ("llm" if chars else "unusable")
 
 
+def _prompt_lang(text: str) -> str:
+    """prompt 语言随剧本(2026-08-05 用户令):剧本含中文 → 全链视频
+    prompt 用中文(记号内嵌中文句、动作摘抄原文);否则英文。"""
+    return "zh" if re.search(r"[一-鿿]", str(text or "")) else "en"
+
+
 def _write_outline(llm, user_prompt: str, asset_catalog: list,
                    episode_guidance: dict, max_shots: int,
                    fallback_fn,
-                   cast_canon: Optional[dict] = None
+                   cast_canon: Optional[dict] = None,
+                   prompt_language: str = "en"
                    ) -> tuple[list[str], list, list[str], dict, str]:
     """§A 真·LLM playwriting → (outline, via)。三层纪律同 _decide:
 
@@ -1213,6 +1227,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
             skill_text
             + "\n\nTHIS TASK (JSON):\n"
             + json.dumps({"user_prompt": user_prompt,
+                          "prompt_language": prompt_language,
                           "cast_canon": (cast_canon or {}),
                           "asset_catalog": asset_catalog,
                           "episode_guidance": {
@@ -1362,7 +1377,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                        if re.search(r"[一-鿿]", v)]
             if re.search(r"[一-鿿]", setting):
                 cjk_bad.append("<setting>")
-            if cjk_bad:
+            if cjk_bad and prompt_language != "zh":
                 log.warning("scene_write: cast descriptor/setting in CJK "
                             "for %s — LANGUAGE LAW violated (must be "
                             "English); portraits and prompts will degrade",
@@ -2560,7 +2575,8 @@ def _conditions_for_prompt(strategy: str, entry, prev,
                            source_videos: Optional[list] = None,
                            cast: Optional[dict] = None,
                            setting: str = "",
-                           portraits=None, video_gen=None) -> list[dict]:
+                           portraits=None, video_gen=None,
+                           prompt_language: str = "en") -> list[dict]:
     """给 prompt enhancer 的【条件事实清单】(2026-07-15 需求 2):执行器
     按策略把"生成时真的会喂进去什么"翻译成文字 —— 增强器只能利用这些
     事实,不能发明条件。
@@ -2579,6 +2595,8 @@ def _conditions_for_prompt(strategy: str, entry, prev,
                       "referenceable": bool(r.get("referenceable")),
                       "description": r.get("content", "")})
     # 需求 ②:状态类条件 —— prompt 必须从真实接点起笔、以剧本 end_state 收笔
+    conds.append({"kind": "state", "role": "prompt_language",
+                  "description": prompt_language})
     if junction:
         conds.append({"kind": "state", "role": "opening_state_actual",
                       "description": junction})
@@ -2900,6 +2918,10 @@ def generate_movie_windowed(
     decisions.append({"stage": "character_extract", "via": ce_via,
                       "characters": sorted(cast_canon)})
 
+    # prompt 语言随剧本(2026-08-05 用户令)
+    prompt_lang = _prompt_lang(screenplay_text or user_prompt)
+    log.info("window: prompt language = %s (follows the screenplay)",
+             prompt_lang)
     # ── §A playwriting:剧本 → outline → specs → 台账 ────────────────────
     outline, shot_durations, shot_end_states, script_meta, outline_via = \
         _write_outline(
@@ -2911,6 +2933,7 @@ def generate_movie_windowed(
         fallback_fn=lambda: screenwriter.run(screenplay_text or user_prompt,
                                              asset_memory),
         cast_canon=cast_canon,
+        prompt_language=prompt_lang,
     )
     decisions.append({"stage": "playwriting", "label": "outline",
                       "strategy": f"{len(outline)} shots", "via": outline_via,
@@ -3158,6 +3181,7 @@ def generate_movie_windowed(
         d = _decide(
             llm, "generation-condition", menu,
             {"shot": entry.to_brain_line(),
+             "prompt_language": prompt_lang,
              "prev_shot": prev.to_brain_line() if prev else None,
              "junction": junction_ctx,
              "cast": storyboard.cast, "setting": storyboard.setting,
@@ -3209,7 +3233,8 @@ def generate_movie_windowed(
                                                   cast=shot_cast,
                                                   setting=storyboard.setting,
                                                   portraits=shot_portraits,
-                                                  video_gen=video_gen),
+                                                  video_gen=video_gen,
+                                                  prompt_language=prompt_lang),
                 base_prompt=brain_prompt or spec.prompt,
                 label=entry.label)
             if enhanced:

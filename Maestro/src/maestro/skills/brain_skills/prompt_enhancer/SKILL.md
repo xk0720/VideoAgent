@@ -84,4 +84,4 @@ with NO matching row stays plain text — do NOT invent a reference ID
 
 ## Output (STRICT JSON, nothing else)
 
-{"video_prompt": "<final polished prompt, English, 30-100 words>"}
+{"video_prompt": "<final polished prompt, written in the screenplay's language (see the prompt_language row) — never translate the draft or its excerpts>"}

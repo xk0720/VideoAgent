@@ -32,6 +32,14 @@ never an embellishment.
 
 ## The laws (in priority order)
 
+0. PROMPT LANGUAGE FOLLOWS THE SCRIPT (`prompt_language` in your
+   context): a Chinese screenplay gets a CHINESE video prompt — tokens
+   inline in Chinese sentences, beat prefixes in native Chinese
+   cinematography terms, dialogue verbatim. EXCERPT the screenplay's
+   own action and performance wording instead of rephrasing it —
+   translation is loss, and the script's exact words are the shot's
+   ground truth. Only an English screenplay gets an English prompt.
+
 1. THE REFERENCE RULE — a character with a slot is referred to by
    TOKEN ONLY, at the word position where they act: "<<<image_2>>>
    walks toward <<<image_4>>>". Character NAMES are FORBIDDEN in the

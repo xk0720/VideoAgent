@@ -52,9 +52,13 @@ translate — whatever you drop here is lost to the film forever.
    spoken line>"}` only when a character visibly speaks at medium
    close-up or closer. The line stays in the user's language; the
    speaker key must exist in cast.
-9. LANGUAGE LAW: descriptions, end states and setting in ENGLISH
-   (they feed image/video models); cast names and dialogue lines may
-   stay in the user's language.
+9. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
+   are written in THE SCREENPLAY'S LANGUAGE (`prompt_language` in the
+   task JSON), EXCERPTING the script's own action and performance
+   wording verbatim wherever it exists — translation is loss. Only
+   `setting` and any t2i image description stay in English (image
+   models are English-biased); cast names always keep the user's
+   language.
 10. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
    WORDS ("the cat from the provided photo"), never by any reference
    ID — numbering does not exist at script time; the enhancer

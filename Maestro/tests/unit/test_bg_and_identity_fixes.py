@@ -71,11 +71,11 @@ def test_with_dialogue_uses_speaker_not_first_marker():
     e.dialogue = "你不配"
     e.dialogue_speaker = "王子"
     out = wl._with_dialogue("base prompt", e, cast)
-    assert '王子 says: "你不配"' in out          # 不再猜第一个出场者(安娜)
+    assert '王子说:"你不配"' in out            # 中文台词→中文脚手架;不猜首个出场者
     # speaker 缺失/不在 cast → 兼容旧行为(第一个出场者)
     e.dialogue_speaker = ""
     out2 = wl._with_dialogue("base prompt", e, cast)
-    assert '安娜 says:' in out2
+    assert '安娜说:' in out2
 
 
 # ── ③ 背景资产 ──────────────────────────────────────────────────────
