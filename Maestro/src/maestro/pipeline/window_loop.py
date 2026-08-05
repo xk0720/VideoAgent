@@ -645,13 +645,18 @@ def _with_dialogue(prompt: str, entry, cast: dict,
             # 内容保全(2026-08-05 run13c 事故:整段替换吃掉台词前的
             # 表演文字):有代词 → 只把第一个 他/她 换成记号;无代词
             # (隐主语)→ 言说动词前【插入】记号,段落原文保留。
-            _pn = list(re.finditer(r"[他她](?!们)", seg))
+            # 只换主语位代词(句首/标点后)——动词附着的宾语代词不换
+            # (2026-08-05 run13d 事故:"仰望着他说"的"他"是被仰望的
+            # 对象,换成说话人记号后变成仰望自己)。
+            _pn = [m for m in re.finditer(r"[他她](?!们)", seg)
+                   if m.start() == 0 or seg[m.start() - 1] in ",\uff0c\u3001;\uff1b:\uff1a \u3000"]
             if _pn:
                 # 换【离言说动词最近】的代词(前面的代词可能指别人)
                 last = _pn[-1]
                 seg = seg[:last.start()] + _subj + seg[last.end():]
                 return f"{seg}{verb}{quote}"
-            return f"{seg}{_subj}{verb}{quote}"
+            sep = "" if (not seg or seg[-1] in ",\uff0c\u3001;\uff1b:\uff1a \u3000") else "\uff0c"
+            return f"{seg}{sep}{_subj}{verb}{quote}"
         prompt = re.sub(
             "([^。;;!!??<>]{0,40}?)"
             "((?:并|随后|然后|接着)?(?:低声)?说道?|says?)"

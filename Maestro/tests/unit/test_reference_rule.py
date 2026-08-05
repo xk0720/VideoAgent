@@ -298,3 +298,27 @@ def test_speaker_gate_never_bisects_tokens_or_doubles_subject():
     out2 = wl._with_dialogue(p2, e, {"安莉希娅": "s"},
                              name_to_slot=wl._name_slot_map(slots))
     assert out2.count("<<<image_2>>>") == 1
+
+def test_speaker_gate_skips_object_pronouns():
+    """2026-08-05 run13d 事故回归:"仰望着他说"的"他"是宾语(被仰望
+    的对象),旧闸换成说话人记号后变成"仰望自己"。新规则:只换
+    主语位(句首/标点后)代词;动词附着宾语代词不换,改插入记号。"""
+    e = _entry(dialogue="芬莱克殿下……这对于安娜小姐来说，会不会太过了？",
+               speaker="安莉希娅")
+    slots = [{"slot": "<<<image_3>>>", "referenceable": True,
+              "name": "安莉希娅", "content": "c"},
+             {"slot": "<<<image_4>>>", "referenceable": True,
+              "name": "王子", "content": "c"}]
+    p = ('随后以克制的关切求情，仰望着他说：'
+         '"芬莱克殿下……这对于安娜小姐来说，会不会太过了？"。')
+    out = wl._with_dialogue(p, e, {"安莉希娅": "s", "王子": "s"},
+                            name_to_slot=wl._name_slot_map(slots))
+    assert "仰望着他" in out            # 宾语代词原封不动
+    assert "仰望着<<<image_3>>>" not in out  # 不再仰望自己
+    assert "<<<image_3>>>说" in out                 # 记号插在言说动词前
+    # 主语位代词(逗号后)仍正常替换
+    p2 = ('她面露不忍，她柔声说：'
+          '"芬莱克殿下……这对于安娜小姐来说，会不会太过了？"。')
+    out2 = wl._with_dialogue(p2, e, {"安莉希娅": "s"},
+                             name_to_slot=wl._name_slot_map(slots))
+    assert "<<<image_3>>>柔声说" in out2
