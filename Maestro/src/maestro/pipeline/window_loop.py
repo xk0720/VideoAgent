@@ -1093,8 +1093,9 @@ _BG_CROWD_WORDS = ("people", "person", "guest", "guests", "crowd",
                    "figures", "man", "men", "woman", "women", "soldier",
                    "soldiers", "aristocrat", "aristocrats")
 
-_BG_EMPTY_SUFFIX = (", completely empty interior, no people, no figures, "
-                    "no modern objects.")
+_BG_EMPTY_SUFFIX = (", no principal characters, background figures "
+                    "anonymous and unobtrusive at the periphery, open "
+                    "central area, no modern objects.")
 
 
 def _scrub_bg_prompt(prompt: str, cast_names) -> str:
@@ -1106,10 +1107,9 @@ def _scrub_bg_prompt(prompt: str, cast_names) -> str:
     out = str(prompt or "")
     for n in (cast_names or []):
         out = out.replace(str(n), "")
-    segs = [s for s in out.split(",")
-            if not any(w in s.lower().split() or f"{w}." in s.lower()
-                       for w in _BG_CROWD_WORDS)]
-    out = ",".join(segs).strip().rstrip(".")
+    # 2026-08-05 用户令:板上无主角,但剧本要的人群放行 —— 人群词不再
+    # 剥除,只剥角色名 + 恒定无主角后缀。
+    out = re.sub(r"\s{2,}", " ", out).strip().rstrip(".")
     return out + _BG_EMPTY_SUFFIX
 
 
@@ -2875,7 +2875,8 @@ def generate_movie_windowed(
     enable_bg_frame_upgrade: bool = False,  # 背景实拍帧升级(2026-08-04
                                         # 裁决默认关:实拍帧带主人公,
                                         # 当背景参考=身份噪声扩散器)
-    enable_bgm: bool = True,            # 背景音乐开关(enable_audio 开着时
+    enable_bgm: bool = False,           # 背景音乐(2026-08-05 用户令:
+                                        # 取消,默认永关;--bgm 显式开)
                                         # 才有意义;关 = 只保对白原生音)
     baseline_anchor: bool = False,      # 需求 1(2026-07-15):开工直出锚点视频
     baseline_anchor_duration=None,      # 锚点时长(None = API 默认)
@@ -3364,6 +3365,19 @@ def generate_movie_windowed(
             brain_prompt = _with_dialogue(brain_prompt or spec.prompt,
                                           entry, storyboard.cast,
                                           name_to_slot=_name_slot_map(slots))
+        # 名字告警闸(2026-08-05):引号外出现角色名 = 未绑定别名
+        # (名字对视频模型是空气;无槽者应使用矢量视觉把手)。
+        if brain_prompt:
+            _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
+            _leak = [n for n in (storyboard.cast or {}) if n in _noq]
+            if _leak:
+                log.warning("window: %s outgoing prompt carries cast "
+                            "NAME(s) outside dialogue quotes %s — names "
+                            "mean nothing to the video model; slotless "
+                            "figures need visual handles", entry.label,
+                            _leak)
+                decisions.append({"stage": "name_leak", "label": entry.label,
+                                  "names": _leak})
         for s in range(max(1, n_candidates)):
             _old_ga = getattr(video_gen, "generate_audio", False)
             if want_audio:

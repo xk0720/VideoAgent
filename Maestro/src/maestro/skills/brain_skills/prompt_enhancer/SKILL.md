@@ -66,8 +66,10 @@ Using the slot manifest as the single source of truth:
    translated or paraphrased it, restore the script's original words;
    never add a line the draft lacks (the executor backstops a missing
    line deterministically);
-4. a name may remain ONLY when the manifest has no slot for that
-   character;
+4. a cast name NEVER remains outside quoted dialogue: a visible
+   figure with no slot gets a short VISUAL HANDLE from the exit
+   vector's pose/clothing ("the woman in the gold gown at left");
+   names inside quoted lines are the script's spoken text and stay;
 5. every referenceable slot is mentioned exactly once — a portrait
    slot as its token in an action clause; the background slot opening
    its beat; a non-character asset slot may keep its content words.

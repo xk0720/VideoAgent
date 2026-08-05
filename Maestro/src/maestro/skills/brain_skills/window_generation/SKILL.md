@@ -43,10 +43,14 @@ never an embellishment.
 1. THE REFERENCE RULE — a character with a slot is referred to by
    TOKEN ONLY, at the word position where they act: "<<<image_2>>>
    walks toward <<<image_4>>>". Character NAMES are FORBIDDEN in the
-   prompt (a name means nothing to the video model; a name beside a
-   token reads as a second, phantom person). The BACKGROUND token
-   opens its beat ("Inside <<<image_1>>>, …") and is never
-   re-described.
+   prompt WITHOUT EXCEPTION — a name means nothing to the video model.
+   A visible figure with NO slot (someone carried only by the pinned
+   frame) is referred to by a short VISUAL HANDLE taken from the exit
+   vector's pose/clothing ("the woman in the gold gown at left"),
+   never by their cast name. The ONLY place a name may appear is
+   INSIDE a quoted dialogue line — that is the script's spoken text.
+   The BACKGROUND token opens its beat ("Inside <<<image_1>>>, …")
+   and is never re-described.
 2. IDENTITY APPEARANCE is FORBIDDEN — face shape, skin, hair, eye
    color, wardrobe and garment colors live in the reference images,
    never in the prompt. Full appearance prose belongs solely to
@@ -95,6 +99,11 @@ never an embellishment.
 - CONCRETE MOTION: trajectory (from where, to where), amplitude
   ("turns her head slightly right"), speed as visible evidence (stride
   pace, cloth lag) — never bare intensity adverbs.
+- CROWD DISCIPLINE: ambient people (guests, passers-by) live at the
+  periphery/background with an explicit subordination clause ("blurred
+  guests along the far walls, none entering the foreground") — NEVER
+  place an uncast figure at a principal position (real incident: "noble guests around them" with no placement grew a fourth principal beside
+  the leads).
 - OBSERVABLE, NOT ABSTRACT: convert feelings to camera-recordable
   facts (brows tighten, gaze drops, shoulders sink). No "elegant",
   "cinematic", "beautiful".
