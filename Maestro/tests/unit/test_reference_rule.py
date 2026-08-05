@@ -131,3 +131,47 @@ def test_background_slot_is_always_image_1(tmp_path):
     assert "OFFICIAL look" in ref_rows[0]["content"]
     assert ref_rows[1]["slot"] == "<<<image_2>>>"
     assert wl._name_slot_map(rows)["安娜"] == "<<<image_3>>>"
+
+
+def test_decision_prompt_language_aware():
+    """2026-08-05 run11 事故:decision_prompt 尾部硬编码"全英文"压死中文
+    制。zh 上下文 → video_prompt 要求中文;en 上下文 → 维持全英文令。"""
+    zh = wl.decision_prompt("SKILL", [], {"prompt_language": "zh"})
+    assert "video_prompt in CHINESE" in zh
+    en = wl.decision_prompt("SKILL", [], {"prompt_language": "en"})
+    assert "must be in ENGLISH" in en
+
+
+def test_outline_language_gate_retries_then_falls_back():
+    """zh 项目分镜写成英文 → 纠正重试;仍英文 → 摘抄兜底(拆剧本原文)。"""
+    import json as _json
+    replies = [
+        _json.dumps({"cast": {}, "setting": "hall", "shots": [
+            {"description": "Shot 1: the camera finds the prince",
+             "duration_s": 5, "end_state": "still"}]}),
+        _json.dumps({"cast": {}, "setting": "hall", "shots": [
+            {"description": "Shot 1: 镜头从大远景推向<王子>",
+             "duration_s": 5, "end_state": "王子静立"}]}),
+    ]
+
+    class _LLM:
+        def __init__(self):
+            self.n = 0
+
+        def complete(self, prompt, **k):
+            r = replies[min(self.n, 1)]
+            self.n += 1
+            return r
+    shots, _d, _e, _m, via = wl._write_outline(
+        _LLM(), "第一场·盛大舞会", [], episode_guidance={}, max_shots=3,
+        fallback_fn=lambda: ["兜底"], prompt_language="zh")
+    assert via == "llm" and "镜头从大远景" in shots[0]   # 纠正重试拿到中文
+
+    class _AlwaysEn:
+        def complete(self, prompt, **k):
+            return replies[0]
+    shots2, _d2, _e2, _m2, via2 = wl._write_outline(
+        _AlwaysEn(), "第一场·盛大舞会", [], episode_guidance={},
+        max_shots=3, fallback_fn=lambda: ["剧本原文摘抄"],
+        prompt_language="zh")
+    assert via2 == "fallback" and shots2 == ["剧本原文摘抄"]

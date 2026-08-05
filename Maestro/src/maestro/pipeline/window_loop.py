@@ -894,8 +894,12 @@ def decision_prompt(skill_text: str, menu: list, context: dict) -> str:
         + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
           '"reason": "<one short sentence>", ... optional semantic fields '
           "per the skill above (images / video_prompt / use_prev_tail_video)}"
-          " ALL output text (reason / video_prompt / image descriptions)"
-          " must be in ENGLISH, regardless of the user's language."
+        + (" reason in ENGLISH; video_prompt in CHINESE (the screenplay's"
+           " language — excerpt its wording; tokens inline in Chinese"
+           " sentences); image descriptions in ENGLISH (image models)."
+           if context.get("prompt_language") == "zh" else
+           " ALL output text (reason / video_prompt / image descriptions)"
+           " must be in ENGLISH, regardless of the user's language.")
     )
 
 
@@ -1039,8 +1043,9 @@ def _write_screenplay(llm, user_prompt: str, screenplay,
                           "asset_catalog": asset_catalog},
                          ensure_ascii=False)
             + '\n\nSTRICT JSON only: {"screenplay": "<the full screenplay '
-              'in ENGLISH: scene headings, characters in visible action, '
-              'at most one short spoken line per beat>"}')
+              "in the SAME LANGUAGE as the idea (a Chinese idea gets a "
+              "Chinese screenplay): scene headings, characters in visible "
+              'action, at most one short spoken line per beat>"}')
         raw = ""
         try:
             raw = llm.complete(prompt)
@@ -1279,12 +1284,17 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               "end_state exactly (position AND motion); to hand motion to "
               "the next shot, do NOT let the mover stop before the cut; a "
               "resting object may only move again if a NEW force/event acts "
-              "on it (write that event into the description). LANGUAGE LAW: "
-              "cast descriptors, setting, descriptions, end_state, "
-              "variation and opening_frame MUST be ENGLISH regardless of "
-              "the user's language (they feed image/video models directly; "
-              "2026-07-31 field bug: Chinese descriptors produced broken "
-              "portraits). Entity NAMES in cast keys and dialogue lines may "
+              "on it (write that event into the description). SCRIPT LANGUAGE LAW: "
+              + ("descriptions, end_state and opening_frame MUST be in "
+                 "CHINESE, EXCERPTING the screenplay's own action and "
+                 "performance wording verbatim wherever it exists — "
+                 "translation is loss. Only cast descriptors and setting "
+                 "stay ENGLISH (they feed English-biased image models). "
+                 if prompt_language == "zh" else
+                 "cast descriptors, setting, descriptions, end_state, "
+                 "variation and opening_frame MUST be ENGLISH (they feed "
+                 "image/video models directly). ")
+              + "Entity NAMES in cast keys and dialogue lines always "
               "stay in the user's language. CAST CANON: when the task "
               "JSON carries a non-empty cast_canon, adopt those names and "
               "descriptors VERBATIM in your cast output — you may only ADD "
@@ -1298,8 +1308,35 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                 data = _extract_json(raw)
             except Exception:
                 data = None
-            if isinstance(data, dict) and isinstance(data.get("shots"),
-                                                     list):
+            _shots_ok = (isinstance(data, dict)
+                         and isinstance(data.get("shots"), list))
+            if _shots_ok and prompt_language == "zh":
+                # 语言闸(2026-08-05 run11 事故):zh 项目分镜写成英文 →
+                # 纠正重试一次;仍英文 → 判不可用,落摘抄兜底(拆剧本
+                # 原文,天然中文)。
+                _texts = [str(x.get("description", x) if isinstance(x, dict)
+                              else x) for x in data["shots"]]
+                _zh_n = sum(1 for t in _texts if re.search(r"[一-鿿]",
+                            re.sub(r"<[^>]*>", "", t)))
+                if _texts and _zh_n < (len(_texts) + 1) // 2:
+                    log.warning("scene_write: %d/%d descriptions are NOT "
+                                "Chinese on a zh project — SCRIPT LANGUAGE "
+                                "LAW violated%s", len(_texts) - _zh_n,
+                                len(_texts),
+                                " — retrying with a corrective" if
+                                _attempt == 0 else
+                                "; falling back to verbatim excerpts")
+                    data = None
+                    _shots_ok = False
+                    if _attempt == 0:
+                        prompt += ("\n\nYOUR PREVIOUS REPLY VIOLATED THE "
+                                   "SCRIPT LANGUAGE LAW: every description/"
+                                   "end_state/opening_frame MUST be in "
+                                   "CHINESE, excerpting the screenplay "
+                                   "verbatim. Rewrite the SAME storyboard "
+                                   "in Chinese.")
+                        continue
+            if _shots_ok:
                 break
             if _attempt == 0:
                 log.warning("scene_write: LLM reply unusable (raw %d "
