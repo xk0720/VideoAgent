@@ -578,6 +578,18 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     line = str(getattr(entry, "dialogue", "") or "").strip()
     if not line or not prompt:
         return prompt
+    # 台词逐字硬闸(2026-08-05 run10 实跑事故):brain 按英文法把台词
+    # 也翻译了("whispers: \"How pitiful…\""),中文查重匹配不上 → 兜底
+    # 又补中文原句,英中双份,模型可能开口说英文。确定性剥除:一切
+    # "言说动词 + 引号"里【不是原句】的台词,连动词短语整段删。
+    def _drop_foreign(m: "re.Match") -> str:
+        return "" if line not in m.group(0) else m.group(0)
+    prompt = re.sub(
+        r'(?:\b(?:says?|said|saying|whispers?|whispering|replies|replied|'
+        r'asks?|asking|murmurs?|shouts?|speaks?|speaking)\b[^"“”]{0,60}?)'
+        r'["“][^"“”]+["”]',
+        _drop_foreign, prompt)
+    prompt = re.sub(r"\s{2,}", " ", prompt).strip()
     if f'"{line}"' in prompt:
         return prompt
     # 说话人以剧本契约为准(speaker 字段);缺失才退回"第一个出场者"

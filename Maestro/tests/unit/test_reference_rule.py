@@ -65,3 +65,22 @@ def test_ref2v_exempt_from_cast_canon():
 def test_transitions_default_off():
     sig = inspect.signature(wl.generate_movie_windowed)
     assert sig.parameters["enable_transitions"].default is False
+
+
+def test_foreign_dialogue_scrubbed_before_backstop():
+    """2026-08-05 run10 事故回归:brain 把台词译成英文写进节拍,兜底又
+    补中文原句 → 英中双份。硬闸:言说动词+引号里不是原句的台词整段
+    剥除,再补唯一的原文台词。"""
+    e = _entry(dialogue="真可怜啊，公爵千金……", speaker="王子")
+    slots = [{"slot": "<<<image_2>>>", "referenceable": True,
+              "name": "王子", "content": "official portrait of 王子"}]
+    p = ('He leans toward the officer and whispers beneath the glitter: '
+         '"How pitiful, the duke\'s daughter..." The camera settles.')
+    out = wl._with_dialogue(p, e, CAST,
+                            name_to_slot=wl._name_slot_map(slots))
+    assert "How pitiful" not in out                 # 英文台词整段剥除
+    assert out.count("真可怜啊，公爵千金……") == 1     # 原文只出现一次
+    assert '<<<image_2>>> says: "真可怜啊，公爵千金……"' in out
+    # 已有原文台词 → 不重复、不剥
+    p2 = '<<<image_2>>> says: "真可怜啊，公爵千金……". The frame settles.'
+    assert wl._with_dialogue(p2, e, CAST) == p2
