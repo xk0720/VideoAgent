@@ -21,12 +21,14 @@ from maestro.tools.video_concat import VideoConcatTool
 
 SRC = Path(__file__).resolve().parent / "outputs" / "seedance_manual_001918"
 
-BRIDGE_12 = ("转场运镜:镜头几乎不动,一位深色礼服宾客从近景缓缓横穿,"
-             "遮满画面后移开,画面过渡到下一构图;速度舒缓,无剪辑感,"
-             "人物不在原地变换面貌或服装。")
-BRIDGE_23 = ("转场运镜:镜头轻微平移,两位宾客的身影从近景缓缓走过,"
-             "遮满画面后移开,画面过渡到下一构图;速度舒缓,无剪辑感,"
-             "人物不在原地变换面貌或服装。")
+BRIDGE_12 = ("转场运镜:镜头从含泪少女的面部特写缓缓转开,平稳转向"
+             "她对面,银发女子挽着军装男子手臂的中近景随转动进入"
+             "画面,构图对齐后停稳;转动缓慢柔和,无剪辑感,人物"
+             "不在原地变换面貌或服装。")
+BRIDGE_23 = ("转场运镜:镜头从挽臂而立的二人中近景缓缓平移离开,"
+             "移向人群边缘,两名并肩军官的双人中近景随移动进入"
+             "画面后停稳;移动缓慢平稳,无剪辑感,人物不在原地"
+             "变换面貌或服装。")
 
 
 def main() -> None:
@@ -42,7 +44,7 @@ def main() -> None:
     for tag, prompt in [("12", BRIDGE_12), ("23", BRIDGE_23)]:
         fa, fb = SRC / f"bridge_{tag}_prev.png", SRC / f"bridge_{tag}_next.png"
         assert fa.exists() and fb.exists(), f"端点帧缺失: {fa} / {fb}"
-        print(f"[桥 {tag}] flf2v 4s 前景遮挡…")
+        print(f"[桥 {tag}] flf2v 4s…")
         bp = vg.frame_to_frame(
             prompt=prompt, first_frame=fa, last_frame=fb,
             out_path=out_dir / f"bridge_{tag}.mp4", duration=4, seed=777)
