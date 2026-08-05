@@ -242,3 +242,20 @@ def test_speaker_pronoun_replaced_with_token_when_line_present():
     out2 = wl._with_dialogue(p2, e, CAST,
                              name_to_slot=wl._name_slot_map(slots))
     assert out2.count("<<<image_4>>>") == 1
+
+
+def test_final_name_substitution_outside_quotes():
+    """名字终换闸:引号外角色名有槽必换成记号;引号内(台词)原样。
+    直接演练闸门的切分替换逻辑(与主链同一段代码语义)。"""
+    import re
+    ns = {"安娜": "<<<image_2>>>", "芬莱克殿下": "<<<image_3>>>"}
+    prompt = ('安娜走向舞台,芬莱克殿下说:"你不配做王后,安莉希娅才合适!"'
+              '随后安娜停下。')
+    parts = re.split(r'(["“][^"“”]*["”])', prompt)
+    for i in range(0, len(parts), 2):
+        for n, tok in ns.items():
+            parts[i] = parts[i].replace(n, tok)
+    out = "".join(parts)
+    assert out.startswith("<<<image_2>>>走向舞台,<<<image_3>>>说:")
+    assert "安莉希娅才合适" in out            # 台词内名字不动
+    assert "随后<<<image_2>>>停下" in out

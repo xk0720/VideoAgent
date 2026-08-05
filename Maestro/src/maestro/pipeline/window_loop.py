@@ -3535,17 +3535,24 @@ def generate_movie_windowed(
             brain_prompt = _with_dialogue(brain_prompt or spec.prompt,
                                           entry, storyboard.cast,
                                           name_to_slot=_name_slot_map(slots))
-        # 名字告警闸(2026-08-05):引号外出现角色名 = 未绑定别名
-        # (名字对视频模型是空气;无槽者应使用矢量视觉把手)。
+        # 名字终换闸(2026-08-05 用户令:"保证所有名称都用引用"):
+        # 引号外的角色名,有槽位的【确定性替换】成记号;换不了的才告警
+        # (无槽者本该被 enhancer 删/改视觉把手)。台词引号内永不动。
         if brain_prompt:
+            _ns_final = _name_slot_map(slots)
+            _parts = re.split(r'(["“][^"“”]*["”])', brain_prompt)
+            for _i in range(0, len(_parts), 2):        # 偶数段 = 引号外
+                for _n, _tok in _ns_final.items():
+                    if _n in _parts[_i]:
+                        _parts[_i] = _parts[_i].replace(_n, _tok)
+            brain_prompt = "".join(_parts)
             _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
             _leak = [n for n in (storyboard.cast or {}) if n in _noq]
             if _leak:
-                log.warning("window: %s outgoing prompt carries cast "
-                            "NAME(s) outside dialogue quotes %s — names "
-                            "mean nothing to the video model; slotless "
-                            "figures need visual handles", entry.label,
-                            _leak)
+                log.warning("window: %s outgoing prompt still carries "
+                            "SLOTLESS cast name(s) %s outside quotes — "
+                            "enhancer should have deleted or handled "
+                            "them", entry.label, _leak)
                 decisions.append({"stage": "name_leak", "label": entry.label,
                                   "names": _leak})
         for s in range(max(1, n_candidates)):
