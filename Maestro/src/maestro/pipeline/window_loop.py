@@ -1244,6 +1244,17 @@ def _extract_characters(llm, screenplay: str,
     return chars, ("llm" if chars else "unusable")
 
 
+def _is_mostly_chinese(text: str) -> bool:
+    """语言拒收闸判据(2026-08-05 run13 事故:英文润色夹着中文台词引号,
+    "含任何中文"的旧判据被一个字骗过):剥掉引号内台词后,正文的中文
+    字符数必须不少于拉丁字母数(记号 image_N 的拉丁字母已计入,纯中文
+    prompt 依然轻松达标)。"""
+    body = re.sub(r'["“][^"“”]*["”]', "", str(text or ""))
+    cjk = len(re.findall(r"[一-鿿]", body))
+    latin = len(re.findall(r"[A-Za-z]", body))
+    return cjk > 0 and cjk >= latin
+
+
 def _prompt_lang(text: str) -> str:
     """prompt 语言随剧本(2026-08-05 用户令):剧本含中文 → 全链视频
     prompt 用中文(记号内嵌中文句、动作摘抄原文);否则英文。"""
@@ -3454,7 +3465,7 @@ def generate_movie_windowed(
                 base_prompt=brain_prompt or spec.prompt,
                 label=entry.label)
             if enhanced and prompt_lang == "zh" \
-                    and not re.search(r"[一-鿿]", enhanced):
+                    and not _is_mostly_chinese(enhanced):
                 # 语言拒收闸(2026-08-05 run12 shot4:enhancer 漂回英文)
                 # —— zh 项目润色产物非中文 → 整个弃用,保留中文原稿。
                 log.warning("window: %s enhancer output is NOT Chinese on "

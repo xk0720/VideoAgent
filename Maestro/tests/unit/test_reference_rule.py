@@ -259,3 +259,17 @@ def test_final_name_substitution_outside_quotes():
     assert out.startswith("<<<image_2>>>走向舞台,<<<image_3>>>说:")
     assert "安莉希娅才合适" in out            # 台词内名字不动
     assert "随后<<<image_2>>>停下" in out
+
+
+def test_enhancer_language_gate_not_fooled_by_quoted_line():
+    """2026-08-05 run13 事故回归:英文润色夹中文台词引号 → 旧判据被
+    一个字骗过。新判据:引号外中文为主才算中文。"""
+    en_with_quote = ('<<<image_1>>> preserves the established hall. '
+                     '<<<image_4>>> says: "你这种女人不配做王后！" '
+                     'They become still, camera fixed.')
+    assert not wl._is_mostly_chinese(en_with_quote)
+    zh = ('大远景，固定镜头：在<<<image_1>>>内，<<<image_3>>>挽着'
+          '<<<image_4>>>站在舞台中央，说："你这种女人不配做王后！"。'
+          '镜头静止。')
+    assert wl._is_mostly_chinese(zh)
+    assert not wl._is_mostly_chinese("all english, no chinese at all")
