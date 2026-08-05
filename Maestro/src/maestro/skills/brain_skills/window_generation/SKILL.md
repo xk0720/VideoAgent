@@ -49,6 +49,11 @@ never an embellishment.
    vector's pose/clothing ("the woman in the gold gown at left"),
    never by their cast name. The ONLY place a name may appear is
    INSIDE a quoted dialogue line — that is the script's spoken text.
+   PRONOUN LAW: he/she pronouns may stand for a token ONLY within the
+   SAME sentence as that token; every beat re-anchors with the token at
+   its first mention, and the subject of a speech verb is ALWAYS the
+   token itself (the speech verb's subject is the token — never a
+   pronoun speaker, which makes the model guess whose lips move).
    The BACKGROUND token opens its beat ("Inside <<<image_1>>>, …")
    and is never re-described.
 2. IDENTITY APPEARANCE is FORBIDDEN — face shape, skin, hair, eye

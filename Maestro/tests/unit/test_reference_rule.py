@@ -221,3 +221,24 @@ def test_dynamic_output_language_policy():
         wl._ensure_cast_portraits(sb, None, gen, _P(td), llm=_LLM())
         assert gen.prompts and "深紫色" not in gen.prompts[0]
         assert "purple velvet" in gen.prompts[0]
+
+
+def test_speaker_pronoun_replaced_with_token_when_line_present():
+    """2026-08-05 run12 事故:台词在场但说话人是代词("他…并说:")→
+    机器闸把言说动词前主语确定性换成说话人记号;已是记号则不动。"""
+    e = _entry(dialogue="你这种女人不配做王后，安莉希娅才是真正合适的人选！",
+               speaker="王子")
+    slots = [{"slot": "<<<image_4>>>", "referenceable": True,
+              "name": "王子", "content": "official portrait of 王子"}]
+    p = ('待他的脸清晰入镜后，他严厉地公开退婚并说："你这种女人不配做王后，'
+         '安莉希娅才是真正合适的人选！"。最终她的肩背静止于前景。')
+    out = wl._with_dialogue(p, e, CAST,
+                            name_to_slot=wl._name_slot_map(slots))
+    import re as _re
+    assert _re.search(r"<<<image_4>>>(?:并|随后)?说[:：]", out)   # 记号紧贴言说动词
+    assert "他严厉地公开退婚并说" not in out
+    # 已是记号主语 → 原样保留
+    p2 = '<<<image_4>>>说："你这种女人不配做王后，安莉希娅才是真正合适的人选！"。'
+    out2 = wl._with_dialogue(p2, e, CAST,
+                             name_to_slot=wl._name_slot_map(slots))
+    assert out2.count("<<<image_4>>>") == 1

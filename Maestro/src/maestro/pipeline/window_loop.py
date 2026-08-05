@@ -203,7 +203,7 @@ _PIN_SENTENCE = ("The shot opens EXACTLY on @Image1 — the final moment of "
 # cast 契约值的格式:static: X; dynamic: Y。全角分号/冒号同样合法 ——
 # 2026-07-31 实锤:中文描述符用";"绕过了拆分器,static:/dynamic: 标签
 # 原文进了肖像 t2i prompt。
-_CAST_SPLIT_RE = re.compile(r"static[::]\s*(.+?)\s*[;;,]\s*dynamic[::].*",
+_CAST_SPLIT_RE = re.compile(r"static[:\uff1a]\s*(.+?)\s*[;;,]\s*dynamic[:\uff1a].*",
                             re.IGNORECASE | re.DOTALL)
 
 
@@ -215,8 +215,8 @@ def _static_half(desc: str) -> str:
     m = _CAST_SPLIT_RE.match(s)
     if m:
         return m.group(1).strip()
-    cut = re.split(r"dynamic[::]", s, maxsplit=1, flags=re.IGNORECASE)[0]
-    cut = re.sub(r"^\s*static[::]\s*", "", cut, flags=re.IGNORECASE)
+    cut = re.split(r"dynamic[:\uff1a]", s, maxsplit=1, flags=re.IGNORECASE)[0]
+    cut = re.sub(r"^\s*static[:\uff1a]\s*", "", cut, flags=re.IGNORECASE)
     return cut.strip().rstrip(";;,. ").strip()
 
 
@@ -231,8 +231,8 @@ def _scrub_cast_labels(text: str, cast: Optional[dict] = None) -> str:
         m = _CAST_SPLIT_RE.match(s)
         if m and s in out:
             out = out.replace(s, m.group(1).strip())
-    out = re.sub(r"\bstatic[::]\s*", "", out)
-    if re.search(r"\bdynamic[::]", out, re.IGNORECASE):
+    out = re.sub(r"\bstatic[:\uff1a]\s*", "", out)
+    if re.search(r"\bdynamic[:\uff1a]", out, re.IGNORECASE):
         log.warning("cast label 'dynamic:' survived in an outgoing prompt "
                     "(the writer paraphrased the contract) — passing "
                     "through unmodified; fix the writer via skill")
@@ -608,8 +608,8 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     prompt = re.sub(
         r'(?:\b(?:says?|said|saying|whispers?|whispering|replies|replied|'
         r'asks?|asking|murmurs?|shouts?|speaks?|speaking)\b[^"“”「」]{0,60}?'
-        r'|(?:低声)?说道?[::]?\s*|低语[::]?\s*|回答[::]?\s*|问道?[::]?\s*'
-        r'|喊道?[::]?\s*)'
+        r'|(?:低声)?说道?[:\uff1a]?\s*|低语[:\uff1a]?\s*|回答[:\uff1a]?\s*|问道?[:\uff1a]?\s*'
+        r'|喊道?[:\uff1a]?\s*)'
         r'["“「][^"“”「」]+["”」]',
         _drop_foreign, prompt)
     prompt = re.sub(r"\s{2,}", " ", prompt).strip()
@@ -624,15 +624,28 @@ def _with_dialogue(prompt: str, entry, cast: dict,
         if "无背景音乐" in p_ or "no background music" in p_:
             return p_
         return f"{p_} {_audio_zh}" if zh_mode else f"{p_} {_audio_en}"
-    # 查重按台词原文(不带引号):中英/全半角引号形态都算已在场
-    if line in prompt:
-        return _ensure_audio(prompt)
-    # 说话人以剧本契约为准(speaker 字段);缺失才退回"第一个出场者"
-    # ——猜错人 = 口型对到别人嘴上(实跑事故)。
+    # 查重按台词原文(不带引号):中英/全半角引号形态都算已在场。
+    # 说话人失锚硬闸(2026-08-05 run12 事故:"他严厉地公开退婚并说:"
+    # —— 台词在场但说话人是代词,模型只能猜"他"是谁):台词已在场时,
+    # 确定性把言说动词前的主语替换成说话人记号。
+    # 说话人先解析(闸门与兜底共用)
     who = (getattr(entry, "dialogue_speaker", "") or "").strip()
     if not who or (cast and who not in cast):
         who = next(iter(_cast_in_shot(entry.description, cast)),
                    "the character")
+    if line in prompt:
+        _subj = (name_to_slot or {}).get(who) or who
+        def _fix_speaker(m: "re.Match") -> str:
+            seg = m.group(1)
+            if _subj and _subj in seg:
+                return m.group(0)                  # 已是记号 → 不动
+            return f"{_subj}{m.group(2)}{m.group(3)}"
+        prompt = re.sub(
+            "([^。;;!!??]{0,40}?)"
+            "((?:并|随后|然后|接着)?(?:低声)?说道?|says?)"
+            "([:\uff1a]?\\s*[\"“]" + re.escape(line) + "[\"”])",
+            _fix_speaker, prompt, count=1)
+        return _ensure_audio(prompt)
     # 2026-08-04 用户裁决:兜底只补台词本身 —— "mouth moving"/收势句是
     # 特定镜头的收势指导,被机械化成万能后缀是错的;镜头怎么收由剧本
     # end_state 决定,brain 逐镜写。BGM 压制句保留(no-BGM 裁决在岗)。
@@ -3396,6 +3409,14 @@ def generate_movie_windowed(
                                                   prompt_language=prompt_lang),
                 base_prompt=brain_prompt or spec.prompt,
                 label=entry.label)
+            if enhanced and prompt_lang == "zh" \
+                    and not re.search(r"[一-鿿]", enhanced):
+                # 语言拒收闸(2026-08-05 run12 shot4:enhancer 漂回英文)
+                # —— zh 项目润色产物非中文 → 整个弃用,保留中文原稿。
+                log.warning("window: %s enhancer output is NOT Chinese on "
+                            "a zh project — enhancement DISCARDED, keeping "
+                            "the draft", entry.label)
+                enhanced = None
             if enhanced:
                 brain_prompt = _scrub_setting_sentence(
                     _scrub_cast_labels(_strip_markers(enhanced),

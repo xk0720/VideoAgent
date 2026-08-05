@@ -87,6 +87,10 @@ Scan every figure the prompt describes or positions:
    gone). At most ONE generic subordinated clause may remain for
    unresolved figures ("background figures remain still"), with no
    description, name or position.
+3. A PRONOUN acting as a subject counts too: he/she is legal only in
+   the same sentence as its token; re-anchor each beat with the token,
+   and the speech verb's subject must be the token itself — never a
+   pronoun speaker.
 A positioned subject that is not a token is a defect you shipped.
 
 ## FORMALIZE ASSET MENTIONS
