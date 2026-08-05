@@ -99,3 +99,35 @@ def test_prompt_language_follows_screenplay():
     assert "EXCERPT" in wg
     sw = (base / "scene_write/SKILL.md").read_text()
     assert "SCRIPT LANGUAGE LAW" in sw
+
+
+def test_background_slot_is_always_image_1(tmp_path):
+    """布局恒定律(2026-08-05):背景行前插后,即使本镜另有计划图,
+    <<<image_1>>> 恒为背景板 —— 编号不再逐镜漂移。"""
+    class _VG:
+        def capabilities(self):
+            return {"t2v", "flf2v", "ref_images", "first_frame_plus_refs"}
+
+        def ref_token(self, n):
+            return f"<<<image_{n}>>>"
+
+    e = ShotEntry(shot_idx=1, scene_idx=1, label="s",
+                  description="d: <安娜>")
+    # 模拟前插后的列表形态:[背景, 计划图]
+    bg = tmp_path / "bg.png"
+    planned = tmp_path / "planned.png"
+    for f in (bg, planned):
+        f.write_bytes(b"\x89PNG\r\n")
+    e.images = [
+        {"path": str(bg), "role": "reference",
+         "source": "background", "description": "the OFFICIAL look"},
+        {"path": str(planned), "role": "reference",
+         "description": "a planned prop"},
+    ]
+    rows = wl._slot_manifest("i2v_first", e, None,
+                             portraits={"安娜": "p.png"}, video_gen=_VG())
+    ref_rows = [r for r in rows if r.get("referenceable")]
+    assert ref_rows[0]["slot"] == "<<<image_1>>>"
+    assert "OFFICIAL look" in ref_rows[0]["content"]
+    assert ref_rows[1]["slot"] == "<<<image_2>>>"
+    assert wl._name_slot_map(rows)["安娜"] == "<<<image_3>>>"

@@ -3151,10 +3151,14 @@ def generate_movie_windowed(
                                f"furniture and lighting; never invent a "
                                f"different hall; do not copy its empty "
                                f"framing")
-                entry.images = list(entry.images or []) + [{
+                # 布局恒定律(2026-08-05 shot6 审计事故):背景板【前插】
+                # —— 恒为自有图第一位,<<<image_1>>> 永远是背景;计划图
+                # 挤占 1 号造成的逐镜编号漂移(审计误判、brain 换习惯)
+                # 从此消失。清单与装配读同一列表,前插两侧同步生效。
+                entry.images = [{
                     "path": str(_bg["path"]), "role": "reference",
                     "source": "background",
-                    "description": _bgdesc}]
+                    "description": _bgdesc}] + list(entry.images or [])
 
         # §C brain 选条件策略(episode → llm → 兜底 三层)。
         # 方案 A(2026-07-16):每个候选策略的【槽位清单】随菜单发给 brain
