@@ -92,7 +92,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         extend_model: "bytedance/seedance-2.0/video-extend"
         api_key: ...               # or $WAVESPEED_API_KEY
         poll_interval: 2.0
-        timeout: 600
+        timeout: 1200
         # escape hatches: allowed_durations: [5,10] | duration_range: [4,15]
         # extra_params: {seed: 42, camera_fixed: true, ...}
     """
@@ -114,7 +114,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         self.extend_model = self.config.get(
             "extend_model", "bytedance/seedance-2.0/video-extend")
         self.poll_interval = float(self.config.get("poll_interval", 2.0))
-        self.timeout = float(self.config.get("timeout", 600))
+        self.timeout = float(self.config.get("timeout", 1200))
         self._upload_cache: dict = {}
 
     def _headers(self) -> dict:
