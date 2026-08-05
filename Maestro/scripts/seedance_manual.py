@@ -35,11 +35,6 @@ from maestro.pipeline.window_loop import (_extract_frame0, _last_frame,
                                           _probe_seconds)
 from maestro.tools.video_concat import VideoConcatTool
 
-SETTING = ("十九世纪欧式皇家宫廷大舞厅:金色雕花墙面与红色锦缎帷幔,"
-           "多盏水晶吊灯烛光通明,抛光大理石地面倒影清晰,远端是带台阶的"
-           "礼仪舞台;盛装贵族宾客与军官沿两侧墙边低声交谈,画面中央地面"
-           "开阔无人。")
-
 AUDIO_TAIL = "音频:只有角色说这句台词的人声——无背景音乐、无音效。"
 
 # 背景板(用户令 2026-08-05:每镜必须带背景引用,否则各镜自造舞厅):
