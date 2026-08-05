@@ -1150,10 +1150,13 @@ class GeminiVLM(OpenAICompatVLM):
             "text."}])
         return (reply or "").strip()
 
-    def describe_junction_video(self, video_path) -> str:
+    def describe_junction_video(self, video_path, portraits=None) -> str:
         """接点实况·视频版(2026-07-28 用户裁决):看上一镜的【末尾片段】
         —— 单帧只能靠运动模糊猜"动没动",片段才有真实的运动信息(方向/
-        快慢/是否仍在动)。失败/桩文件 → ""(调用方回退单帧,绝不编)。"""
+        快慢/是否仍在动)。失败/桩文件 → ""(调用方回退单帧,绝不编)。
+        具名矢量(2026-08-05 用户令):肖像随片发,VLM 按肖像认人 ——
+        矢量的 who 直接是角色名,下游绑定不再靠写手猜(shot2 口型
+        张冠李戴的根治)。"""
         from ..physics.track_extractor_backends import _looks_like_video
 
         p = Path(str(video_path))
@@ -1162,8 +1165,13 @@ class GeminiVLM(OpenAICompatVLM):
         got = self._video_part("THE FINAL SECONDS OF THE PREVIOUS SHOT", p)
         if not got:
             return ""
+        parts = list(got)
+        for name, ppath in sorted((portraits or {}).items()):
+            ip = self._image_part(f"OFFICIAL PORTRAIT of {name}", ppath)
+            if ip:
+                parts += list(ip)
         self._require_key()
-        reply = self._generate(got + [{"text": _JUNCTION_VIDEO_INSTRUCTION}])
+        reply = self._generate(parts + [{"text": _JUNCTION_VIDEO_INSTRUCTION}])
         return (reply or "").strip()
 
     def describe_junction(self, image_path) -> str:
@@ -1182,9 +1190,14 @@ class GeminiVLM(OpenAICompatVLM):
 # 结构化出场矢量(用户裁决):散文接点只能传"位置",矢量还要传"速度"
 # —— 下一镜靠它续运动而不是重新起意(接缝不自然的主根)。
 _JUNCTION_VIDEO_INSTRUCTION = (
-    "This is the FINAL few seconds of a video shot. Report the EXIT "
-    "VECTOR at its very last moment, judged from the actual motion "
-    "across the clip (not from blur). STRICT JSON only:\n"
+    "This is the FINAL few seconds of a video shot, followed by the "
+    "cast's OFFICIAL PORTRAITS, each labeled with the character's "
+    "name. Report the EXIT VECTOR at its very last moment, judged "
+    "from the actual motion across the clip (not from blur). For each "
+    "subject, MATCH them against the portraits: when a person matches "
+    "a portrait, `who` MUST be that exact character name (copy the "
+    "label verbatim); only a person matching no portrait gets a short "
+    "visual handle. STRICT JSON only:\n"
     '{"subjects": [{"who": "<short visual handle>", "position": '
     '"<left/center/right + near/far>", "pose": "<one clause>", '
     '"motion": "at_rest"|"moving", "direction": "<if moving>", '

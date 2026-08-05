@@ -110,6 +110,15 @@ never an embellishment.
   model from the previous shot's ACTUAL final seconds. The first beat
   matches it field by field; when it contradicts the scripted end
   state, the vector wins.
+- NAMED SUBJECT BINDING: each vector subject's `who` is a CAST NAME
+  (the vision model matched them against the official portraits) or a
+  visual handle for uncredited figures. Bind each token to ITS OWN
+  name's subject — position, pose and motion come from that entry.
+  NEVER re-assign by script expectation: if the vector says a
+  character stands left, she stands left, even when the script
+  imagined otherwise (real incident: a script-guessed binding put the
+  heroine's token on another woman's position and the line was
+  lip-synced onto the wrong face).
 - VELOCITY HANDOFF: a moving subject opens mid-motion with
   continuative phrasing ("continues her walk at the same pace" —
   never "begins"); a camera with speed ≠ none keeps that move and

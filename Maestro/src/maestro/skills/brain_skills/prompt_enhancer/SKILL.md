@@ -27,8 +27,11 @@ facts). Polish the draft's opening and closing in four steps:
 1. ENTRY ALIGNMENT — the first beat matches the vector field by field:
    its shot size = the vector's framing; its camera = the vector's
    camera motion continued (or opening settled); every subject at the
-   vector's position and pose. A draft opening that contradicts the
-   vector is rewritten — the vector wins over the script.
+   vector's position and pose. Subjects are NAMED (portrait-matched by
+   the vision model): bind each token to its own name's vector entry —
+   never re-assign positions by script expectation. A draft opening
+   that contradicts the vector is rewritten — the vector wins over
+   the script.
 2. VELOCITY HANDOFF — a subject with motion="moving" opens
    mid-motion, continuative phrasing only ("continues her walk toward
    the dais at the same pace") — never "begins/starts". Camera speed

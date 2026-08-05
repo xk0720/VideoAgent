@@ -123,3 +123,54 @@ def test_ablation_strip_pin_dependency():
     assert "pinned" not in out and "previous shot" not in out
     assert "<<<image_2>>> lowers the fan slowly." in out
     assert "camera stays static" in out
+
+
+def test_junction_video_instruction_demands_named_subjects():
+    from maestro.models.mllm_backends import _JUNCTION_VIDEO_INSTRUCTION as t
+    assert "OFFICIAL PORTRAITS" in t
+    assert "MUST be that exact character name" in t
+
+
+def test_junction_state_passes_portraits(tmp_path, monkeypatch):
+    """具名矢量:接点调用把肖像表随片发给 VLM(旧后端无参 → 兼容降级)。"""
+    import maestro.pipeline.window_loop as wl
+
+    tail = tmp_path / "tail.mp4"
+    tail.write_bytes(b"\x00" * 32)
+    monkeypatch.setattr(wl, "_cut_tail", lambda v, s, o: tail)
+    seen = {}
+
+    class _M:
+        def describe_junction_video(self, media, portraits=None):
+            seen["portraits"] = portraits
+            return '{"subjects": [], "camera": {}}'
+
+    class _Prev:
+        video_path = str(tail)
+    wl._JUNCTION_CACHE.clear()
+    got = wl._junction_state(_M(), _Prev(), tmp_path,
+                             portraits={"安娜": "p.png"})
+    assert seen["portraits"] == {"安娜": "p.png"}
+    assert "subjects" in got
+
+    class _Old:
+        def describe_junction_video(self, media):
+            return "prose state"
+    wl._JUNCTION_CACHE.clear()
+    tail2 = tmp_path / "tail2.mp4"
+    tail2.write_bytes(b"\x00" * 32)
+    monkeypatch.setattr(wl, "_cut_tail", lambda v, s, o: tail2)
+
+    class _Prev2:
+        video_path = str(tail2)
+    assert wl._junction_state(_Old(), _Prev2(), tmp_path,
+                              portraits={"x": "y"}) == "prose state"
+
+
+def test_skills_carry_named_binding_law():
+    from pathlib import Path as _P
+    base = _P("src/maestro/skills/brain_skills")
+    assert "NAMED SUBJECT BINDING" in \
+        (base / "window_generation/SKILL.md").read_text()
+    assert "bind each token to its own name's vector entry" in \
+        (base / "prompt_enhancer/SKILL.md").read_text()

@@ -2505,7 +2505,7 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
 _JUNCTION_CACHE: dict = {}
 
 
-def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0) -> str:
+def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0, portraits=None) -> str:
     """需求 ②(2026-07-15;2026-07-28 升级为看片段):出一句续接实况
     ("the cat is trotting right, camera tracking")。写 prompt 的人从
     实况起笔,不再照剧本想象。
@@ -2540,7 +2540,13 @@ def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0) -> str:
         tail = _cut_tail(Path(prev.video_path), tail_s,
                          Path(cache_dir) / "junction_prev_tail.mp4")
         if tail is not None:
-            got = _cached(Path(tail), vfn)
+            # 具名矢量(2026-08-05 用户令):肖像随片发,who=角色名
+            def _vfn_named(media, _fn=vfn, _p=portraits):
+                try:
+                    return _fn(media, portraits=_p)
+                except TypeError:      # 旧后端无 portraits 参数 → 匿名矢量
+                    return _fn(media)
+            got = _cached(Path(tail), _vfn_named)
             if got:
                 return got
             log.warning("junction: video-tail reading failed/empty — "
@@ -3103,7 +3109,8 @@ def generate_movie_windowed(
         # prompt 从实况起笔,不照剧本想象。
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
         junction_actual = _junction_state(mllm, prev, shot_dir,
-                                          tail_s=window_tail_s)
+                                          tail_s=window_tail_s,
+                                          portraits=storyboard.portraits)
         # 结构化出场矢量(用户裁决):VLM 尾段报告现在是 JSON —— 解析
         # 成功则矢量随上下文进 brain / enhancer(速度续接的依据);解析
         # 失败原文照发(旧后端散文兜底,诚实降级)。
