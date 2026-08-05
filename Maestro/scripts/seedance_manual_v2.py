@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""手写分镜 × WaveSpeed seedance-2.0 完整对照实验(2026-08-05 用户令)。
+
+═══ 接缝设计(导演判断,逐缝说明)═══════════════════════════════
+  1    合镜   (用户令:原 1+2 并为一条 15s 单镜)定场拉近→俯冲
+              地板倒影→上摇过肩→退婚宣告;镜内连续运镜,无接缝。
+  1→2  硬切   对话轴反打(王子怒斥→安娜反应):安娜在两侧画面中
+              皆在场,反打硬切成立。t2v+refs 全新构图。
+  2→3  转场桥 换人接缝(安娜→安莉希娅+王子):flf2v 桥,prompt 让
+              首端人物随运镜出画、新人物随落位入画,严禁原地变形。
+  3→4  转场桥 换人接缝(二人→军官组):同上,横摇穿过舞厅。
+  4→5  软钉   同两位军官续拍(乙转脸回应):ti2v 软钉,把【上一镜
+              末帧】本身作为 @Image1 参考,肖像跟在其后,首句显式
+              声明"画面从@Image1精确开始"。
+  5→6  硬切   (用户令:直接硬切)
+  拼接:1,2,[桥],3,[桥],4,5,6
+═══════════════════════════════════════════════════════════════════
+
+用法: python scripts/seedance_manual_v2.py          # 真实调用,花钱
+输出: outputs/seedance_manual_<ts>/
+"""
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from maestro.models.video_gen import build_video_gen
+from maestro.pipeline.audio_stage import any_audio, normalize_for_concat
+from maestro.pipeline.script_input import parse_script_json
+from maestro.pipeline.window_loop import (_extract_frame0, _last_frame,
+                                          _probe_seconds)
+from maestro.tools.video_concat import VideoConcatTool
+
+AUDIO_TAIL = "音频:只有角色说这句台词的人声——无背景音乐、无音效。"
+
+# 背景板(用户令 2026-08-05:每镜必须带背景引用,否则各镜自造舞厅):
+# 开跑先 flux 生成一张时代舞厅板 —— 剧本人群沿墙、中央留空、零主角;
+# 所有 t2v 镜 @Image1 = 此板,肖像顺延;软钉镜 @Image1=上镜末帧(自带
+# 背景)保持不变。
+BG_PLATE_PROMPT = (
+    "Interior of a grand 19th-century European royal palace ballroom at "
+    "night: gilded walls with red damask panels, several blazing crystal "
+    "chandeliers, polished cream marble floor with clear reflections, a "
+    "raised ceremonial stage with steps at the far end; formally dressed "
+    "anonymous period guests and officers lining both side walls in the "
+    "middle distance with small unobtrusive faces, the wide central floor "
+    "open and empty, deep focus, eye-level wide establishing view, no "
+    "principal characters, no modern objects.")
+
+# 转场桥 prompt(逐条手写)。2026-08-05 用户令:旋转/长位移太快太
+# 夸张 → 全部改为【前景遮挡】换画面:镜头几乎不动,宾客肩背从近景
+# 徐徐横穿遮满画面,移开时已是下一构图。换人铁律不变:人物只在遮挡
+# 期间出入画,绝不原地变形,否则 flf2v 会走捷径把 A 变成 B。
+BRIDGE_34 = ("转场运镜:镜头几乎不动,一位深色礼服宾客从近景缓缓横穿,"
+             "遮满画面后移开,画面过渡到下一构图;速度舒缓,无剪辑感,"
+             "人物不在原地变换面貌或服装。")
+BRIDGE_45 = ("转场运镜:镜头轻微平移,两位宾客的身影从近景缓缓走过,"
+             "遮满画面后移开,画面过渡到下一构图;速度舒缓,无剪辑感,"
+             "人物不在原地变换面貌或服装。")
+
+# mode: t2v(硬切,带 refs)| pin(钉上镜末帧,无 refs,只写运动)
+SHOTS = [
+    dict(  # 1 合镜(用户令 2026-08-05:原 1+2 并为一条 15s 单镜——
+        #        定场拉近→俯冲地板倒影→上摇过肩→退婚宣告,镜内连续
+        #        运镜替代 1→2 软钉接缝)
+        mode="t2v", refs=["@BG", "安莉希娅", "芬莱克殿下", "安娜"],
+        duration=15, audio=True,
+        prompt=("大远景起手:场景与@Image1所示的宫廷大舞厅完全一致——"
+                "同一空间、陈设与烛光。@Image2挽着@Image3的手臂静立"
+                "在舞台台阶前的中央,@Image4独自站在他们对面不远处,"
+                "孤立无援。宾客仅在远处轻微走动交谈。镜头逐渐拉近,"
+                "三人静立,画面庄重安静。随后镜头继续推进并下俯,落到"
+                "抛光大理石地面的特写:地面映出@Image3与@Image2并立的"
+                "倒影,烛光闪烁;@Image4的脚步走入倒影视野,步伐平稳。"
+                "镜头随后从@Image4的脚部沿背影平稳上摇,越过她的肩膀"
+                "形成过肩中近景;@Image3的脸清晰入画,神情冷酷严厉,"
+                "开口说:“你这种女人不配做王后,安莉希娅才是真正合适"
+                "的人选!”@Image2挽着他的手臂未动。说完后三人静止,"
+                f"镜头停稳。全程一镜到底,无剪辑感。{AUDIO_TAIL}")),
+    dict(  # 3 硬切反打:安娜泪眼质疑
+        mode="t2v", refs=["@BG", "安娜"], duration=6, audio=True,
+        prompt=("面部大特写,固定镜头:场景为@Image1所示大舞厅。@Image2正对镜头,身后舞厅宾客"
+                "虚化成暖色光斑。她蓝眸噙满泪水,下唇微微颤抖,神情不可"
+                "置信,凝望画外;泪水在眼眶里打转而不落下。她艰难地轻声"
+                "挤出一句:“……为什么?”说完后嘴唇停止颤动,面容僵住,"
+                f"含泪双眼仍望向画外,镜头静止。{AUDIO_TAIL}")),
+    dict(  # 4 硬切反打:安莉希娅假意劝阻
+        mode="t2v", refs=["@BG", "安莉希娅", "芬莱克殿下"], duration=6, audio=True,
+        prompt=("中近景,固定镜头:场景为@Image1所示大舞厅。@Image2站在@Image3身旁,双手挽着他的"
+                "手臂,仰头望向他,面露不忍,嘴角却藏着一丝得意。她柔声"
+                "说:“芬莱克殿下……这对于安娜小姐来说,会不会太过了?”"
+                "说完后她保持仰望,笑意含而不露,@Image3神情僵硬不动,"
+                f"镜头静止。{AUDIO_TAIL}")),
+    dict(  # 5 军官甲低语(t2v 新构图;其前将插入 桥45)
+        mode="t2v", refs=["@BG", "男性军官"], duration=5, audio=True,
+        prompt=("双人中近景,固定镜头:场景为@Image1所示大舞厅。两名同穿深蓝镶金军装的年轻军官"
+                "并肩站在宾客人群边缘,身后宾客虚化。左侧的@Image2侧身"
+                "凑近右侧同伴,抬起白手套半遮嘴角,神情轻蔑而世故地低声"
+                "说:“政治联姻的工具罢了。”右侧军官目视前方倾听。说完"
+                f"后两人保持并肩静止,镜头静止。{AUDIO_TAIL}")),
+    dict(  # 6 软钉续拍:军官乙转脸回应
+        mode="pin", refs=["男性军官"], duration=5, audio=True,
+        # 运行时 @Image1=上一镜末帧;@Image2=军官肖像(两人同像)
+        prompt=("画面从@Image1精确开始——@Image1是上一镜的最后一帧,"
+                "双人构图与光线与其完全一致,不重新构图。右侧军官(容貌"
+                "同@Image2)缓缓转过脸,望向画面外远处,眉间浮起怜悯,"
+                "低声回应:“真可怜啊,公爵千金……”左侧军官(容貌同"
+                "@Image2)沉默地观察他的反应。说完后两人恢复并肩静止,"
+                f"镜头始终固定。{AUDIO_TAIL}")),
+    dict(  # 7 持折扇女子讥讽(t2v 新构图;其前将插入 桥67)
+        mode="t2v", refs=["@BG", "持折扇女子"], duration=6, audio=True,
+        prompt=("下半脸特写,固定镜头:场景为@Image1所示大舞厅。@Image2以黑色蕾丝折扇微微遮住下半"
+                "张脸,只露出眼睛与扇沿,身后宾客虚化。她一边缓缓收拢"
+                "折扇,一边露出轻蔑上扬的嘴角,望向画外低声讥讽:“真可怜"
+                "啊,公爵千金……”说完后折扇收拢停在下巴旁,轻蔑笑意"
+                f"定格,镜头静止。{AUDIO_TAIL}")),
+]
+
+# (前镜索引, 后镜索引, 桥 prompt):桥插在后镜之前。
+# 合镜后索引前移一位:安娜反打=1,安莉希娅=2,军官甲=3,军官乙=4,
+# 折扇=5。旋转桥 1→2(面对面)、位移桥 2→3(新位置);4→5 硬切。
+BRIDGES = [(1, 2, BRIDGE_34), (2, 3, BRIDGE_45)]
+
+
+def main() -> None:
+    parsed = parse_script_json(
+        Path("/Users/kevin/Desktop/script-wedding/script.json"))
+    roles = parsed["roles"]
+    out_dir = Path("outputs") / f"seedance_manual_{time.strftime('%H%M%S')}"
+    out_dir.mkdir(parents=True, exist_ok=False)
+    print("输出目录:", out_dir)
+
+    vg = build_video_gen({"name": "wavespeed", "resolution": "480p",
+                          "call_log": str(out_dir / "wavespeed_calls.jsonl")})
+    bg_plate = vg.text_to_image(BG_PLATE_PROMPT, out_dir / "bg_plate.png")
+    print("背景板:", bg_plate)
+    shots_out: list = [None] * len(SHOTS)
+    ledger = []
+
+    for i, sh in enumerate(SHOTS):
+        outp = out_dir / f"shot{i:03d}.mp4"
+        vg.generate_audio = bool(sh["audio"])
+        kw = {}
+        tag = sh["mode"]
+        use_prompt = sh["prompt"]
+        if sh["mode"] == "pin":
+            prev_v = shots_out[i - 1]
+            lf = _last_frame(Path(prev_v),
+                             out_dir / f"pin_{i:03d}.png") if prev_v else None
+            if lf is None:
+                # 降级铁律:钉帧前言必须撕掉(否则 prompt 谎称 @Image1
+                # 是上一镜末帧),@Image1 改为背景板 → 肖像编号不变。
+                print(f"[shot {i+1}] 上镜末帧缺失 — 降级为 背景板+refs")
+                kw["reference_images"] = [bg_plate] + [
+                    roles[n] for n in sh["refs"]]
+                use_prompt = re.sub(
+                    r"^画面从@Image1精确开始——[^。]*。",
+                    "场景为@Image1所示大舞厅。", sh["prompt"])
+                tag = "t2v_degraded"
+            else:
+                # ti2v 软钉:末帧本身 = @Image1,肖像顺延 @Image2…
+                kw["reference_images"] = [lf] + [roles[n]
+                                                 for n in sh["refs"]]
+                tag = "ti2v_pin"
+        else:
+            kw["reference_images"] = [
+                bg_plate if n == "@BG" else roles[n] for n in sh["refs"]]
+        print(f"[shot {i+1}/{len(SHOTS)}] {tag} {sh['duration']}s "
+              f"audio={sh['audio']}")
+        try:
+            vg.generate(use_prompt, sh["duration"], outp, fps=24,
+                        seed=0, **kw)
+            shots_out[i] = outp
+            ledger.append({"shot": i, "mode": tag, "ok": True,
+                           "prompt": use_prompt})
+        except Exception as exc:
+            print(f"  FAILED: {exc}")
+            ledger.append({"shot": i, "mode": tag, "ok": False,
+                           "error": str(exc)[:300]})
+
+    # 转场桥:末帧(前)→ 首帧(后),flf2v,只写运镜(时长按后端下限吸附)
+    bridge_before: dict = {}
+    if hasattr(vg, "frame_to_frame"):
+        for a, b, bprompt in BRIDGES:
+            if not (shots_out[a] and shots_out[b]):
+                continue
+            try:
+                fa = _last_frame(Path(shots_out[a]),
+                                 out_dir / f"bridge_{a}{b}_prev.png")
+                fb = _extract_frame0(Path(shots_out[b]),
+                                     out_dir / f"bridge_{a}{b}_next.png")
+                if fa is None or fb is None:
+                    continue
+                vg.generate_audio = False
+                bp = vg.frame_to_frame(
+                    prompt=bprompt, first_frame=fa, last_frame=fb,
+                    out_path=out_dir / f"bridge_{a}{b}.mp4",
+                    duration=4, seed=777)
+                bridge_before[b] = Path(bp)
+                print(f"[桥 {a+1}→{b+1}] OK")
+                ledger.append({"bridge": [a, b], "ok": True})
+            except Exception as exc:
+                print(f"[桥 {a+1}→{b+1}] FAILED: {exc} — 硬切保底")
+                ledger.append({"bridge": [a, b], "ok": False,
+                               "error": str(exc)[:300]})
+
+    (out_dir / "ledger.json").write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=1))
+
+    clips = []
+    for i, v in enumerate(shots_out):
+        if i in bridge_before:
+            clips.append(bridge_before[i])
+        if v is not None:
+            clips.append(v)
+    if clips:
+        concat_in = normalize_for_concat(clips, out_dir / "concat_norm") \
+            if any_audio(clips) else clips
+        final = VideoConcatTool().run(concat_in, out_dir / "movie.mp4")
+        print("成片:", final, f"{_probe_seconds(Path(final)):.1f}s")
+
+
+if __name__ == "__main__":
+    main()
