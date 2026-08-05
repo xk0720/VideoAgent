@@ -77,6 +77,18 @@ Using the slot manifest as the single source of truth:
    referenceable=false are never referenced by ID — describe motion
    from/to them instead.
 
+## FINAL SUBJECT CHECK (run this LAST, on your own output)
+
+Scan every figure the prompt describes or positions:
+1. It resolves with CERTAINTY to a token character (by the mapped
+   vector or the manifest) → rewrite it AS that token.
+2. It does NOT resolve with certainty → DELETE the description
+   entirely ("the woman in the pink dress at right stands still" —
+   gone). At most ONE generic subordinated clause may remain for
+   unresolved figures ("background figures remain still"), with no
+   description, name or position.
+A positioned subject that is not a token is a defect you shipped.
+
 ## FORMALIZE ASSET MENTIONS
 
 The shot description mentions user sources in natural words ("the cat

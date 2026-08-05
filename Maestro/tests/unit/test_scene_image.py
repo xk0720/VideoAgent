@@ -172,7 +172,58 @@ def test_junction_state_passes_portraits(tmp_path, monkeypatch):
 def test_skills_carry_named_binding_law():
     from pathlib import Path as _P
     base = _P("src/maestro/skills/brain_skills")
-    assert "NAMED SUBJECT BINDING" in \
+    assert "PRE-MAPPED JUNCTION" in \
         (base / "window_generation/SKILL.md").read_text()
     assert "bind each token to its own name's vector entry" in \
         (base / "prompt_enhancer/SKILL.md").read_text()
+
+
+def test_map_junction_tokenizes_and_strips_unresolved():
+    """用户令(2026-08-05):矢量映射在数据层做 —— 有槽者 who→记号;
+    无槽者(未上肖像的 cast + 幻觉路人)个体描述删除,只留无描述计数。"""
+    import maestro.pipeline.window_loop as wl
+    vec = {"subjects": [
+        {"who": "安娜", "position": "center near", "pose": "back to camera",
+         "motion": "at_rest"},
+        {"who": "安莉希娅", "position": "left near", "pose": "gold gown",
+         "motion": "at_rest"},
+        {"who": "woman in pink dress", "position": "right near",
+         "pose": "pink dress", "motion": "at_rest"}],
+        "camera": {"framing": "medium", "motion": "static", "speed": "none"},
+        "unfinished_action": None}
+    ns = {"安娜": "<<<image_2>>>"}
+    out = wl._map_junction(vec, ns, {"安娜": "x", "安莉希娅": "y"})
+    assert out["subjects"] == [{"who": "<<<image_2>>>",
+                                "position": "center near",
+                                "pose": "back to camera",
+                                "motion": "at_rest"}]
+    bg = out["background_figures"]
+    assert "2 unresolved" in bg and "NEVER describe" in bg
+    assert "pink" not in bg and "gold" not in bg          # 个体描述已删
+    assert out["camera"]["motion"] == "static"
+
+
+def test_map_markers_replaces_with_tokens():
+    import maestro.pipeline.window_loop as wl
+    out = wl._map_markers("<安娜>背对镜头静立前景，<芬莱克殿下>严厉面对她",
+                          {"安娜": "<<<image_2>>>",
+                           "芬莱克殿下": "<<<image_3>>>"})
+    assert out == "<<<image_2>>>背对镜头静立前景，<<<image_3>>>严厉面对她"
+    # 无槽者:去尖括号留名(名字泄漏闸兜底)
+    assert wl._map_markers("<安莉希娅>仍挽住", {}) == "安莉希娅仍挽住"
+
+
+def test_map_junction_resolves_by_portrait_path():
+    """用户令:同脸不同名(共用肖像)按 portraits 路径判等 —— 矢量认作
+    男性军官,本镜清单只有军官甲(同一张图)→ 归到军官甲的记号。"""
+    import maestro.pipeline.window_loop as wl
+    vec = {"subjects": [
+        {"who": "男性军官", "position": "left", "pose": "navy coat",
+         "motion": "at_rest"}],
+        "camera": {}, "unfinished_action": None}
+    portraits = {"男性军官": "/x/ComfyUI_00002_.png",
+                 "军官甲": "/x/ComfyUI_00002_.png"}
+    out = wl._map_junction(vec, {"军官甲": "<<<image_2>>>"}, {},
+                           portraits=portraits)
+    assert out["subjects"][0]["who"] == "<<<image_2>>>"
+    assert "background_figures" not in out

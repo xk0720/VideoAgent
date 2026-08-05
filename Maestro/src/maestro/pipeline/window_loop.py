@@ -2629,6 +2629,61 @@ def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0, portraits=
     return _cached(Path(frame), fn)
 
 
+def _map_markers(text: str, name_to_slot: dict) -> str:
+    """end_state/描述的 <名字> 标记 → 记号(用户令 2026-08-05:映射在
+    数据层做,写手照抄)。有槽位 → <<<image_N>>>;无槽位 → 去尖括号留名
+    (名字泄漏闸兜底告警)。"""
+    out = str(text or "")
+    for n, tok in (name_to_slot or {}).items():
+        out = out.replace(f"<{n}>", tok).replace(n, tok)
+    # 去掉残余 <标记> 尖括号 —— 但绝不碰 <<<image_N>>> 记号本体
+    return re.sub(r"<([^<>]{1,24})>",
+                  lambda m: m.group(0)
+                  if re.fullmatch(r"(?:image|video)_\d+", m.group(1))
+                  else m.group(1), out)
+
+
+def _map_junction(vec, name_to_slot: dict, cast,
+                  portraits: Optional[dict] = None) -> Optional[dict]:
+    """出场矢量 → 写手可直接照抄的记号版(用户令 2026-08-05):
+    - 有记号的主体:who 替换成 <<<image_N>>>,保 position/pose/motion;
+    - 其余所有人(无槽位的 cast + 幻觉路人)一律聚合进 background_figures
+      一句话 —— prompt 中有方位的主体只能是记号,背景人物不许单列定位。"""
+    if not isinstance(vec, dict):
+        return None
+    subs, bg_bits = [], []
+    # 肖像路径等价(用户令 2026-08-05):矢量认出的名字与本镜清单可能
+    # 同脸不同名(军官甲/乙共用一张肖像)—— 按 portraits 的图像路径判等。
+    _slot_by_path = {}
+    for _n, _tok in (name_to_slot or {}).items():
+        _pp = (portraits or {}).get(_n)
+        if _pp:
+            _slot_by_path.setdefault(str(_pp), _tok)
+    for s_ in (vec.get("subjects") or []):
+        if not isinstance(s_, dict):
+            continue
+        who = str(s_.get("who", "")).strip()
+        tok = (name_to_slot or {}).get(who) \
+            or _slot_by_path.get(str((portraits or {}).get(who, "")))
+        if tok:
+            subs.append({**s_, "who": tok})
+        else:
+            pose = str(s_.get("pose") or who or "a figure")
+            pos = str(s_.get("position") or "")
+            bg_bits.append(f"{pose} ({pos})" if pos else pose)
+    out = {"subjects": subs, "camera": vec.get("camera") or {},
+           "unfinished_action": vec.get("unfinished_action")}
+    if bg_bits:
+        # 用户令(2026-08-05):归属不确定的人物描述【删除】—— 不给
+        # 写手任何可抄的个体描述/方位;只留一句无描述的通用背景子句。
+        out["background_figures"] = (
+            f"{len(bg_bits)} unresolved background figure(s) present — "
+            "write AT MOST one generic subordinated clause (e.g. "
+            "'background figures remain still'); NEVER describe, name or "
+            "position them individually")
+    return out
+
+
 def _parse_exit_vector(text: str):
     """出场矢量解析:接点 VLM 的 JSON 回复 → dict;不是 JSON(旧后端
     散文/坏回复)→ None,调用方原文照发 —— 绝不编造结构。"""
@@ -3260,12 +3315,27 @@ def generate_movie_windowed(
                                       portraits=shot_portraits,
                                       video_gen=video_gen)
             for m in menu}
+        # 记号化接点(用户令 2026-08-05:映射在数据层做,写手照抄)——
+        # 用清单里记号最多的策略做映射源(ref2v/i2v_first 编号同序);
+        # 矢量主体 who→记号,无槽者聚合为背景一句;end_state 标记同映射。
+        _ns_best = max((_name_slot_map(v) for v in slots_by_strategy.values()),
+                       key=len, default={})
+        _junction_mapped = dict(junction_ctx)
+        _vm = _map_junction(_exit_vec, _ns_best, storyboard.cast,
+                            portraits=storyboard.portraits)
+        if _vm is not None:
+            _junction_mapped["prev_last_frame_actual"] = _vm
+            _junction_mapped.pop("prev_exit_vector", None)
+        for _k in ("prev_end_state_script", "required_end_state"):
+            if _junction_mapped.get(_k):
+                _junction_mapped[_k] = _map_markers(_junction_mapped[_k],
+                                                    _ns_best)
         d = _decide(
             llm, "generation-condition", menu,
             {"shot": entry.to_brain_line(),
              "prompt_language": prompt_lang,
              "prev_shot": prev.to_brain_line() if prev else None,
-             "junction": junction_ctx,
+             "junction": _junction_mapped,
              "cast": storyboard.cast, "setting": storyboard.setting,
              "cast_in_shot": sorted(shot_cast),
              "slots_by_strategy": slots_by_strategy,
@@ -3310,7 +3380,14 @@ def generate_movie_windowed(
                 _strip_markers(entry.description), strategy=d["strategy"],
                 conditions=_conditions_for_prompt(d["strategy"], entry, prev,
                                                   use_tail,
-                                                  junction=junction_actual,
+                                                  junction=json.dumps(
+                                                      _map_junction(
+                                                          _exit_vec,
+                                                          _name_slot_map(slots),
+                                                          storyboard.cast,
+                                                          portraits=storyboard.portraits)
+                                                      or junction_actual,
+                                                      ensure_ascii=False),
                                                   source_videos=source_videos,
                                                   cast=shot_cast,
                                                   setting=storyboard.setting,
