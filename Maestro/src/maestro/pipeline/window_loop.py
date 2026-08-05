@@ -2642,6 +2642,33 @@ def _junction_state(mllm, prev, cache_dir: Path, tail_s: float = 2.0, portraits=
     return _cached(Path(frame), fn)
 
 
+def _junction_is_continuation(shot_cast_names, exit_vec,
+                              portraits: Optional[dict] = None) -> bool:
+    """钉/切路由判据(2026-08-05 用户令):本镜主体 ⊆ 上镜末帧可见主体
+    (名字直配或肖像路径判等)→ 续拍(钉帧);否则场内切换(硬切+运镜
+    转场桥)。矢量缺失/无主体 → 保守判续拍(旧行为)。"""
+    if not isinstance(exit_vec, dict):
+        return True
+    vec_who = [str(s.get("who", "")).strip()
+               for s in (exit_vec.get("subjects") or [])
+               if isinstance(s, dict)]
+    if not vec_who:
+        return True
+    this = [n for n in (shot_cast_names or [])
+            if n in (portraits or {})]
+    if not this:
+        return True
+    vec_paths = {str((portraits or {}).get(w, "")) for w in vec_who}
+    vec_paths.discard("")
+    for n in this:
+        if n in vec_who:
+            continue
+        if str((portraits or {}).get(n, "")) in vec_paths:
+            continue
+        return False
+    return True
+
+
 def _map_markers(text: str, name_to_slot: dict) -> str:
     """end_state/描述的 <名字> 标记 → 记号(用户令 2026-08-05:映射在
     数据层做,写手照抄)。有槽位 → <<<image_N>>>;无槽位 → 去尖括号留名
@@ -3314,13 +3341,30 @@ def generate_movie_windowed(
         # 钉帧默认化(2026-08-04 用户令):同 scene 续拍必须钉上镜尾帧
         # (i2v_first),不给 brain 裁量;跨 scene(或无上镜)才开放全
         # 菜单。旧后端菜单没有 i2v_first → 不受影响。
+        needs_bridge = False
         if prev is not None and prev.video_path and entry.shot_idx > 0:
             _prev_entry = storyboard.entries[entry.shot_idx - 1]
             _pin_only = [m for m in menu if m["name"] == "i2v_first"]
+            _cut_only = [m for m in menu if m["name"] == "ref2v"]
             if _pin_only and _prev_entry.scene_idx == entry.scene_idx:
-                menu = _pin_only
-                log.info("window: %s same-scene continuation → menu "
-                         "pinned to i2v_first (rule)", entry.label)
+                # 钉/切路由(2026-08-05 用户令):主体相同 → 钉帧续拍;
+                # 主体不同 → ref2v 硬切 + 自动运镜转场桥(否则钉住的
+                # 像素和要求的人物是两拨人,模型只能原地变形换人)。
+                if _junction_is_continuation(shot_cast, _exit_vec,
+                                             storyboard.portraits):
+                    menu = _pin_only
+                    log.info("window: %s same-scene continuation → menu "
+                             "pinned to i2v_first (rule)", entry.label)
+                elif _cut_only:
+                    menu = _cut_only
+                    needs_bridge = True
+                    log.info("window: %s same-scene SUBJECT CUT (tail "
+                             "subjects differ) → ref2v hard cut + camera-"
+                             "move junction bridge", entry.label)
+                else:
+                    menu = _pin_only
+                    log.info("window: %s subject cut but no ref2v in menu "
+                             "— pinning as fallback", entry.label)
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
@@ -3798,6 +3842,47 @@ def generate_movie_windowed(
             )
         shot_results.append(res)
         best = res.clip
+        # 运镜转场桥(2026-08-05 用户令):场内切换自动生成 上镜末帧 →
+        # 本镜首帧 的 flf2v 桥(3s,prompt 只写运镜);拼装时插在本镜前。
+        # 失败 → 硬切照常,绝不致命(run7 教训)。
+        if needs_bridge and prev is not None and prev.video_path \
+                and best.video_path \
+                and not getattr(best, "transition_path", None) \
+                and "flf2v" in (video_gen.capabilities() or set()) \
+                and hasattr(video_gen, "frame_to_frame"):
+            try:
+                _bl = _last_frame(
+                    Path(prev.video_path),
+                    shot_dir / f"shot{entry.shot_idx:03d}_jbridge_prev.png")
+                _bf = _extract_frame0(
+                    Path(best.video_path),
+                    shot_dir / f"shot{entry.shot_idx:03d}_jbridge_first.png")
+                if _bl is not None and _bf is not None:
+                    _bp = ("转场运镜:镜头以一次平稳连贯的摇移或推拉,从上一"
+                           "画面的主体自然过渡到新画面的主体与构图,沿途保持"
+                           "同一空间、光线与人群状态,不引入新人物与新动作,"
+                           "一气呵成。" if prompt_lang == "zh" else
+                           "Transition camera move: one smooth continuous "
+                           "pan/track from the previous framing's subjects "
+                           "to the new framing, same space, lighting and "
+                           "crowd; no new subjects, no new actions.")
+                    _bridge = video_gen.frame_to_frame(
+                        prompt=_bp, first_frame=_bl, last_frame=_bf,
+                        out_path=(shot_dir /
+                                  f"shot{entry.shot_idx:03d}_junction_bridge"
+                                  ".mp4"),
+                        duration=3, seed=777)
+                    entry.transition_path = str(_bridge)
+                    storyboard._save()
+                    decisions.append({"stage": "junction_bridge",
+                                      "label": entry.label,
+                                      "path": str(_bridge)})
+                    log.info("window: %s junction bridge generated → %s",
+                             entry.label, Path(str(_bridge)).name)
+            except Exception as exc:
+                log.warning("window: %s junction bridge FAILED (%s) — "
+                            "plain hard cut stays", entry.label, exc)
+
         # M2:修复环选择了 add_transition → 转场片路径进台账持久化
         if getattr(best, "transition_path", None):
             entry.transition_path = str(best.transition_path)

@@ -227,3 +227,23 @@ def test_map_junction_resolves_by_portrait_path():
                            portraits=portraits)
     assert out["subjects"][0]["who"] == "<<<image_2>>>"
     assert "background_figures" not in out
+
+
+def test_junction_router_pin_vs_cut():
+    """钉/切路由(2026-08-05 用户令):本镜主体 ⊆ 末帧可见主体 → 续拍;
+    否则切换(+运镜桥)。名字直配或肖像路径判等;矢量缺失保守钉帧。"""
+    import maestro.pipeline.window_loop as wl
+    P = {"安娜": "/x/14.png", "安莉希娅": "/x/01.png",
+         "芬莱克殿下": "/x/16.png", "军官甲": "/x/02.png",
+         "男性军官": "/x/02.png"}
+    vec_anna = {"subjects": [{"who": "安娜", "position": "c"}]}
+    # 3→4:末帧只有安娜,新镜是安莉希娅+王子 → 切
+    assert not wl._junction_is_continuation(
+        ["安莉希娅", "芬莱克殿下"], vec_anna, P)
+    # 1→2:安娜在末帧 → 钉
+    assert wl._junction_is_continuation(["安娜"], vec_anna, P)
+    # 肖像路径判等:矢量认作男性军官,本镜是军官甲(同图)→ 钉
+    vec_officer = {"subjects": [{"who": "男性军官", "position": "l"}]}
+    assert wl._junction_is_continuation(["军官甲"], vec_officer, P)
+    # 矢量缺失 → 保守钉帧
+    assert wl._junction_is_continuation(["安娜"], None, P)

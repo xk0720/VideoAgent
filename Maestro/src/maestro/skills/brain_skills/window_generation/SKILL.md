@@ -138,6 +138,12 @@ never an embellishment.
   across the cut.
 - FINISH THE GESTURE: when `unfinished_action` is set, the first
   clause completes that action before anything new starts.
+- PIN vs CUT (routed for you): the executor compares this shot's
+  principals with the tail's visible subjects. Matching → your menu is
+  i2v_first (write motion only). Differing → your menu is ref2v: write
+  a FRESH composition for the new subjects (never morph the pinned
+  people); a camera-move transition clip is generated automatically to
+  bridge the cut.
 - SETTLE-TO-CUT: unless the script's end_state explicitly keeps
   motion running, the final beat reaches stillness — camera settled,
   subjects at rest — so the NEXT shot inherits a clean still joint.
