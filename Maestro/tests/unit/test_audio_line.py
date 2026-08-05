@@ -85,7 +85,9 @@ def test_with_dialogue_appends_line_and_suppression():
 
 def test_with_dialogue_dedupes_and_noops():
     p = 'X says: "Time for breakfast!" already'
-    assert _with_dialogue(p, _entry(), CAST) == p          # 引号串已在 → 不重复
+    out = _with_dialogue(p, _entry(), CAST)
+    assert out.count("Time for breakfast!") == 1   # 台词不重复
+    assert "no background music" in out            # 压制句永远在场(run11b)
     assert _with_dialogue("prompt", _entry(dialogue=""), CAST) == "prompt"
     assert _with_dialogue("", _entry(), CAST) == ""
 

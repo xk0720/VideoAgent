@@ -81,9 +81,11 @@ def test_foreign_dialogue_scrubbed_before_backstop():
     assert "How pitiful" not in out                 # 英文台词整段剥除
     assert out.count("真可怜啊，公爵千金……") == 1     # 原文只出现一次
     assert '<<<image_2>>>说:"真可怜啊，公爵千金……"' in out
-    # 已有原文台词 → 不重复、不剥
+    # 已有原文台词 → 不重复台词,但压制句永远确保在场(run11b 事故)
     p2 = '<<<image_2>>>说:"真可怜啊，公爵千金……"。The frame settles.'
-    assert wl._with_dialogue(p2, e, CAST) == p2
+    out2 = wl._with_dialogue(p2, e, CAST)
+    assert out2.count("真可怜啊，公爵千金……") == 1
+    assert "无背景音乐" in out2
 
 
 def test_prompt_language_follows_screenplay():

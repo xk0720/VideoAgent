@@ -613,9 +613,20 @@ def _with_dialogue(prompt: str, entry, cast: dict,
         r'["“「][^"“”「」]+["”」]',
         _drop_foreign, prompt)
     prompt = re.sub(r"\s{2,}", " ", prompt).strip()
+    zh_mode = bool(re.search(r"[一-鿿]", prompt) or re.search(r"[一-鿿]", line))
+    # 压制句与台词解耦(2026-08-05 run11b 事故:brain 把台词写进节拍后,
+    # 查重提前返回把"无背景音乐"压制句一起跳过 → 可灵自由配乐)。对白镜
+    # 无论台词谁写的,压制句永远确保在场。
+    _audio_zh = "音频:只有角色说这句台词的人声——无背景音乐、无音效。"
+    _audio_en = ("Audio: only the character's voice speaking the line — "
+                 "no background music, no sound effects.")
+    def _ensure_audio(p_: str) -> str:
+        if "无背景音乐" in p_ or "no background music" in p_:
+            return p_
+        return f"{p_} {_audio_zh}" if zh_mode else f"{p_} {_audio_en}"
     # 查重按台词原文(不带引号):中英/全半角引号形态都算已在场
     if line in prompt:
-        return prompt
+        return _ensure_audio(prompt)
     # 说话人以剧本契约为准(speaker 字段);缺失才退回"第一个出场者"
     # ——猜错人 = 口型对到别人嘴上(实跑事故)。
     who = (getattr(entry, "dialogue_speaker", "") or "").strip()
@@ -627,12 +638,9 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     # end_state 决定,brain 逐镜写。BGM 压制句保留(no-BGM 裁决在岗)。
     subj = (name_to_slot or {}).get(who) or who
     # prompt 语言随剧本(2026-08-05 用户令):中文 prompt 用中文脚手架
-    if re.search(r"[一-鿿]", prompt) or re.search(r"[一-鿿]", line):
-        return (f'{prompt} {subj}说:"{line}"。'
-                f"音频:只有角色说这句台词的人声——无背景音乐、无音效。")
-    return (f'{prompt} {subj} says: "{line}". '
-            f"Audio: only the character's voice speaking the line — "
-            f"no background music, no sound effects.")
+    if zh_mode:
+        return _ensure_audio(f'{prompt} {subj}说:"{line}"。')
+    return _ensure_audio(f'{prompt} {subj} says: "{line}".')
 
 
 def _scrub_setting_sentence(text: str, setting: str, strategy: str) -> str:
