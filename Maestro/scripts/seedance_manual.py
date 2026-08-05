@@ -22,6 +22,7 @@
 输出: outputs/seedance_manual_<ts>/
 """
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -157,15 +158,20 @@ def main() -> None:
         vg.generate_audio = bool(sh["audio"])
         kw = {}
         tag = sh["mode"]
+        use_prompt = sh["prompt"]
         if sh["mode"] == "pin":
             prev_v = shots_out[i - 1]
             lf = _last_frame(Path(prev_v),
                              out_dir / f"pin_{i:03d}.png") if prev_v else None
             if lf is None:
-                print(f"[shot {i+1}] 上镜末帧缺失 — 软钉降级为纯 refs")
-                kw["reference_images"] = [
-                    bg_plate if n == "@BG" else roles[n]
-                    for n in sh["refs"]]
+                # 降级铁律:钉帧前言必须撕掉(否则 prompt 谎称 @Image1
+                # 是上一镜末帧),@Image1 改为背景板 → 肖像编号不变。
+                print(f"[shot {i+1}] 上镜末帧缺失 — 降级为 背景板+refs")
+                kw["reference_images"] = [bg_plate] + [
+                    roles[n] for n in sh["refs"]]
+                use_prompt = re.sub(
+                    r"^画面从@Image1精确开始——[^。]*。",
+                    "场景为@Image1所示大舞厅。", sh["prompt"])
                 tag = "t2v_degraded"
             else:
                 # ti2v 软钉:末帧本身 = @Image1,肖像顺延 @Image2…
@@ -178,11 +184,11 @@ def main() -> None:
         print(f"[shot {i+1}/{len(SHOTS)}] {tag} {sh['duration']}s "
               f"audio={sh['audio']}")
         try:
-            vg.generate(sh["prompt"], sh["duration"], outp, fps=24,
+            vg.generate(use_prompt, sh["duration"], outp, fps=24,
                         seed=0, **kw)
             shots_out[i] = outp
             ledger.append({"shot": i, "mode": tag, "ok": True,
-                           "prompt": sh["prompt"]})
+                           "prompt": use_prompt})
         except Exception as exc:
             print(f"  FAILED: {exc}")
             ledger.append({"shot": i, "mode": tag, "ok": False,

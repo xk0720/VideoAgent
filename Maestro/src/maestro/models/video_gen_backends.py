@@ -50,11 +50,24 @@ def upload_media(api_key: str, path) -> str:
     p = Path(vp)
     if not p.exists() or not p.is_file():
         raise FileNotFoundError(f"media not found: {vp}")
-    with p.open("rb") as fh:
-        resp = requests.post(
-            _UPLOAD_URL, headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": (p.name, fh)}, timeout=300,
-        )
+    # 瞬态网络容错(2026-08-05:桥上传遇 SSL EOF 一枪毙命 → 3 试)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            with p.open("rb") as fh:
+                resp = requests.post(
+                    _UPLOAD_URL,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    files={"file": (p.name, fh)}, timeout=300,
+                )
+            break
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            time.sleep(5 * (attempt + 1))
+    else:
+        raise RuntimeError(
+            f"WaveSpeed media upload of '{p.name}' failed after 3 "
+            f"attempts: {last_exc}")
     if resp.status_code >= 400:
         raise RuntimeError(
             f"WaveSpeed media upload of '{p.name}' failed: HTTP "
@@ -399,10 +412,18 @@ class WaveSpeedClient(BaseVideoGenClient):
 
         deadline = time.time() + self.timeout
         while time.time() < deadline:
-            r = requests.get(
-                f"{self.BASE}/predictions/{task_id}/result",
-                headers=self._headers(), timeout=30,
-            )
+            # 瞬态网络容错(2026-08-05:轮询遇 SSL EOF 一枪毙掉整镜,
+            # 而服务端任务其实照常完成 → 当作一次未命中继续轮询)
+            try:
+                r = requests.get(
+                    f"{self.BASE}/predictions/{task_id}/result",
+                    headers=self._headers(), timeout=30,
+                )
+            except requests.exceptions.RequestException as exc:
+                logger.warning("wavespeed poll transient error (%s) — retry",
+                               str(exc)[:120])
+                time.sleep(self.poll_interval)
+                continue
             if r.status_code >= 500:          # transient server hiccup → re-poll
                 time.sleep(self.poll_interval)
                 continue
@@ -417,8 +438,15 @@ class WaveSpeedClient(BaseVideoGenClient):
                 url = data["outputs"][0]
                 out_path = Path(out_path)
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                video = requests.get(url, timeout=120)
-                video.raise_for_status()
+                try:
+                    video = requests.get(url, timeout=120)
+                    video.raise_for_status()
+                except requests.exceptions.RequestException as exc:
+                    # 已付费成片,下载抖动不弃(下轮 poll 取新 URL 重下)
+                    logger.warning("wavespeed download transient error "
+                                   "(%s) — re-poll", str(exc)[:120])
+                    time.sleep(self.poll_interval)
+                    continue
                 out_path.write_bytes(video.content)
                 self._log_call({"ts": time.time(), "event": "completed",
                                 "model": model_id, "task_id": task_id,
