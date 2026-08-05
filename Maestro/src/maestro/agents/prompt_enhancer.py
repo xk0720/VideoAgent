@@ -98,8 +98,14 @@ class PromptEnhancerAgent(BaseAgent):
                 "conditions": conditions,
                 "current_prompt": base_prompt or shot_description,
             }, ensure_ascii=False)
-            + '\n\nSTRICT JSON only: {"video_prompt": "<the final polished '
-              'prompt, English, 30-100 words>"}'
+            + ('\n\nSTRICT JSON only: {"video_prompt": "<润色后的最终 '
+               'prompt,必须全中文(记号 <<<image_N>>> 原样保留,台词逐字'
+               '照抄),30-100 词>"}'
+               if any(c.get("role") == "prompt_language"
+                      and c.get("description") == "zh"
+                      for c in conditions) else
+               '\n\nSTRICT JSON only: {"video_prompt": "<the final polished '
+               'prompt, English, 30-100 words>"}')
         )
         # 方案 A(2026-07-16):可引用槽位来自 conditions(执行器的槽位
         # 清单投影)——输出里的编号必须 ⊆ 它;引用了不存在的编号,带着
