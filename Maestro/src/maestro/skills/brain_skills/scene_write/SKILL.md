@@ -51,7 +51,12 @@ translate — whatever you drop here is lost to the film forever.
 8. DIALOGUE: `{"speaker": "<cast key verbatim>", "line": "<one short
    spoken line>"}` only when a character visibly speaks at medium
    close-up or closer. The line stays in the user's language; the
-   speaker key must exist in cast.
+   speaker key must exist in cast. ONE LINE PER SHOT (hard law): the
+   dialogue field holds a single line — an EXCHANGE is split into one
+   shot per line (the screenplay's own beats already do this); merging
+   an exchange into one shot silences it (the audio channel follows
+   this field, and a shot whose lines live only in the description
+   ships MUTE).
 9. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
    are written in THE SCREENPLAY'S LANGUAGE (`prompt_language` in the
    task JSON), EXCERPTING the script's own action and performance

@@ -3439,6 +3439,26 @@ def generate_movie_windowed(
         # generate_audio;口型子句在引用闸门【之后】追加(审查修正:
         # 闸门丢弃 prompt 时子句不能陪葬,顺序与全修闭包一致)。
         want_audio = bool(enable_audio and entry.dialogue)
+        # 哑镜保险(2026-08-05 run12 shot5:对答两句全写在描述里,
+        # dialogue 字段空 → 音频参数没开,台词无声):出门 prompt 含
+        # 言说句 → 照样开原生音频;压制句缺失则补。
+        if enable_audio and not want_audio and brain_prompt \
+                and re.search("(?:说道?|says?)\\s*[:\uff1a]?\\s*[\"\u201c]",
+                              brain_prompt):
+            want_audio = True
+            log.warning("window: %s prompt carries spoken lines but the "
+                        "dialogue field is EMPTY (multi-line exchange?) — "
+                        "enabling native audio anyway; scene_write should "
+                        "have split the exchange into one shot per line",
+                        entry.label)
+            if "无背景音乐" not in brain_prompt \
+                    and "no background music" not in brain_prompt:
+                brain_prompt += ("音频:只有角色对白的人声——无背景音乐、"
+                                 "无音效。" if re.search(r"[一-鿿]",
+                                                        brain_prompt)
+                                 else " Audio: only the characters' "
+                                      "voices — no background music, "
+                                      "no sound effects.")
 
         # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
         # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错
