@@ -638,12 +638,18 @@ def _with_dialogue(prompt: str, entry, cast: dict,
         def _fix_speaker(m: "re.Match") -> str:
             seg = m.group(1)
             if _subj and _subj in seg:
-                return m.group(0)                  # 已是记号 → 不动
+                return m.group(0)                  # 段内已有记号 → 不动
+            # 紧邻记号做主语("<<<image_N>>>说")→ 不动,防记号翻倍
+            head = prompt[max(0, m.start() - len(_subj)):m.start()]
+            if _subj and head.endswith(_subj):
+                return m.group(0)
             return f"{_subj}{m.group(2)}{m.group(3)}"
+        # 段字符类排除 <>(2026-08-05 run13b 事故:40 字窗口咬进
+        # <<<image_3>>> 记号中段,吃掉表演文字还留下 "<<<image" 残码)
         prompt = re.sub(
-            "([^。;;!!??]{0,40}?)"
+            "([^。;;!!??<>]{0,40}?)"
             "((?:并|随后|然后|接着)?(?:低声)?说道?|says?)"
-            "([:\uff1a]?\\s*[\"“]" + re.escape(line) + "[\"”])",
+            "([:\uff1a]?\\s*[\"\u201c]" + re.escape(line) + "[\"\u201d])",
             _fix_speaker, prompt, count=1)
         return _ensure_audio(prompt)
     # 2026-08-04 用户裁决:兜底只补台词本身 —— "mouth moving"/收势句是

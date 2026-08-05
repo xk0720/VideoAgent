@@ -273,3 +273,27 @@ def test_enhancer_language_gate_not_fooled_by_quoted_line():
           '镜头静止。')
     assert wl._is_mostly_chinese(zh)
     assert not wl._is_mostly_chinese("all english, no chinese at all")
+
+
+def test_speaker_gate_never_bisects_tokens_or_doubles_subject():
+    """2026-08-05 run13b 事故回归:40 字窗曾咬进 <<<image_3>>> 中段,
+    吃掉表演文字并留下残码。修后:段不跨 <>;记号紧邻做主语不翻倍。"""
+    e = _entry(dialogue="芬莱克殿下……这对于安娜小姐来说，会不会太过了？",
+               speaker="安莉希娅")
+    slots = [{"slot": "<<<image_2>>>", "referenceable": True,
+              "name": "安莉希娅", "content": "c"},
+             {"slot": "<<<image_3>>>", "referenceable": True,
+              "name": "王子", "content": "c"}]
+    p = ('<<<image_2>>>站在<<<image_3>>>身旁，挽着他的手臂，她柔声说：'
+         '"芬莱克殿下……这对于安娜小姐来说，会不会太过了？"。')
+    out = wl._with_dialogue(p, e, {"安莉希娅": "s", "王子": "s"},
+                            name_to_slot=wl._name_slot_map(slots))
+    assert "<<<image" not in out.replace("<<<image_2>>>", "").replace(
+        "<<<image_3>>>", "")                       # 无残码
+    assert out.count("<<<image_3>>>") == 1         # 记号未被咬碎
+    assert "挽着他的手臂" in out or "<<<image_2>>>说" in out
+    # 记号已紧邻言说动词 → 不动不翻倍
+    p2 = '<<<image_2>>>说："芬莱克殿下……这对于安娜小姐来说，会不会太过了？"。'
+    out2 = wl._with_dialogue(p2, e, {"安莉希娅": "s"},
+                             name_to_slot=wl._name_slot_map(slots))
+    assert out2.count("<<<image_2>>>") == 1
