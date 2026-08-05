@@ -234,8 +234,8 @@ def test_speaker_pronoun_replaced_with_token_when_line_present():
          '安莉希娅才是真正合适的人选！"。最终她的肩背静止于前景。')
     out = wl._with_dialogue(p, e, CAST,
                             name_to_slot=wl._name_slot_map(slots))
-    import re as _re
-    assert _re.search(r"<<<image_4>>>(?:并|随后)?说[:：]", out)   # 记号紧贴言说动词
+    # 内容保全:最近代词换记号,表演文字一字不丢
+    assert "<<<image_4>>>严厉地公开退婚并说" in out
     assert "他严厉地公开退婚并说" not in out
     # 已是记号主语 → 原样保留
     p2 = '<<<image_4>>>说："你这种女人不配做王后，安莉希娅才是真正合适的人选！"。'
@@ -291,7 +291,8 @@ def test_speaker_gate_never_bisects_tokens_or_doubles_subject():
     assert "<<<image" not in out.replace("<<<image_2>>>", "").replace(
         "<<<image_3>>>", "")                       # 无残码
     assert out.count("<<<image_3>>>") == 1         # 记号未被咬碎
-    assert "挽着他的手臂" in out or "<<<image_2>>>说" in out
+    assert "挽着他的手臂" in out                    # 表演文字保全
+    assert "柔声说" in out                          # 方式词保全
     # 记号已紧邻言说动词 → 不动不翻倍
     p2 = '<<<image_2>>>说："芬莱克殿下……这对于安娜小姐来说，会不会太过了？"。'
     out2 = wl._with_dialogue(p2, e, {"安莉希娅": "s"},

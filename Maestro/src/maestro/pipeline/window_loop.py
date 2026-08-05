@@ -636,16 +636,22 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     if line in prompt:
         _subj = (name_to_slot or {}).get(who) or who
         def _fix_speaker(m: "re.Match") -> str:
-            seg = m.group(1)
+            seg, verb, quote = m.group(1), m.group(2), m.group(3)
             if _subj and _subj in seg:
                 return m.group(0)                  # 段内已有记号 → 不动
-            # 紧邻记号做主语("<<<image_N>>>说")→ 不动,防记号翻倍
             head = prompt[max(0, m.start() - len(_subj)):m.start()]
             if _subj and head.endswith(_subj):
-                return m.group(0)
-            return f"{_subj}{m.group(2)}{m.group(3)}"
-        # 段字符类排除 <>(2026-08-05 run13b 事故:40 字窗口咬进
-        # <<<image_3>>> 记号中段,吃掉表演文字还留下 "<<<image" 残码)
+                return m.group(0)                  # 记号紧邻 → 不动
+            # 内容保全(2026-08-05 run13c 事故:整段替换吃掉台词前的
+            # 表演文字):有代词 → 只把第一个 他/她 换成记号;无代词
+            # (隐主语)→ 言说动词前【插入】记号,段落原文保留。
+            _pn = list(re.finditer(r"[他她](?!们)", seg))
+            if _pn:
+                # 换【离言说动词最近】的代词(前面的代词可能指别人)
+                last = _pn[-1]
+                seg = seg[:last.start()] + _subj + seg[last.end():]
+                return f"{seg}{verb}{quote}"
+            return f"{seg}{_subj}{verb}{quote}"
         prompt = re.sub(
             "([^。;;!!??<>]{0,40}?)"
             "((?:并|随后|然后|接着)?(?:低声)?说道?|says?)"
