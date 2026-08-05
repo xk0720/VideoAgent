@@ -50,6 +50,7 @@ from ..types import (
     PhysicsVerdict,
     ShotSpec,
 )
+from ..language import lang_clause
 from .mllm import BaseMLLMClient
 
 log = get_logger(__name__)
@@ -250,8 +251,9 @@ class OpenAICompatVLM(BaseMLLMClient):
 
     def caption_identity(self, image_path) -> str:
         """角色正典打标:逐项精确颜色,看不见就省略(绝不猜)。"""
-        return self._caption_with_text(image_path,
-                                       _IDENTITY_CAPTION_INSTRUCTION)
+        return self._caption_with_text(
+            image_path,
+            _IDENTITY_CAPTION_INSTRUCTION + lang_clause("the sentence"))
 
     def _caption_with_text(self, image_path, text: str) -> str:
         import base64 as _b64
@@ -874,7 +876,9 @@ class GeminiVLM(OpenAICompatVLM):
                 f'CANONICAL SETTING: "{setting_c}". If this shot is in the '
                 "same scene, its set dressing and lighting must match — add "
                 "one check.")
-        instruction = _SHOT_REVIEW_INSTRUCTION.format(
+        instruction = (_SHOT_REVIEW_INSTRUCTION + lang_clause(
+            "all free-text fields (question/problem/reason/"
+            "suggestion/summary)")).format(
             shot_prompt=spec.prompt,
             gen_prompt_block=(f'\nThe exact generation prompt was:\n"{gen_prompt}"'
                               if gen_prompt and gen_prompt != spec.prompt else ""),
@@ -1053,7 +1057,8 @@ class GeminiVLM(OpenAICompatVLM):
                       f'(around {td.get("time_range_s", "?")} s, entity: '
                       f'"{td.get("entity", "")}").')
         reply = self._generate(p1 + p2 + [{"text":
-            _VERIFY_PAIR_INSTRUCTION.format(shot_prompt=shot_prompt,
+            (_VERIFY_PAIR_INSTRUCTION + lang_clause(
+                "all notes and issue texts")).format(shot_prompt=shot_prompt,
                                             target_block=target)}])
         data = _extract_json(reply) if reply else None
         if not isinstance(data, dict):
@@ -1118,8 +1123,9 @@ class GeminiVLM(OpenAICompatVLM):
         if not got:
             return ""
         self._require_key()
-        reply = self._generate([got[1],
-                                {"text": _IDENTITY_CAPTION_INSTRUCTION}])
+        reply = self._generate([got[1], {
+            "text": _IDENTITY_CAPTION_INSTRUCTION
+            + lang_clause("the sentence")}])
         return (reply or "").strip()
 
     def caption_video(self, video_path) -> str:
@@ -1171,7 +1177,9 @@ class GeminiVLM(OpenAICompatVLM):
             if ip:
                 parts += list(ip)
         self._require_key()
-        reply = self._generate(parts + [{"text": _JUNCTION_VIDEO_INSTRUCTION}])
+        reply = self._generate(parts + [{
+            "text": _JUNCTION_VIDEO_INSTRUCTION
+            + lang_clause("who/pose/position/direction values")}])
         return (reply or "").strip()
 
     def describe_junction(self, image_path) -> str:
@@ -1182,7 +1190,9 @@ class GeminiVLM(OpenAICompatVLM):
         if not got:
             return ""
         self._require_key()
-        reply = self._generate([got[1], {"text": _JUNCTION_INSTRUCTION}])
+        reply = self._generate([got[1], {
+            "text": _JUNCTION_INSTRUCTION
+            + lang_clause("who/pose/position/direction values")}])
         return (reply or "").strip()
 
 
@@ -1310,7 +1320,8 @@ class LocalQwenVLM(BaseMLLMClient):
             "No other text."))
 
     def caption_identity(self, image_path) -> str:
-        return self._chat_image(image_path, _IDENTITY_CAPTION_INSTRUCTION)
+        return self._chat_image(image_path, _IDENTITY_CAPTION_INSTRUCTION
+                                + lang_clause("the sentence"))
 
     def describe_junction(self, image_path) -> str:
         return self._chat_image(image_path, _JUNCTION_INSTRUCTION)

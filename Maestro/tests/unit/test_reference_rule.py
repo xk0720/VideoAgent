@@ -175,3 +175,47 @@ def test_outline_language_gate_retries_then_falls_back():
         max_shots=3, fallback_fn=lambda: ["剧本原文摘抄"],
         prompt_language="zh")
     assert via2 == "fallback" and shots2 == ["剧本原文摘抄"]
+
+
+def test_dynamic_output_language_policy():
+    """2026-08-05 动态语言:zh 项目所有模型输出中文(键/枚举保持英文);
+    en 项目零约束;t2i 中文正典经 LLM 译英护栏后才进 flux。"""
+    from maestro.language import lang_clause, output_lang, set_output_lang
+    set_output_lang("zh")
+    assert output_lang() == "zh"
+    assert "CHINESE" in lang_clause("x")
+    set_output_lang("en")
+    assert lang_clause("x") == ""
+    # 肖像翻译护栏:中文 static → llm 译英进模板
+    import maestro.pipeline.window_loop as wl
+    from maestro.memory.storyboard import StoryboardMemory
+
+    class _T2I:
+        def __init__(self):
+            self.prompts = []
+
+        def capabilities(self):
+            return {"t2i"}
+
+        def text_to_image(self, prompt, out, seed=0):
+            self.prompts.append(prompt)
+            from pathlib import Path as _P
+            p = _P(out)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"\x89PNG\r\n" + b"\x00" * 8)
+            return p
+
+    class _LLM:
+        def complete(self, prompt, **k):
+            return "slender woman in a deep purple velvet gown"
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path as _P
+        sb = StoryboardMemory.from_outline(["shot 1: <甲> 出场"],
+                                           path=_P(td) / "sb.json")
+        sb.cast = {"甲": "static: 深紫色丝绒长裙的女子; dynamic: 折扇"}
+        sb.setting = "a grand hall"
+        gen = _T2I()
+        wl._ensure_cast_portraits(sb, None, gen, _P(td), llm=_LLM())
+        assert gen.prompts and "深紫色" not in gen.prompts[0]
+        assert "purple velvet" in gen.prompts[0]

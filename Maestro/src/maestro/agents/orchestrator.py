@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..critics.board import ReviewBoard
+from ..language import lang_clause
 from ..logging_utils import brain_log, get_logger
 from ..models.image_edit import BaseImageEditClient
 from ..models.llm import BaseLLMClient, MockLLMClient
@@ -370,6 +371,7 @@ class OrchestratorAgent:
             + "\n\nTHIS TURN (JSON):\n"
             + json.dumps(user, ensure_ascii=False, indent=2)
             + '\n\nRespond with STRICT JSON only: {"tool": ..., "args": {...}, "reason": ...}'
+            + lang_clause("reason and every hint/prompt argument")
         )
 
     # ─────────────────────────────────────────────────────────────────────

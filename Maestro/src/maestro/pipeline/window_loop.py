@@ -424,7 +424,8 @@ def _drop_first_frame(video: Path, cond: dict, *,
 
 
 def _ensure_cast_portraits(storyboard, asset_memory, video_gen,
-                           cache_dir: Path, library=None) -> list[dict]:
+                           cache_dir: Path, library=None,
+                           llm=None) -> list[dict]:
     """§A' 角色官方肖像(2026-07-31 用户批准的视觉锚,ViMax 肖像库
     嫁接我们的记忆体系;单视图,不固定 seed):
 
@@ -475,6 +476,26 @@ def _ensure_cast_portraits(storyboard, asset_memory, video_gen,
                             "portrait background cannot follow the film "
                             "scene (check §A ordering); using a neutral "
                             "backdrop honestly", name)
+            # t2i 翻译护栏(2026-08-05 动态语言):中文正典/设定直通
+            # flux 会画坏(2026-07-31 实测)→ LLM 先译英文视觉词。
+            if llm is not None and re.search(r"[一-鿿]", static + setting):
+                for _field in ("static", "setting"):
+                    _v = locals()[_field]
+                    if not re.search(r"[一-鿿]", _v):
+                        continue
+                    try:
+                        _t = str(llm.complete(
+                            "Translate to concise ENGLISH visual words for "
+                            "an image model (appearance/scene only, keep "
+                            "all colors). Reply with the translation only: "
+                            + _v) or "").strip()
+                    except Exception:
+                        _t = ""
+                    if _t and not re.search(r"[一-鿿]", _t):
+                        if _field == "static":
+                            static = _t[:400]
+                        else:
+                            setting = _t[:300]
             bg = (f"Background: {setting} — the character stands inside "
                   f"this exact scene, lit by its natural light."
                   if setting else
@@ -894,9 +915,9 @@ def decision_prompt(skill_text: str, menu: list, context: dict) -> str:
         + '\n\nSTRICT JSON only: {"strategy": "<name from menu>", '
           '"reason": "<one short sentence>", ... optional semantic fields '
           "per the skill above (images / video_prompt / use_prev_tail_video)}"
-        + (" reason in ENGLISH; video_prompt in CHINESE (the screenplay's"
-           " language — excerpt its wording; tokens inline in Chinese"
-           " sentences); image descriptions in ENGLISH (image models)."
+        + (" reason AND video_prompt in CHINESE (excerpt the screenplay's"
+           " wording; tokens inline in Chinese sentences); ONLY image"
+           " descriptions stay ENGLISH (English-biased image models)."
            if context.get("prompt_language") == "zh" else
            " ALL output text (reason / video_prompt / image descriptions)"
            " must be in ENGLISH, regardless of the user's language.")
@@ -1285,11 +1306,11 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
               "the next shot, do NOT let the mover stop before the cut; a "
               "resting object may only move again if a NEW force/event acts "
               "on it (write that event into the description). SCRIPT LANGUAGE LAW: "
-              + ("descriptions, end_state and opening_frame MUST be in "
-                 "CHINESE, EXCERPTING the screenplay's own action and "
-                 "performance wording verbatim wherever it exists — "
-                 "translation is loss. Only cast descriptors and setting "
-                 "stay ENGLISH (they feed English-biased image models). "
+              + ("EVERYTHING (descriptions, end_state, opening_frame, "
+                 "cast descriptors, setting) MUST be in CHINESE, "
+                 "EXCERPTING the screenplay's own action and performance "
+                 "wording verbatim wherever it exists — translation is "
+                 "loss (image-model strings are translated downstream). "
                  if prompt_language == "zh" else
                  "cast descriptors, setting, descriptions, end_state, "
                  "variation and opening_frame MUST be ENGLISH (they feed "
@@ -2961,10 +2982,14 @@ def generate_movie_windowed(
     decisions.append({"stage": "character_extract", "via": ce_via,
                       "characters": sorted(cast_canon)})
 
-    # prompt 语言随剧本(2026-08-05 用户令)
+    # prompt 语言随剧本(2026-08-05 用户令);动态全局语言:中文项目
+    # 所有模型输出(VLM 图注/矢量/评审、LLM 理由)一律中文 —— 各后端
+    # 指令懒读 output_lang(),唯一保留项是直发 flux 的 t2i 字符串。
     prompt_lang = _prompt_lang(screenplay_text or user_prompt)
-    log.info("window: prompt language = %s (follows the screenplay)",
-             prompt_lang)
+    from ..language import set_output_lang
+    set_output_lang(prompt_lang)
+    log.info("window: prompt language = %s (follows the screenplay; "
+             "ALL model outputs follow it too)", prompt_lang)
     # ── §A playwriting:剧本 → outline → specs → 台账 ────────────────────
     outline, shot_durations, shot_end_states, script_meta, outline_via = \
         _write_outline(
@@ -3038,7 +3063,7 @@ def generate_movie_windowed(
     # §A' 角色官方肖像:用户素材 > 跨片库 > t2i
     decisions.extend(_ensure_cast_portraits(
         storyboard, asset_memory, video_gen, cache_dir,
-        library=character_library))
+        library=character_library, llm=llm))
     # §A2 场景锚帧(M2):每场景一张 establishing 图(无角色),入台账
     # 持久化;可灵后端下逐镜注入 reference 行 → ref2v/i2v_first 附挂保
     # 背景。t2i 失败 → 该场景无锚,响亮记录,文字建景照旧兜底。
