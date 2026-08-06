@@ -3108,7 +3108,17 @@ def generate_movie_windowed(
         llm, user_prompt, screenplay, asset_catalog0)
     decisions.append({"stage": "screenplay", "via": sp_via,
                       "chars": len(screenplay_text)})
-    # 钦定角色图像打标(剧本 JSON 输入):VLM 看图出英文 static 描述,
+    # prompt 语言随剧本(2026-08-05 用户令);动态全局语言:中文项目
+    # 所有模型输出(VLM 图注/矢量/评审、LLM 理由)一律中文 —— 各后端
+    # 指令懒读 output_lang(),唯一保留项是直发 flux 的 t2i 字符串。
+    # 【必须先于角色打标】(2026-08-06 xiaoming run1 事故:语言设定晚于
+    # 钦定角色 caption → zh 项目图注出成英文)。
+    prompt_lang = _prompt_lang(screenplay_text or user_prompt)
+    from ..language import set_output_lang
+    set_output_lang(prompt_lang)
+    log.info("window: prompt language = %s (follows the screenplay; "
+             "ALL model outputs follow it too)", prompt_lang)
+    # 钦定角色图像打标(剧本 JSON 输入):VLM 看图出 static 描述,
     # 图为法源;VLM 缺/失败 → 空描述照样入链(名字纪律不受影响),留痕。
     given_caps: dict = {}
     for _gn, _gp in (given_characters or {}).items():
@@ -3142,14 +3152,6 @@ def generate_movie_windowed(
     decisions.append({"stage": "character_extract", "via": ce_via,
                       "characters": sorted(cast_canon)})
 
-    # prompt 语言随剧本(2026-08-05 用户令);动态全局语言:中文项目
-    # 所有模型输出(VLM 图注/矢量/评审、LLM 理由)一律中文 —— 各后端
-    # 指令懒读 output_lang(),唯一保留项是直发 flux 的 t2i 字符串。
-    prompt_lang = _prompt_lang(screenplay_text or user_prompt)
-    from ..language import set_output_lang
-    set_output_lang(prompt_lang)
-    log.info("window: prompt language = %s (follows the screenplay; "
-             "ALL model outputs follow it too)", prompt_lang)
     # ── §A playwriting:剧本 → outline → specs → 台账 ────────────────────
     outline, shot_durations, shot_end_states, script_meta, outline_via = \
         _write_outline(
