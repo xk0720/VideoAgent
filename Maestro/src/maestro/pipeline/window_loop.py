@@ -2043,6 +2043,11 @@ def _mention(entry, path, n: int, kind: str = "@Image") -> str:
     """一条内容感知的引用句:'@Image2 shows: <实况语义> — keep it
     consistent.'(语义缺失时退化为角色级措辞,绝不编内容)。"""
     d = _desc_of(entry, path)
+    # 语言随项目(2026-08-06 run5 事故:引用闸兜底补句把英文 t2i 描述
+    # 整段灌进中文 prompt):zh 项目补句用短中文,英文描述不进 prompt。
+    from ..language import zh as _zh
+    if _zh() and not _is_mostly_chinese(str(d or "")):
+        return f"画面中包含{kind}{n}所示之物,外观与其保持一致。"
     if d:
         return f"{kind}{n} shows: {d} — keep it consistent."
     return f"{kind}{n} is a planned image for this shot — keep it consistent."
@@ -3995,6 +4000,10 @@ def generate_movie_windowed(
                 if getattr(_entry, "keyframe_path", None):
                     _entry.keyframe_path = str(first_frame)
             hint_ = _scrub_cast_labels(_strip_markers(hint), _cast)
+            # 内部行话泄漏闸(2026-08-06 run5:修复 hint 写出"符合
+            # Condition 3切面外观"直达 API)
+            hint_ = re.sub(r"(?:符合\s*)?[Cc]ondition\s*\d+\s*(?:的)?",
+                           "", hint_)
             # 全修出口同主链纪律(2026-08-06 xiaoming run2 事故:裸名+
             # <标记> 原文直达 API):动作/收束先记号化,终产物再过
             # 名字终换闸。
