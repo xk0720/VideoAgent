@@ -71,3 +71,9 @@ Background MUSIC is always a defect. Ambient sound the script itself
 stages (roaring waves, wind, a gull's cry) is CORRECT content — never
 flag it and never demand silence for it. The spoken line must be
 audible; flag a missing or wrong-language line, not scripted ambience.
+
+## Narration / voiceover
+Narration lines in the shot description are POST-PRODUCTION audio —
+the clip has no narration channel. NEVER flag their absence and NEVER
+ask a repair to make narration audible; judge only what the pictures
+and scripted ambient sounds should carry.

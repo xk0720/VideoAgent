@@ -4267,6 +4267,12 @@ def generate_movie_windowed(
                                    end_state=_map_markers(
                                        _entry.end_state, _ns_regen))
             prompt = _names_to_tokens(prompt, _ns_regen)
+            # 旁白剥除(2026-08-06 run5:主链有闸,修复闭包漏装——评审
+            # 催"保留旁白",修复稿原样带出)
+            prompt = re.sub(
+                r"(?:画外)?旁白[:：]?\s*[\"\u201c][^\"\u201c\u201d]*"
+                r"[\"\u201d]。?\s*|(?:完整)?保留旁白[^。]*。\s*",
+                "", prompt).strip()
             prompt = _scrub_setting_sentence(prompt, _setting, _strategy)
             # E 案:全修 hint 的逐字契约同样只管无锚路线(硬锚豁免)。
             if _strategy not in _ANCHORED_STRATEGIES:

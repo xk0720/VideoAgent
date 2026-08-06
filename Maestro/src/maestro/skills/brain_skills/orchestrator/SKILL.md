@@ -85,3 +85,8 @@ repair, so refer to characters by the SAME <<<image_N>>> tokens the
 shot's original prompt uses (it is in your context — copy its token
 usage exactly). NEVER a bare cast name (a deterministic gate strips
 names); the anchor frame plus the original references carry identity.
+
+## Narration in hints
+Never ask to keep/preserve narration in a hint — narration is
+post-production audio with no channel in the video model; a gate
+strips it anyway.
