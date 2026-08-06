@@ -614,11 +614,26 @@ _SOUND_WORD_RE = re.compile(
     r"叫声|轰鸣|海浪拍|waves?\s+(?:roar|crash)|wind\s+how|footsteps")
 
 
+_RUN_AMBIENCE: list = []
+
+
+def set_run_ambience(*texts) -> None:
+    """run 级环境声(2026-08-06:场景头"浪声轰鸣"/setting"海浪拍击"是
+    全场级声学事实,逐镜描述可能不再重复)——起跑时从 setting+剧本
+    扫一次,_scripted_sounds 自动并入。"""
+    global _RUN_AMBIENCE
+    _RUN_AMBIENCE = []
+    for t in texts:
+        for m in _SOUND_WORD_RE.findall(str(t or "")):
+            if m and m not in _RUN_AMBIENCE:
+                _RUN_AMBIENCE.append(m)
+
+
 def _scripted_sounds(*texts) -> list:
     """剧本载明的环境声(2026-08-06 run5 音频死循环:剧本明写"浪声
     轰鸣",压制句+评审却把一切音效当缺陷,修复轮打不可能赢的仗)。
     识别描述/剧本片段里的声音词,返回去重列表(顺序稳定)。"""
-    out = []
+    out = list(_RUN_AMBIENCE)
     for t in texts:
         for m in _SOUND_WORD_RE.findall(str(t or "")):
             if m and m not in out:
@@ -3484,6 +3499,8 @@ def generate_movie_windowed(
         log.info("window: %s image-plan → %s (via=%s, %d image(s)%s)",
                  entry.label, plan_final, d["via"], len(images),
                  f", degraded from {degraded_from}" if degraded_from else "")
+
+    set_run_ambience(storyboard.setting, screenplay_text or user_prompt)
 
     # ── §C+§D 大循环:逐镜窗口生成 + 小循环评审修复 ─────────────────────────
     # G-1(2026-07-17):用户源视频备成 t2v reference_videos 可用形态
