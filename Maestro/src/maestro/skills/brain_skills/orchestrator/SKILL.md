@@ -71,3 +71,10 @@ A hint is the corrective PROMPT text the regeneration will use:
 
 {"tool": "<name from tools>", "args": {...per the tool...},
  "reason": "<one short sentence>"}
+
+## Audio repairs
+Repair hints may remove background MUSIC only. NEVER mute the shot or
+demand "silence" on a dialogue shot — the line must stay audible; and
+ambient sound the script stages (waves, wind) is content, not a
+defect. Never write internal jargon like "Condition N" into a hint —
+hints are self-contained visual language.

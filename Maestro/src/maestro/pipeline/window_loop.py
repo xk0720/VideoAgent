@@ -609,6 +609,23 @@ def _name_slot_map(slots) -> dict:
             if r.get("name") and r.get("referenceable")}
 
 
+_SOUND_WORD_RE = re.compile(
+    r"浪声|涛声|风声|雨声|雷声|鸟鸣|蝉鸣|钟声|鼓声|脚步声|掌声|欢呼声|"
+    r"叫声|轰鸣|海浪拍|waves?\s+(?:roar|crash)|wind\s+how|footsteps")
+
+
+def _scripted_sounds(*texts) -> list:
+    """剧本载明的环境声(2026-08-06 run5 音频死循环:剧本明写"浪声
+    轰鸣",压制句+评审却把一切音效当缺陷,修复轮打不可能赢的仗)。
+    识别描述/剧本片段里的声音词,返回去重列表(顺序稳定)。"""
+    out = []
+    for t in texts:
+        for m in _SOUND_WORD_RE.findall(str(t or "")):
+            if m and m not in out:
+                out.append(m)
+    return out
+
+
 def _with_dialogue(prompt: str, entry, cast: dict,
                    name_to_slot: Optional[dict] = None) -> str:
     """对白镜的口型子句(2026-07-29 音频线):确定性追加在最终 prompt 尾,
@@ -639,9 +656,18 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     # 压制句与台词解耦(2026-08-05 run11b 事故:brain 把台词写进节拍后,
     # 查重提前返回把"无背景音乐"压制句一起跳过 → 可灵自由配乐)。对白镜
     # 无论台词谁写的,压制句永远确保在场。
-    _audio_zh = "音频:只有角色说这句台词的人声——无背景音乐、无音效。"
-    _audio_en = ("Audio: only the character's voice speaking the line — "
-                 "no background music, no sound effects.")
+    _snd = _scripted_sounds(getattr(entry, "description", ""),
+                            getattr(entry, "end_state", ""))
+    if _snd:
+        _audio_zh = (f"音频:角色说这句台词的人声与剧本写明的环境声"
+                     f"({'、'.join(_snd)})——无背景音乐、无其他音效。")
+        _audio_en = ("Audio: the character's voice speaking the line plus "
+                     f"the scripted ambient sound ({', '.join(_snd)}) — "
+                     "no background music, no other effects.")
+    else:
+        _audio_zh = "音频:只有角色说这句台词的人声——无背景音乐、无音效。"
+        _audio_en = ("Audio: only the character's voice speaking the line — "
+                     "no background music, no sound effects.")
     def _ensure_audio(p_: str) -> str:
         if "无背景音乐" in p_ or "no background music" in p_:
             return p_
@@ -3753,12 +3779,22 @@ def generate_movie_windowed(
                         entry.label)
             if "无背景音乐" not in brain_prompt \
                     and "no background music" not in brain_prompt:
-                brain_prompt += ("音频:只有角色对白的人声——无背景音乐、"
-                                 "无音效。" if re.search(r"[一-鿿]",
-                                                        brain_prompt)
-                                 else " Audio: only the characters' "
-                                      "voices — no background music, "
-                                      "no sound effects.")
+                _snd_i = _scripted_sounds(entry.description,
+                                          entry.end_state)
+                if re.search(r"[一-鿿]", brain_prompt):
+                    brain_prompt += (
+                        f"音频:角色对白的人声与剧本写明的环境声"
+                        f"({'、'.join(_snd_i)})——无背景音乐、无其他"
+                        f"音效。" if _snd_i else
+                        "音频:只有角色对白的人声——无背景音乐、无音效。")
+                else:
+                    brain_prompt += (
+                        " Audio: the characters' voices plus the scripted "
+                        f"ambient sound ({', '.join(_snd_i)}) — no "
+                        "background music, no other effects."
+                        if _snd_i else
+                        " Audio: only the characters' voices — no "
+                        "background music, no sound effects.")
 
         # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
         # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错

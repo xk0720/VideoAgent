@@ -65,3 +65,9 @@ degraded. Undecodable clip → NO verdict; never judge unseen pixels.
 - Every failed check needs a linked issue saying where and why; an
   unlocalizable issue is honestly `type=global`.
 - Never recommend a tool — tool choice belongs to the brain.
+
+## Audio law
+Background MUSIC is always a defect. Ambient sound the script itself
+stages (roaring waves, wind, a gull's cry) is CORRECT content — never
+flag it and never demand silence for it. The spoken line must be
+audible; flag a missing or wrong-language line, not scripted ambience.
