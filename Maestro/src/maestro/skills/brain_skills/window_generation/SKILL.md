@@ -184,7 +184,11 @@ one call):
   for in-scene continuation. The pin is API-level; the executor
   prepends the handoff clause referencing the manifest's pin-frame
   slot — write no handoff wording of your own and leave that slot
-  alone; the prompt is MOTION ONLY: zero appearance restatement, zero scene
+  alone. The background plate does NOT ride on pinned shots (the
+  pinned frame carries the space; an EMPTY plate as a reference
+  evicts the people — real incident: a pinned car-interior close-up
+  morphed into the empty interior plate mid-clip). The prompt is
+  MOTION ONLY: zero appearance restatement, zero scene
   re-establishment — what moves, how the camera continues, one short
   preserve clause; entities by token, re-anchored to THIS shot's
   manifest.

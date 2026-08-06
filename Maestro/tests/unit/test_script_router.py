@@ -210,3 +210,21 @@ def test_pin_frame_slot_never_auto_appended():
     fixed, audit = validate_references("<<<image_1>>>内,人物静立。", slots)
     assert audit["ok"] and "<<<image_2>>>" not in fixed
     assert "executor owns" not in fixed
+
+
+def test_pinned_shots_drop_background_plate():
+    """2026-08-06 rainnight run4 板磁铁事故回归:硬钉上镜末帧的
+    i2v_first 清单不得携带背景板 refer(空板会把人清场)。"""
+    from types import SimpleNamespace
+    entry = SimpleNamespace(images=[
+        {"path": "/tmp/bg.png", "role": "reference",
+         "source": "background", "description": "plate"},
+        {"path": "/tmp/prop.png", "role": "reference",
+         "source": "asset_image", "description": "prop"}],
+        keyframe_path=None)
+    prev = SimpleNamespace(video_path="/tmp/prev.mp4")
+    rows = wl._slot_manifest("i2v_first", entry, prev,
+                             portraits={"甲": "/tmp/p.png"})
+    contents = " | ".join(str(r.get("content")) for r in rows)
+    assert "plate" not in contents          # 板被剔除
+    assert "prop" in contents               # 非板自有图保留

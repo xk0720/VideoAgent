@@ -2341,6 +2341,15 @@ def _slot_manifest(strategy: str, entry, prev,
                              "opens exactly on it)" if prev_ok else
                              _c(kf, "this shot's planned opening frame"))}]
         own = list(refs)
+        # 板磁铁事故(2026-08-06 rainnight run4 shot4:钉帧镜挂空背景板
+        # refer + "保留<<<image_1>>>空间"子句,可灵把画面吸成了无人的
+        # 板本体,人物被清场):硬钉上镜末帧时,钉住的帧自带空间,
+        # 背景板 refer 一律剔除(与"帧升级默认禁用"同一哲学)。
+        if prev_ok:
+            _bgp = {str(im.get("path")) for im in
+                    (getattr(entry, "images", None) or [])
+                    if im.get("source") == "background"}
+            own = [x for x in own if str(x) not in _bgp]
         rows += [{"slot": _ref_tok(video_gen, i + 1), "referenceable": True,
                   "content": _c(p, "a planned reference image")}
                  for i, p in enumerate(own)]
@@ -2656,7 +2665,14 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
         if first is not None:
             p_names = sorted(portraits or {})
             p_paths = [Path(portraits[n]) for n in p_names]
-            all_refs = list(refs) + p_paths
+            _own = list(refs)
+            if hard_prev:
+                # 与 _slot_manifest 的板剔除 1:1(板磁铁事故)
+                _bgp = {str(im.get("path")) for im in
+                        (getattr(entry, "images", None) or [])
+                        if im.get("source") == "background"}
+                _own = [x for x in _own if str(x) not in _bgp]
+            all_refs = _own + p_paths
             # 首帧本体 refer(与 _slot_manifest 的 pin_frame 行 1:1)
             if hard_prev:
                 all_refs = all_refs + [Path(first)]
