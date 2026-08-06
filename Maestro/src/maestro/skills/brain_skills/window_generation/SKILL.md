@@ -109,6 +109,10 @@ never an embellishment.
   guests along the far walls, none entering the foreground") — NEVER
   place an uncast figure at a principal position (real incident: "noble guests around them" with no placement grew a fourth principal beside
   the leads).
+- NO NARRATION IN PROMPTS: voiceover/narration lines the script
+  stages are POST-PRODUCTION AUDIO — a video prompt has no narration
+  channel, and quoting them invites burned-in subtitles (a gate
+  strips them). Convey their mood through the visuals only.
 - OBSERVABLE, NOT ABSTRACT: convert feelings to camera-recordable
   facts (brows tighten, gaze drops, shoulders sink). No "elegant",
   "cinematic", "beautiful".

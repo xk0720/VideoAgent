@@ -184,3 +184,14 @@ def test_sound_coverage_detects_dropped_sounds():
     good = [{"description": "雨滴敲击车窗声中,轿车静停。"},
             {"description": "巨大枪声爆发。"}]
     assert wl._sound_coverage(sp, good) == []
+
+
+def test_narration_stripped_from_prompts():
+    """2026-08-06 rainnight run4 回归:旁白文本不得进视频 prompt
+    (无旁白通道,烧字幕风险),声效句保留。"""
+    import re
+    pat = (r"(?:画外)?旁白[:：]?\s*[\"“][^\"“”]*[\"”]。?\s*")
+    t = ('雨滴敲击车窗。旁白:“霓虹闪烁的雨夜。”伴随雪茄吸入声。')
+    out = re.sub(pat, "", t)
+    assert "旁白" not in out and "霓虹闪烁的雨夜" not in out
+    assert "雪茄吸入声" in out

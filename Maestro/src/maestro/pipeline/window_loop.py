@@ -4020,6 +4020,14 @@ def generate_movie_windowed(
         # 引号外的角色名,有槽位的【确定性替换】成记号;换不了的才告警
         # (无槽者本该被 enhancer 删/改视觉把手)。台词引号内永不动。
         if brain_prompt:
+            # 旁白剥除闸(2026-08-06 rainnight run4:旁白文本进了视频
+            # prompt,与"无人声"子句自相矛盾,还可能诱导烧字幕 ——
+            # 视频模型没有旁白通道;旁白是后期音轨,不进画面指令)。
+            brain_prompt = re.sub(
+                r"(?:画外)?旁白[:：]?\s*[\"\u201c][^\"\u201c\u201d]*"
+                r"[\"\u201d]。?\s*|(?:voice-?over|narration)\s*[:：]"
+                r"[^.\"]*[.\"]?\s*",
+                "", brain_prompt, flags=re.IGNORECASE).strip()
             brain_prompt = _names_to_tokens(brain_prompt,
                                             _name_slot_map(slots))
             _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
