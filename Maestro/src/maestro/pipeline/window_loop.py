@@ -1383,6 +1383,22 @@ def _prompt_lang(text: str) -> str:
 
 
 
+def _sound_coverage(screenplay_text: str, shots: list) -> list:
+    """声效覆盖判据(2026-08-06 rainnight run3 事故:剧本"雨滴敲击车窗
+    声"被分镜化成"雨滴敲击车身",声词丢失 → 音效镜闸认不出 → 哑片)。
+    返回【剧本载明但没有落进任何 shot 描述/end_state 的声音词】列表。"""
+    spl = set(_scripted_sounds(screenplay_text))
+    if not spl:
+        return []
+    have: set = set()
+    for s_ in shots:
+        if isinstance(s_, dict):
+            have.update(_scripted_sounds(
+                str(s_.get("description") or ""),
+                str(s_.get("end_state") or "")))
+    return sorted(spl - have)
+
+
 def _dial_text(shot_dict) -> str:
     """dialogue 字段两种形态通吃:{speaker, line} 字典(scene_write 原始
     输出)或纯字符串(台账扁平化)。2026-08-06 run4 事故:判据把字典当
@@ -1652,6 +1668,31 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                             data = None
                             _shots_ok = False
                             continue
+                # 声效覆盖闸(2026-08-06 rainnight run3 事故):剧本载明
+                # 的声音词必须落进某镜的描述 —— 声音是剧本内容,丢词
+                # 即丢内容(音效镜靠它开原生音频)。缺 → 纠正重试;
+                # 仍缺 → 响亮告警放行(放置归属需要语义,不硬猜)。
+                _snd_missing = _sound_coverage(user_prompt, data["shots"])
+                if _snd_missing:
+                    log.warning("scene_write: SOUND COVERAGE failed — "
+                                "scripted sounds %s land in NO shot "
+                                "description — %s", _snd_missing,
+                                "corrective retry" if _attempt == 0
+                                else "keeping with a loud warning")
+                    if _attempt == 0:
+                        prompt += (
+                            "\n\nYOUR PREVIOUS REPLY DROPPED SCRIPTED "
+                            "SOUNDS. These sound words from the screenplay "
+                            "appear in NO shot description: "
+                            + json.dumps(_snd_missing, ensure_ascii=False)
+                            + " Sound annotations ARE script content — "
+                            "carry each sound word VERBATIM into the "
+                            "description (or end_state) of the shot where "
+                            "it occurs. Rewrite the SAME storyboard with "
+                            "the sounds carried through.")
+                        data = None
+                        _shots_ok = False
+                        continue
                 break
             if _attempt == 0:
                 log.warning("scene_write: LLM reply unusable (raw %d "

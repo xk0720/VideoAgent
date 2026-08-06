@@ -171,3 +171,16 @@ def test_character_extract_enforces_name_language():
                                         prompt_language="zh")
     assert llm.n == 2                       # 纠正重试发生
     assert list(chars) == ["黑帮老大"]
+
+
+def test_sound_coverage_detects_dropped_sounds():
+    """2026-08-06 rainnight run3 回归:剧本载明"雨滴敲击车窗声",分镜
+    描述丢声词 → 判据必须报缺;带上则通过。"""
+    sp = "雨夜。音效:雨滴敲击车窗声、巨大枪声"
+    bad = [{"description": "雨滴敲击车身,轿车静停。"},
+           {"description": "枪口火焰照亮雨巷,巨大枪声爆发。"}]
+    missing = wl._sound_coverage(sp, bad)
+    assert "雨滴敲击车窗声" in missing and "巨大枪声" not in missing
+    good = [{"description": "雨滴敲击车窗声中,轿车静停。"},
+            {"description": "巨大枪声爆发。"}]
+    assert wl._sound_coverage(sp, good) == []

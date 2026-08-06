@@ -80,7 +80,13 @@ translate — whatever you drop here is lost to the film forever.
    WORDS ("the cat from the provided photo"), never by any reference
    ID — numbering does not exist at script time; the enhancer
    formalizes mentions into slot IDs later.
-12. MUSIC PLAN: one music description per scene (mood + genre + tempo);
+12. SOUND ANNOTATIONS RIDE (hard law, gated): sound-effect words the
+   screenplay stages ("...sheng" annotations, gunshots, rain hitting
+   glass) ARE script content — carry each sound word VERBATIM into
+   the description (or end_state) of the shot where it occurs (a
+   deterministic gate rejects storyboards that drop them). Music is
+   the one exception — it belongs to MUSIC PLAN, never descriptions.
+13. MUSIC PLAN: one music description per scene (mood + genre + tempo);
    omit a scene for deliberate silence. Never mention music inside
    shot descriptions.
 
