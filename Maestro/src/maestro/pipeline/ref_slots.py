@@ -69,10 +69,21 @@ def validate_references(prompt: str, slots: list[dict]) -> tuple[str, dict]:
         if slot.lower() in mentioned:
             continue
         content = str(r.get("content", "")).strip()
+        # 语言随项目(2026-08-06 rainnight run5:zh 项目的补挂句把英文
+        # 描述整段灌进中文 prompt —— 与 window_loop._mention 同规):
+        # zh 且描述非中文 → 短中文句,英文描述不出门。
+        try:
+            from ..language import zh as _zh
+        except Exception:                       # pragma: no cover
+            def _zh():
+                return False
+        _cjk = any("\u4e00" <= ch <= "\u9fff" for ch in content)
         if slot.lower().startswith("@video"):
             fixed += (f" {slot} is {content} — continue its motion "
                       "seamlessly." if content
                       else f" Continue {slot}'s motion seamlessly.")
+        elif _zh() and not _cjk:
+            fixed += f"画面中包含{slot}所示之物,外观与其保持一致。"
         else:
             fixed += (f" {slot} shows: {content} — keep it consistent."
                       if content else f" Keep {slot} consistent.")
