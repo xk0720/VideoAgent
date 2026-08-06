@@ -21,7 +21,10 @@ from maestro.pipeline.window_loop import _probe_seconds
 from maestro.tools.video_concat import VideoConcatTool
 
 RUN4 = Path("/Users/kevin/Desktop/Kevin/repositories/VideoAgent/Maestro/outputs/movie_20260806_010939")
-BG_PLATE = RUN4 / "anchors" / "bg_bg_1.png"
+# 双背景板(2026-08-06 用户纠正:不是只有一个背景)——按 run4 台账
+# 逐镜归属:巷外 bg_1(镜1/5/6)、车内 bg_2(镜2/3/4)。
+BG_PLATES = {"bg_1": RUN4 / "anchors" / "bg_bg_1.png",
+             "bg_2": RUN4 / "anchors" / "bg_bg_2.png"}
 # 女子肖像在跨 run 角色库(run3 生成入库,run4 台账映射即此路径)
 PORTRAITS = {"黑帮老大": RUN4 / "portraits" / "黑帮老大.png",
              "女子": Path("/Users/kevin/Desktop/Kevin/repositories/"
@@ -30,28 +33,28 @@ PORTRAITS = {"黑帮老大": RUN4 / "portraits" / "黑帮老大.png",
 
 # 全部独立 ref2v;refs 首位 = 背景板;prompt 随手粗写,声效写明
 SHOTS = [
-    dict(cast=["黑帮老大"], duration=8,
+    dict(bg="bg_1", cast=["黑帮老大"], duration=8,
          prompt=("<<<image_1>>>的雨夜暗巷,黑色豪华轿车停着。车内"
                  "<<<image_2>>>点燃一支雪茄,红光在黑暗里明灭,雨水在"
                  "车窗上流淌,映着五彩霓虹。"
                  "音频:只有雨滴敲击车窗声和雪茄吸入声——无背景音乐、无人声。")),
-    dict(cast=["女子"], duration=5,
+    dict(bg="bg_2", cast=["女子"], duration=5,
          prompt=("<<<image_1>>>的雨夜。车内副驾驶座上<<<image_2>>>穿着"
                  "晚礼服,神情紧张恐惧,柔和霓虹光映在脸上。"
                  "音频:只有低沉心跳声——无背景音乐、无人声。")),
-    dict(cast=["黑帮老大", "女子"], duration=5,
+    dict(bg="bg_2", cast=["黑帮老大", "女子"], duration=5,
          prompt=("<<<image_1>>>的雨夜车内。<<<image_2>>>把一把金色手枪"
                  "缓缓抵在哭泣的<<<image_3>>>额头上,高对比度戏剧打光。"
                  "音频:只有冰冷金属摩擦声——无背景音乐、无人声。")),
-    dict(cast=["女子"], duration=5,
+    dict(bg="bg_2", cast=["女子"], duration=5,
          prompt=("<<<image_1>>>的雨夜。车侧窗突然碎裂,玻璃碎片在空中"
                  "飞舞,映着<<<image_2>>>绝望的目光,慢动作。"
                  "音频:只有玻璃碎裂声——无背景音乐、无人声。")),
-    dict(cast=["黑帮老大", "女子"], duration=5,
+    dict(bg="bg_1", cast=["黑帮老大", "女子"], duration=5,
          prompt=("<<<image_1>>>的雨夜。急推镜头,<<<image_2>>>扣动扳机,"
                  "一道金色枪口火焰照亮<<<image_3>>>的脸和黑暗巷道,火星"
                  "飞溅。音频:只有突发的巨大枪声——无背景音乐、无人声。")),
-    dict(cast=["黑帮老大", "女子"], duration=5,
+    dict(bg="bg_1", cast=["黑帮老大", "女子"], duration=5,
          prompt=("<<<image_1>>>的雨夜。烟雾弥漫,火星坠落,金色余光里"
                  "<<<image_2>>>与<<<image_3>>>的轮廓静止。"
                  "音频:只有金属回音渐弱——无背景音乐、无人声。")),
@@ -59,7 +62,8 @@ SHOTS = [
 
 
 def main() -> None:
-    assert BG_PLATE.exists(), f"背景板缺失: {BG_PLATE}"
+    for _k, _p in BG_PLATES.items():
+        assert _p.exists(), f"背景板缺失: {_k} → {_p}"
     for n, p in PORTRAITS.items():
         assert p.exists(), f"肖像缺失: {n} → {p}"
     out_dir = (Path("outputs")
@@ -79,7 +83,8 @@ def main() -> None:
     for i, sh in enumerate(SHOTS):
         outp = out_dir / f"shot{i:03d}.mp4"
         vg.generate_audio = True          # 全片音效驱动(无对白无音乐)
-        refs = [BG_PLATE] + [PORTRAITS[n] for n in sh["cast"]]
+        refs = [BG_PLATES[sh["bg"]]] + [PORTRAITS[n]
+                                        for n in sh["cast"]]
         print(f"[shot {i+1}/{len(SHOTS)}] ref2v {sh['duration']}s "
               f"refs={len(refs)}")
         try:
