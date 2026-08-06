@@ -58,3 +58,56 @@ def test_empty_cast_conservative_pin():
     cont, why = wl._script_cast_continuity(
         _e(end_state="<小明>静立。"), _e(opening="<小明>特写。"), {}, {})
     assert cont
+
+
+# ── 2026-08-06 xiaoming run2 三连事故回归 ─────────────────────────────
+
+def test_dialogue_coverage_detects_truncation():
+    """scene_write 台词截半("大海真大啊。"丢后半句)→ 判据必须报警。"""
+    sp = '小明说："大海真大啊，大到能吞掉我所有的失败。"他望着海。'
+    bad = [{"dialogue": "大海真大啊。"}]
+    cov = wl._dialogue_coverage(sp, bad)
+    assert not cov["ok"]
+    good = [{"dialogue": "大海真大啊，大到能吞掉我所有的失败。"}]
+    assert wl._dialogue_coverage(sp, good)["ok"]
+
+
+def test_dialogue_patch_completes_sentence():
+    """确定性补丁:腰斩句沿剧本补到句末;句级完整摘抄不动。"""
+    sp = '小明说："大海真大啊，大到能吞掉我所有的失败。"完。'
+    shots = [{"dialogue": "大海真大啊。"}]
+    wl._patch_dialogue_coverage(sp, shots)
+    assert shots[0]["dialogue"] == "大海真大啊，大到能吞掉我所有的失败。"
+    shots2 = [{"dialogue": "大海真大啊，大到能吞掉我所有的失败。"}]
+    assert wl._patch_dialogue_coverage(sp, shots2) == []
+
+
+def test_short_quoted_names_not_speech():
+    """引号内短名号("阿浪")不是台词块,不得报缺。"""
+    sp = '海鸥"阿浪"俯冲下来。阿浪说："喂，人类。"'
+    cov = wl._dialogue_coverage(sp, [{"dialogue": "喂，人类。"}])
+    assert cov["ok"]
+
+
+def test_names_to_tokens_outside_quotes_only():
+    """共享名字终换闸:引号外裸名 → 记号;台词引号内原样。"""
+    ns = {"小明": "<<<image_2>>>"}
+    out = wl._names_to_tokens('小明凝望海面，说："小明不会认输。"', ns)
+    assert out.startswith("<<<image_2>>>凝望")
+    assert '"小明不会认输。"' in out
+
+
+def test_regen_anchor_language_follows_project():
+    """全修锚句语言随项目:zh 时不得出现英文脚手架。"""
+    from maestro.language import set_output_lang
+    set_output_lang("zh")
+    try:
+        out = wl._regen_prompt(
+            "ref2v", "base", "修正提示",
+            [{"slot": "<<<image_1>>>", "referenceable": True,
+              "content": "c"}],
+            action="<<<image_1>>>紧攥拳头", end_state="静止")
+        assert "scripted action" not in out
+        assert "本镜剧本动作" in out
+    finally:
+        set_output_lang("en")

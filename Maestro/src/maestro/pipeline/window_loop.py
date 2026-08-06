@@ -244,6 +244,21 @@ _SHOT_PREFIX_RE = re.compile(r"^\s*shot\s+\d+\s*:\s*"
                              r"(scene\s+\d+\s*[—-]\s*)?", re.IGNORECASE)
 
 
+
+def _names_to_tokens(text: str, name_to_slot: dict) -> str:
+    """名字终换(共享闸,2026-08-06 xiaoming run2 事故:全修路径绕过了
+    主链的名字终换闸,裸名直达 API):引号外的有槽角色名确定性替换成
+    记号;台词引号内永不动。"""
+    if not text or not name_to_slot:
+        return text
+    parts = re.split(r'(["“][^"“”]*["”])', text)
+    for i in range(0, len(parts), 2):
+        for n, tok in name_to_slot.items():
+            if n in parts[i]:
+                parts[i] = parts[i].replace(n, tok)
+    return "".join(parts)
+
+
 def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
                   action: str = "", end_state: str = "") -> str:
     """全修(regenerate)的 prompt 合成 —— P0-B(2026-07-18,attempt3):
@@ -266,7 +281,14 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
     anchor = ""
     if act:
         es = str(end_state or "").strip().rstrip(". ")
-        anchor = (f"This shot's scripted action: {act}"
+        # 锚句语言随项目(2026-08-06 xiaoming run2 事故:英文脚手架
+        # "This shot's scripted action:" 原样泄进中文 prompt)
+        from ..language import zh as _zh
+        if _zh():
+            anchor = (f"本镜剧本动作:{act}"
+                      + (f";收束为:{es}。" if es else "。"))
+        else:
+            anchor = (f"This shot's scripted action: {act}"
                   + (f", ending as: {es}." if es else "."))
     prompt = " ".join(x for x in (pin, hint.strip(), anchor) if x)
     fixed, audit = validate_references(prompt, slots)
@@ -608,7 +630,7 @@ def _with_dialogue(prompt: str, entry, cast: dict,
     prompt = re.sub(
         r'(?:\b(?:says?|said|saying|whispers?|whispering|replies|replied|'
         r'asks?|asking|murmurs?|shouts?|speaks?|speaking)\b[^"“”「」]{0,60}?'
-        r'|(?:低声)?说道?[:\uff1a]?\s*|低语[:\uff1a]?\s*|回答[:\uff1a]?\s*|问道?[:\uff1a]?\s*'
+        r'|(?:低声)?说[^"“「。;；!！?？]{0,8}?[:\uff1a]?\s*|低语[:\uff1a]?\s*|回答[:\uff1a]?\s*|问道?[:\uff1a]?\s*'
         r'|喊道?[:\uff1a]?\s*)'
         r'["“「][^"“”「」]+["”」]',
         _drop_foreign, prompt)
@@ -1278,6 +1300,75 @@ def _prompt_lang(text: str) -> str:
     return "zh" if re.search(r"[一-鿿]", str(text or "")) else "en"
 
 
+
+def _dialogue_coverage(screenplay_text: str, shots: list) -> dict:
+    """台词完整性判据(2026-08-06 xiaoming run2 事故:scene_write 把
+    台词截半 —— "大海真大啊,大到能吞掉我所有的失败。"只剩前半句)。
+    法则:剧本每个引号台词块必须完整、逐字地落进 dialogue 字段;长块
+    允许按镜序拆进多镜,但各段拼接必须一字不差。
+    返回 {ok, missing:[整块], mangled:[不属于任何块的 dialogue]}。"""
+    _norm = lambda t: re.sub(r"\s+", "", str(t or ""))
+    # 引号内的短名号("阿浪")不是台词块:无标点且 <6 字 → 不参检
+    spans = [x for x in re.findall(r'[“"]([^“”"]{2,})[”"]',
+                                   screenplay_text or "")
+             if len(x) >= 6 or re.search(r"[。!！?？,，;；…]", x)]
+    dials = [str((s_ or {}).get("dialogue") or "").strip()
+             for s_ in shots if isinstance(s_, dict)]
+    dials = [d for d in dials if d]
+    ndials = [_norm(d) for d in dials]
+    missing = []
+    for sp in spans:
+        nsp = _norm(sp)
+        if any(nd == nsp for nd in ndials):
+            continue
+        remaining = nsp
+        for nd in ndials:            # 镜序贪心拼接
+            if remaining.startswith(nd):
+                remaining = remaining[len(nd):]
+        if remaining:
+            missing.append(sp)
+    nspans = [_norm(sp) for sp in spans]
+    mangled = [d for d, nd in zip(dials, ndials)
+               if not any(nd in nsp for nsp in nspans)]
+    return {"ok": not missing and not mangled,
+            "missing": missing, "mangled": mangled}
+
+
+def _patch_dialogue_coverage(screenplay_text: str, shots: list) -> list:
+    """台词截断确定性补丁(纠正重试仍失败时的兜底)。剧本源的引号可能
+    不配对(xiaoming 剧本实测),按引号块补齐不可靠 —— 改为【句尾补全】:
+    dialogue 去尾标点后在剧本原文中定位,若其后原文仍在句中(下一个字
+    不是句号级标点),则沿原文补到句末,替换 dialogue。跨句的块级缺失
+    交给纠正重试(需要语义),这里只修"腰斩半句"这一客观错误。"""
+    sp = str(screenplay_text or "")
+    patched = []
+    for s_ in shots:
+        if not isinstance(s_, dict):
+            continue
+        d = str(s_.get("dialogue") or "").strip()
+        core = d.rstrip("。!！?？…,，;；\"”“")
+        if not core:
+            continue
+        i = sp.find(core)
+        if i < 0:
+            continue
+        j = i + len(core)
+        if j < len(sp) and sp[j] in "。!！?？…":
+            continue                     # 本就断在句尾 → 不是腰斩
+        k = j
+        while k < len(sp) and sp[k] not in "。!！?？":
+            k += 1
+        if k >= len(sp) or k - i > 120:
+            continue                     # 找不到句尾/异常长 → 不硬补
+        full = sp[i:k + 1]
+        if full != d:
+            s_["dialogue"] = full
+            patched.append({"was": d, "now": full})
+            log.warning("dialogue TRUNCATION patched: %r → %r",
+                        d[:30], full[:60])
+    return patched
+
+
 def _write_outline(llm, user_prompt: str, asset_catalog: list,
                    episode_guidance: dict, max_shots: int,
                    fallback_fn,
@@ -1407,6 +1498,35 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                                    "in Chinese.")
                         continue
             if _shots_ok:
+                # 台词完整性闸(2026-08-06 xiaoming run2 事故:台词被
+                # 截半):缺块/残句 → 纠正重试一次;仍失败 → 确定性
+                # 补丁(截断 dialogue 替换成完整台词块)。
+                _cov = _dialogue_coverage(user_prompt, data["shots"])
+                if not _cov["ok"]:
+                    log.warning("scene_write: DIALOGUE COVERAGE failed "
+                                "(missing %d, mangled %d) — %s",
+                                len(_cov["missing"]), len(_cov["mangled"]),
+                                "corrective retry" if _attempt == 0
+                                else "deterministic patch")
+                    if _attempt == 0:
+                        prompt += (
+                            "\n\nYOUR PREVIOUS REPLY VIOLATED THE DIALOGUE "
+                            "VERBATIM & COMPLETE LAW. These screenplay "
+                            "speech blocks are missing or truncated in the "
+                            "dialogue fields: "
+                            + json.dumps({"missing": _cov["missing"],
+                                          "mangled": _cov["mangled"]},
+                                         ensure_ascii=False)
+                            + " Every quoted speech block must land "
+                            "COMPLETE and VERBATIM in a shot's dialogue "
+                            "field (split a long block across consecutive "
+                            "shots ONLY if the pieces concatenate exactly; "
+                            "size shot durations to fit). Rewrite the SAME "
+                            "storyboard with complete dialogue.")
+                        data = None
+                        _shots_ok = False
+                        continue
+                    _patch_dialogue_coverage(user_prompt, data["shots"])
                 break
             if _attempt == 0:
                 log.warning("scene_write: LLM reply unusable (raw %d "
@@ -3652,13 +3772,8 @@ def generate_movie_windowed(
         # 引号外的角色名,有槽位的【确定性替换】成记号;换不了的才告警
         # (无槽者本该被 enhancer 删/改视觉把手)。台词引号内永不动。
         if brain_prompt:
-            _ns_final = _name_slot_map(slots)
-            _parts = re.split(r'(["“][^"“”]*["”])', brain_prompt)
-            for _i in range(0, len(_parts), 2):        # 偶数段 = 引号外
-                for _n, _tok in _ns_final.items():
-                    if _n in _parts[_i]:
-                        _parts[_i] = _parts[_i].replace(_n, _tok)
-            brain_prompt = "".join(_parts)
+            brain_prompt = _names_to_tokens(brain_prompt,
+                                            _name_slot_map(slots))
             _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
             _leak = [n for n in (storyboard.cast or {}) if n in _noq]
             if _leak:
@@ -3862,10 +3977,17 @@ def generate_movie_windowed(
                 if getattr(_entry, "keyframe_path", None):
                     _entry.keyframe_path = str(first_frame)
             hint_ = _scrub_cast_labels(_strip_markers(hint), _cast)
+            # 全修出口同主链纪律(2026-08-06 xiaoming run2 事故:裸名+
+            # <标记> 原文直达 API):动作/收束先记号化,终产物再过
+            # 名字终换闸。
+            _ns_regen = _name_slot_map(_slots)
             prompt = _regen_prompt(_strategy, _bp or _spec.prompt,
                                    hint_, _slots,
-                                   action=_spec.prompt,
-                                   end_state=_entry.end_state)
+                                   action=_map_markers(_spec.prompt,
+                                                       _ns_regen),
+                                   end_state=_map_markers(
+                                       _entry.end_state, _ns_regen))
+            prompt = _names_to_tokens(prompt, _ns_regen)
             prompt = _scrub_setting_sentence(prompt, _setting, _strategy)
             # E 案:全修 hint 的逐字契约同样只管无锚路线(硬锚豁免)。
             if _strategy not in _ANCHORED_STRATEGIES:

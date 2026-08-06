@@ -57,6 +57,14 @@ translate — whatever you drop here is lost to the film forever.
    an exchange into one shot silences it (the audio channel follows
    this field, and a shot whose lines live only in the description
    ships MUTE).
+   DIALOGUE VERBATIM & COMPLETE (hard law, gated): every speech the
+   screenplay contains must land COMPLETE and VERBATIM in dialogue
+   fields — never truncate a sentence, never drop the rest of a
+   speech block (a deterministic gate rejects truncations). A long
+   speech block is EITHER carried whole in one shot (size the
+   duration to fit) OR split across CONSECUTIVE shots of the same
+   speaker so the pieces concatenate exactly. Never put narration in
+   a dialogue field — dialogue is only what is spoken aloud.
 9. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
    are written in THE SCREENPLAY'S LANGUAGE (`prompt_language` in the
    task JSON), EXCERPTING the script's own action and performance
