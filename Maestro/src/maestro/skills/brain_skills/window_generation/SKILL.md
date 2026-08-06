@@ -151,9 +151,10 @@ never an embellishment.
   the executor compares the previous shot's end-state cast with this
   shot's opening cast BEFORE anything is generated.
   · Cast matches → your menu is i2v_first (pinned continuation). The
-    pin is enforced at the API level (first_frame) — NEVER waste words
-    declaring it in the prompt (a gate deletes such sentences); write
-    motion only. RE-ANCHOR every token against THIS
+    pin is enforced at the API level (first_frame). At most ONE brief
+    handoff clause is allowed ("continuing from the previous shot's
+    end", a few words); long pin declarations are deleted by a gate.
+    Write motion only. RE-ANCHOR every token against THIS
     shot's slot manifest: slot numbers SHIFT between shots; the token
     that meant one character last shot may mean another now. Never
     reuse the previous shot's numbering from memory.

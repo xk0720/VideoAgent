@@ -26,6 +26,7 @@ the SAME tolerant `_extract_json` the real VLM critics use.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -535,6 +536,16 @@ class OrchestratorAgent:
             frame_range = (fs, fe)
             modality = "motion"
             hint = str(args.get("hint", "")) or "regenerate this span faithfully"
+            # 分段修复裸名剥除(2026-08-06 用户质询"为什么还有小明"):
+            # 段级调用只带锚帧、无引用图,名字对模型是纯噪声甚至幻影源;
+            # 锚帧已携带身份,中文祈使句无主语自然成立 → 引号外确定性剥名。
+            for _n in sorted(getattr(self, "cast_names", ()) or (),
+                             key=len, reverse=True):
+                _parts = re.split(r'(["“][^"“”]*["”])', hint)
+                for _i in range(0, len(_parts), 2):
+                    _parts[_i] = _parts[_i].replace(_n, "")
+                hint = "".join(_parts)
+            hint = re.sub(r"\s{2,}", " ", hint).strip()
             image_edit = None
 
         # Prefer the matching real Defect (carries the right modality/entity);

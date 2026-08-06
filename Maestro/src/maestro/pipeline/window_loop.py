@@ -3501,6 +3501,9 @@ def generate_movie_windowed(
                  f", degraded from {degraded_from}" if degraded_from else "")
 
     set_run_ambience(storyboard.setting, screenplay_text or user_prompt)
+    if orchestrator is not None:
+        # 分段修复剥名闸的数据源(orchestrator 无 storyboard 视野)
+        orchestrator.cast_names = set(storyboard.cast or ())
 
     # ── §C+§D 大循环:逐镜窗口生成 + 小循环评审修复 ─────────────────────────
     # G-1(2026-07-17):用户源视频备成 t2v reference_videos 可用形态

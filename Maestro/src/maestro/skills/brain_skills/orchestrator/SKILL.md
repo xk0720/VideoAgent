@@ -78,3 +78,9 @@ demand "silence" on a dialogue shot — the line must stay audible; and
 ambient sound the script stages (waves, wind) is content, not a
 defect. Never write internal jargon like "Condition N" into a hint —
 hints are self-contained visual language.
+
+## Segment-repair hints
+A segment repair carries only the anchor frame — no reference images.
+Write hints NAME-FREE: the anchor frame already carries identity;
+describe the action and camera only (subjectless imperative phrasing
+is natural). A deterministic gate strips cast names anyway.
