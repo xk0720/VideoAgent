@@ -609,9 +609,12 @@ def _name_slot_map(slots) -> dict:
             if r.get("name") and r.get("referenceable")}
 
 
+# 锚定边界(2026-08-06 rainnight:游走匹配吃出"轮回应声/属摩擦声"
+# 前缀垃圾)——声名必须从标点/行首边界起,整词捕获。
 _SOUND_WORD_RE = re.compile(
-    r"[一-鿿]{1,3}声|鸟鸣|蝉鸣|轰鸣|回音|海浪拍|"
-    r"waves?\s+(?:roar|crash)|wind\s+how|footsteps")
+    r"(?:^|[,\uff0c\u3001。;\uff1b:\uff1a!\uff01?\uff1f\s\u3000])"
+    r"([一-鿿]{1,7}声|鸟鸣|蝉鸣|轰鸣|回音|海浪拍|"
+    r"waves?\s+(?:roar|crash)|wind\s+how|footsteps)")
 # "X声"泛匹配的言说姿态/否定词黑名单(低声说≠环境声);按【后缀】判
 # ——泛匹配可能带前缀字("他低声"),endswith 才拦得住。
 _SOUND_BLACKLIST = ("无声", "有声", "出声", "失声", "低声", "轻声", "大声",
@@ -1594,6 +1597,33 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         _shots_ok = False
                         continue
                     _patch_dialogue_coverage(user_prompt, data["shots"])
+                # cast 键语言闸(2026-08-06 rainnight 事故:zh 项目派生
+                # 角色被起成 "the mob boss"——实体名恒用用户语言;钦定
+                # 角色名(cast_canon 键)原样豁免)。
+                if prompt_language == "zh" \
+                        and isinstance(data.get("cast"), dict):
+                    _bad_keys = [k for k in data["cast"]
+                                 if not re.search(r"[一-鿿]", str(k))
+                                 and k not in (cast_canon or {})]
+                    if _bad_keys:
+                        log.warning("scene_write: cast keys NOT in the "
+                                    "script's language on a zh project: "
+                                    "%s — %s", _bad_keys,
+                                    "corrective retry" if _attempt == 0
+                                    else "keeping with a loud warning")
+                        if _attempt == 0:
+                            prompt += (
+                                "\n\nYOUR PREVIOUS REPLY VIOLATED THE "
+                                "SCRIPT LANGUAGE LAW for entity names: "
+                                f"cast keys {_bad_keys} must be named in "
+                                "the SCRIPT's language (e.g. 男人/黑帮老大"
+                                "/女子), never English descriptions. "
+                                "Rewrite the SAME storyboard with "
+                                "script-language cast keys, updating the "
+                                "<name> markers to match.")
+                            data = None
+                            _shots_ok = False
+                            continue
                 break
             if _attempt == 0:
                 log.warning("scene_write: LLM reply unusable (raw %d "
@@ -3545,7 +3575,9 @@ def generate_movie_windowed(
                  entry.label, plan_final, d["via"], len(images),
                  f", degraded from {degraded_from}" if degraded_from else "")
 
-    set_run_ambience(storyboard.setting, screenplay_text or user_prompt)
+    # run 级环境声只认 setting(2026-08-06 rainnight 事故:扫全剧本把
+    # 第 4 镜的枪声塞进第 1 镜压制句);镜级声音由各镜 description 自带。
+    set_run_ambience(storyboard.setting)
     if orchestrator is not None:
         # 分段修复剥名闸的数据源(orchestrator 无 storyboard 视野)
         orchestrator.cast_names = set(storyboard.cast or ())

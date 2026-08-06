@@ -141,3 +141,13 @@ def test_given_character_absent_from_screenplay_is_skipped():
 def test_sound_blacklist_rejects_speech_manner():
     for t in ("他低声说", "她轻声回应", "全场无声", "厉声喝道"):
         assert wl._scripted_sounds(t) == []
+
+
+def test_sound_words_are_whole_names_per_shot():
+    """2026-08-06 rainnight 回归:锚定边界整名捕获,拒前缀垃圾;
+    "轮回应声"这类跨词误切必须消失。"""
+    t = ("近景特写。旁白:还是命运的轮回应声开启？"
+         "音效:冰冷金属摩擦声、玻璃碎裂声")
+    words = wl._scripted_sounds(t)
+    assert "冰冷金属摩擦声" in words and "玻璃碎裂声" in words
+    assert all("轮回" not in w for w in words)
