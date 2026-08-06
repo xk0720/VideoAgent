@@ -613,7 +613,7 @@ def _name_slot_map(slots) -> dict:
 # 前缀垃圾)——声名必须从标点/行首边界起,整词捕获。
 _SOUND_WORD_RE = re.compile(
     r"(?:^|[,\uff0c\u3001。;\uff1b:\uff1a!\uff01?\uff1f\s\u3000])"
-    r"([一-鿿]{1,7}声|鸟鸣|蝉鸣|轰鸣|回音|海浪拍|"
+    r"([一-鿿]{1,7}声|[一-鿿]{0,4}回音|鸟鸣|蝉鸣|[一-鿿]{0,4}轰鸣|海浪拍|"
     r"waves?\s+(?:roar|crash)|wind\s+how|footsteps)")
 # "X声"泛匹配的言说姿态/否定词黑名单(低声说≠环境声);按【后缀】判
 # ——泛匹配可能带前缀字("他低声"),endswith 才拦得住。
