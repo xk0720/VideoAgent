@@ -697,6 +697,8 @@ def _repair_router_fallback(
     asset_memory,
     fps: int,
     retrieval: Optional[RetrievalTool],
+    regen_fn=None,        # 2026-08-06 rainnight run4:兜底也走窗口闭包,
+                          # legacy 裸 t2v(无 refs+裸名+| fix:)仅为末路
 ) -> Optional[CandidateClip]:
     """Execute ONE deterministic RepairRouter action — the SAFETY-NET when the
     brain's reply is unusable, so the orchestrated loop never stalls. Mirrors the
@@ -739,10 +741,26 @@ def _repair_router_fallback(
         if cand is None:
             return None
     else:  # regenerate_hint (or any unreachable action) — the guaranteed degrade
-        cand = generator.run(
-            spec, cache_dir, revision=r, seed=500 + r,
-            extra_prompt=action.hint or _tier1_hint(best), fps=fps,
-        )
+        cand = None
+        if regen_fn is not None:
+            # 窗口纪律版兜底:同策略/同条件/同闸门重生成(2026-08-06
+            # rainnight run4 事故:legacy 裸 t2v 把"Shot 3:"前缀+裸名+
+            # "| fix:"脚手架直发 API,还丢了全部引用图)。失败绝不上抛
+            # —— 这条道的契约是"保证给出候选",末路才是 legacy。
+            try:
+                _vp, _rc = regen_fn(seed=500 + r,
+                                    hint=str(action.hint
+                                             or _tier1_hint(best)))
+                cand = CandidateClip(shot_idx=spec.shot_idx,
+                                     video_path=Path(_vp), revision=r)
+            except Exception as exc:
+                log.warning("disciplined fallback regen failed (%s) — "
+                            "legacy generator as last resort", exc)
+        if cand is None:
+            cand = generator.run(
+                spec, cache_dir, revision=r, seed=500 + r,
+                extra_prompt=action.hint or _tier1_hint(best), fps=fps,
+            )
 
     board.review(cand, spec, asset_memory, fps)
     return cand
@@ -1017,6 +1035,7 @@ def generate_shot_orchestrated(
                     best=best, spec=spec, cache_dir=cache_dir, r=turn,
                     generator=generator, board=board, asset_memory=asset_memory,
                     fps=fps, retrieval=retrieval,
+                    regen_fn=regen_fn
                 )
                 gen_calls += 1
                 _worst = defect_report.worst()
@@ -1071,6 +1090,7 @@ def generate_shot_orchestrated(
                 best=best, spec=spec, cache_dir=cache_dir, r=turn,
                 generator=generator, board=board, asset_memory=asset_memory,
                 fps=fps, retrieval=retrieval,
+                    regen_fn=regen_fn
             )
             gen_calls += 1
             via = "repair_router_fallback"
