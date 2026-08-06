@@ -22,8 +22,11 @@ from maestro.tools.video_concat import VideoConcatTool
 
 RUN4 = Path("/Users/kevin/Desktop/Kevin/repositories/VideoAgent/Maestro/outputs/movie_20260806_010939")
 BG_PLATE = RUN4 / "anchors" / "bg_bg_1.png"
+# 女子肖像在跨 run 角色库(run3 生成入库,run4 台账映射即此路径)
 PORTRAITS = {"黑帮老大": RUN4 / "portraits" / "黑帮老大.png",
-             "女子": RUN4 / "portraits" / "女子.png"}
+             "女子": Path("/Users/kevin/Desktop/Kevin/repositories/"
+                          "VideoAgent/Maestro/data/character_library/"
+                          "女子_1786003400.png")}
 
 # 全部独立 ref2v;refs 首位 = 背景板;prompt 随手粗写,声效写明
 SHOTS = [
