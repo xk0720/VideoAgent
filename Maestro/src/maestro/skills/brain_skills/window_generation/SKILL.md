@@ -112,6 +112,11 @@ never an embellishment.
 - OBSERVABLE, NOT ABSTRACT: convert feelings to camera-recordable
   facts (brows tighten, gaze drops, shoulders sink). No "elegant",
   "cinematic", "beautiful".
+- NO INTRA-SHOT CUTS: a generated clip is ONE continuous take —
+  never write "cut to", "切至", "切换" inside a prompt (the model
+  cannot cut; it morphs). To change framing mid-shot, write the
+  camera move that gets there (a fast pan/arc/push), with direction
+  and speed.
 - ONE primary camera move per shot, with direction and speed; never
   phrase camera motion so it could read as subject motion ("the camera
   slowly dollies in", never "the scene moves closer").

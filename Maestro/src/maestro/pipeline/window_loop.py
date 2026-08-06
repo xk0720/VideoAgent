@@ -3756,7 +3756,7 @@ def generate_movie_windowed(
                 and getattr(prev, "scene_idx", None) == entry.scene_idx \
                 and not _route_transition and brain_prompt \
                 and not re.search(
-                    r"从首帧|精确开始|EXACTLY on the given first frame",
+                    r"从首帧|精确开始|从第一帧开始|EXACTLY on the given first frame",
                     brain_prompt):
             _pin_clause = (
                 "画面从首帧精确开始——首帧即上一镜的最后一帧,开场构图、"

@@ -65,7 +65,11 @@ translate — whatever you drop here is lost to the film forever.
    duration to fit) OR split across CONSECUTIVE shots of the same
    speaker so the pieces concatenate exactly. Never put narration in
    a dialogue field — dialogue is only what is spoken aloud.
-9. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
+9. ONE TAKE PER SHOT: a shot's description is ONE continuous take —
+   never write "切至/cut to" INSIDE a description (cuts happen
+   BETWEEN shots; write a camera move instead, or split into two
+   shots).
+10. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
    are written in THE SCREENPLAY'S LANGUAGE (`prompt_language` in the
    task JSON), EXCERPTING the script's own action and performance
    wording verbatim wherever it exists — translation is loss. Only
