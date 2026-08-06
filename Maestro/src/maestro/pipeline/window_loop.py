@@ -3751,14 +3751,23 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
-        # 钉帧声明废除(2026-08-06 用户令:可灵 first_frame 是 API 级
-        # 硬钉,prompt 声明纯冗余):写手惯性写了 → 确定性删除。
+        # 钉帧承接句机器化(2026-08-06 用户令:不打补丁——brain 从技能层
+        # 就不写声明,机器判定钉帧策略后【直接加】一句短承接;长声明
+        # 删除闸保留为写手惯性的兜底)。
         if d["strategy"] == "i2v_first" and brain_prompt:
             brain_prompt = re.sub(
                 r"[^。]*(?:从首帧|从第一帧|首帧即上一镜|第一帧与上一镜|"
                 r"上一镜的最后一帧|starts? EXACTLY on the given first"
                 r")[^。]*。\s*",
                 "", brain_prompt).strip()
+            if prev is not None and not _route_transition \
+                    and getattr(prev, "scene_idx", None) == entry.scene_idx \
+                    and "承接上一镜" not in brain_prompt \
+                    and "previous shot" not in brain_prompt.lower():
+                brain_prompt = (
+                    "承接上一镜末帧。" if prompt_lang == "zh"
+                    else "Continuing from the previous shot's end. "
+                ) + brain_prompt
         # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
         # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
         # 追加正典 = 稀释钉帧,豁免。

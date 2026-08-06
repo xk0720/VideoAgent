@@ -80,7 +80,8 @@ defect. Never write internal jargon like "Condition N" into a hint —
 hints are self-contained visual language.
 
 ## Segment-repair hints
-A segment repair carries only the anchor frame — no reference images.
-Write hints NAME-FREE: the anchor frame already carries identity;
-describe the action and camera only (subjectless imperative phrasing
-is natural). A deterministic gate strips cast names anyway.
+The shot's ORIGINAL reference images ride along with every segment
+repair, so refer to characters by the SAME <<<image_N>>> tokens the
+shot's original prompt uses (it is in your context — copy its token
+usage exactly). NEVER a bare cast name (a deterministic gate strips
+names); the anchor frame plus the original references carry identity.

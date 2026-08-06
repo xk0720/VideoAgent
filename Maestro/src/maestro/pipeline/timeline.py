@@ -321,6 +321,9 @@ def propagate_repair(
     sim_threshold: float = 0.92,
     max_cascade: int = 4,
     head_anchor=None,        # head 跨度的左锚(该镜条件里的首帧图;可 None)
+    reference_images=None,   # 原镜引用图原样随行(2026-08-06 用户令:段级
+                             # 修复 prompt 用原记号,refer 挂回记号才有所指;
+                             # 可灵 first_frame+refer 混用 M0 已验证)
 ) -> Optional[Path]:
     """Repair the defect's segment, propagate the edit forward until continuity
     reconverges, then splice. Returns the spliced clip path, or None (degrade).
@@ -402,6 +405,7 @@ def propagate_repair(
         repaired = video_gen.generate(
             prompt=hint or "regenerate this span faithfully",
             duration=dur, out_path=out_i, first_frame=left_anchor,
+            reference_images=reference_images or None,
         )
     else:
         # 兼容兜底(无 flf2v 能力 / 锚不同镜):i2v 段修复 + 前向级联(旧路)
@@ -416,6 +420,7 @@ def propagate_repair(
         repaired = video_gen.generate(
             prompt=hint or "regenerate this span faithfully",
             duration=dur, out_path=out_i, first_frame=anchor,
+            reference_images=reference_images or None,
         )
         cascade_needed = True
     if repaired is None:
@@ -441,6 +446,7 @@ def propagate_repair(
             regen = video_gen.generate(
                 prompt=hint or "continue the shot; keep one continuous trajectory",
                 duration=dur_j, out_path=out_j, first_frame=anchor,
+                reference_images=reference_images or None,
             )
             if regen is None:
                 break

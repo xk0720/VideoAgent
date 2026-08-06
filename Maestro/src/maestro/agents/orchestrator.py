@@ -574,9 +574,17 @@ class OrchestratorAgent:
             if im.get("role") in ("first_frame", "first") and im.get("path")                     and Path(im["path"]).exists():
                 head_anchor = im["path"]
                 break
+        # 原镜引用图原样随行(2026-08-06 用户令):hint 里的
+        # <<<image_N>>> 记号按原 refer 顺序有所指。
+        _refs = [im.get("path") for im in
+                 ((getattr(best, "conditioning", None) or {}).get("images")
+                  or [])
+                 if im.get("role") == "reference" and im.get("path")
+                 and Path(im["path"]).exists()]
         spliced = propagate_repair(
             timeline, defect, video_gen=vg, image_edit=image_edit,
             hint=hint, cache_dir=prop_dir, head_anchor=head_anchor,
+            reference_images=_refs or None,
         )
         if spliced is None:
             return None
