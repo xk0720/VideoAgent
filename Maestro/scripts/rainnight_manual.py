@@ -32,9 +32,8 @@ from maestro.pipeline.window_loop import (_extract_frame0, _last_frame,
                                           _probe_seconds)
 from maestro.tools.video_concat import VideoConcatTool
 
-RUN4 = Path("/Users/kevin/Desktop/Kevin/repositories/VideoAgent/Maestro/"
-            "outputs/movie_20260806_010939")
-BG_PLATE = RUN4 / "anchors" / "bg_bg_1.png"
+RUN4 = Path("/Users/kevin/Desktop/Kevin/repositories/VideoAgent/Maestro/outputs/movie_20260806_010135")
+BG_PLATE = RUN4 / "portraits" / "bg_bg_1.png"
 PORTRAITS = {"黑帮老大": RUN4 / "portraits" / "黑帮老大.png",
              "女子": RUN4 / "portraits" / "女子.png"}
 
