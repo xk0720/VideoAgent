@@ -67,7 +67,8 @@ models:
 # 规划
 plan:
   n_shots: 3
-  max_shots: 6
+  max_shots: 12             # 成本硬顶(2026-08-06 xiaoming run3 事故:6 镜
+                            # 天花板把剧本结尾高潮拍整拍砍掉)
   shot_duration: 3.0       # 仅旧阶梯管线用;窗口管线的时长由 brain 逐镜决定
   max_plan_iters: 3
 

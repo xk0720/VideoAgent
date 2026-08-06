@@ -9,5 +9,6 @@ exec python scripts/test_window_movie.py \
   --screenplay /Users/kevin/Desktop/script-xiaoming/script.json \
   --prompt "海边黄昏,小明与海鸥阿浪的对话短片" \
   --prompt-enhancer \
+  --audio \
   --n-candidates 1 \
   --max-turns 3

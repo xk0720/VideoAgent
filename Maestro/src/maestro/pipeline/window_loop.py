@@ -1327,9 +1327,10 @@ def _dialogue_coverage(screenplay_text: str, shots: list) -> dict:
                 remaining = remaining[len(nd):]
         if remaining:
             missing.append(sp)
-    nspans = [_norm(sp) for sp in spans]
-    mangled = [d for d, nd in zip(dials, ndials)
-               if not any(nd in nsp for nsp in nspans)]
+    # mangled v2(2026-08-06 run3 假阳性:剧本源引号不闭合,完美台词
+    # 被冤枉):判据 = 是否为剧本原文(归一化)的子串,与 span 无关。
+    _nsp_all = _norm(screenplay_text)
+    mangled = [d for d, nd in zip(dials, ndials) if nd not in _nsp_all]
     return {"ok": not missing and not mangled,
             "missing": missing, "mangled": mangled}
 
@@ -1521,8 +1522,10 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                             "COMPLETE and VERBATIM in a shot's dialogue "
                             "field (split a long block across consecutive "
                             "shots ONLY if the pieces concatenate exactly; "
-                            "size shot durations to fit). Rewrite the SAME "
-                            "storyboard with complete dialogue.")
+                            "size shot durations to fit). If a speech has "
+                            "NO shot at all, the beat itself is missing — "
+                            "ADD the shot (the ceiling allows it). Rewrite "
+                            "the storyboard with complete dialogue.")
                         data = None
                         _shots_ok = False
                         continue
@@ -3720,7 +3723,9 @@ def generate_movie_windowed(
         # dialogue 字段空 → 音频参数没开,台词无声):出门 prompt 含
         # 言说句 → 照样开原生音频;压制句缺失则补。
         if enable_audio and not want_audio and brain_prompt \
-                and re.search("(?:说道?|says?)\\s*[:\uff1a]?\\s*[\"\u201c]",
+                and re.search("(?:说道?|says?|喊道?|大喊|高喊|怒吼|低语|回应|"
+                              "问道?|轻声问?)[^\"\u201c]{0,6}?"
+                              "[:\uff1a]?\\s*[\"\u201c]",
                               brain_prompt):
             want_audio = True
             log.warning("window: %s prompt carries spoken lines but the "
