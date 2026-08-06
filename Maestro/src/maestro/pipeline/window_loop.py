@@ -1396,7 +1396,10 @@ def _sound_coverage(screenplay_text: str, shots: list) -> list:
             have.update(_scripted_sounds(
                 str(s_.get("description") or ""),
                 str(s_.get("end_state") or "")))
-    return sorted(spl - have)
+    # 包含式覆盖(2026-08-06 run5 假阳性:"突发的巨大枪声"已带"枪声",
+    # 精确相等判缺是冤枉)
+    return sorted(w for w in spl
+                  if not any(w in h or h in w for h in have))
 
 
 def _dial_text(shot_dict) -> str:
