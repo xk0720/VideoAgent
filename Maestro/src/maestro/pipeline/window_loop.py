@@ -3191,6 +3191,10 @@ def generate_movie_windowed(
     user_prompt: str,
     *,
     board,                              # ReviewBoard(§D 复用)
+    crew: Optional[dict] = None,        # ViMax 分工(2026-08-06 用户令):
+                                        # {"screenwriter","scene_writer",
+                                        #  "video_brain"} → 各自独立 LLM
+                                        # 实例;缺项回落 llm 参数
     generator,                          # GeneratorAgent(内层修复循环用)
     refiner,
     verifier,
@@ -3296,12 +3300,19 @@ def generate_movie_windowed(
     # ── §A0 剧本 + §A1 角色提取(M2 新链):idea → 剧本(用户提供则跳过)
     # → 角色正典 → 分镜。剧本/提取失败逐级诚实降级(idea 直通、空正典),
     # 分镜阶段的 cast 输出仍是兜底。──────────────────────────────────────
+    # ViMax 分工(2026-08-06 用户令):剧本扩写 / 分镜 / 视频 brain
+    # (image_plan+window_generation+orchestrator)各持独立 LLM agent;
+    # enhancer / reviewer / verifier 的独立实例在调用方装配。
+    _crew = dict(crew or {})
+    llm_screenwriter = _crew.get("screenwriter") or llm
+    llm_scene_writer = _crew.get("scene_writer") or llm
+    llm_video_brain = _crew.get("video_brain") or llm
     screenwriter = screenwriter or ScreenwriterAgent()
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
     asset_catalog0 = _media_catalog(asset_memory)
     screenplay_text, sp_via = _write_screenplay(
-        llm, user_prompt, screenplay, asset_catalog0)
+        llm_screenwriter, user_prompt, screenplay, asset_catalog0)
     decisions.append({"stage": "screenplay", "via": sp_via,
                       "chars": len(screenplay_text)})
     # prompt 语言随剧本(2026-08-05 用户令);动态全局语言:中文项目
@@ -3351,7 +3362,7 @@ def generate_movie_windowed(
     # ── §A playwriting:剧本 → outline → specs → 台账 ────────────────────
     outline, shot_durations, shot_end_states, script_meta, outline_via = \
         _write_outline(
-        llm, screenplay_text, asset_catalog0,
+        llm_scene_writer, screenplay_text, asset_catalog0,
         episode_guidance=guidance,
         max_shots=int(plan_cfg.get("max_shots", 6)),
         # 兜底拆条必须拆【剧本】而不是原始 idea(2026-08-04 实跑事故:
@@ -3489,7 +3500,7 @@ def generate_movie_windowed(
     for entry, spec in zip(storyboard.entries, specs):
         menu = _image_plan_menu(video_gen, asset_memory)
         d = _decide(
-            llm, "image-plan", menu,
+            llm_video_brain, "image-plan", menu,
             {"shot": entry.to_brain_line(),
              # 2026-08-06 xiaoming run2 事故:少这行 → zh 项目 image-plan
              # 的 reason 走英文分支(裁决:reasons 也要中文)。
@@ -3682,7 +3693,7 @@ def generate_movie_windowed(
                 _junction_mapped[_k] = _map_markers(_junction_mapped[_k],
                                                     _ns_best)
         d = _decide(
-            llm, "generation-condition", menu,
+            llm_video_brain, "generation-condition", menu,
             {"shot": entry.to_brain_line(),
              "prompt_language": prompt_lang,
              "prev_shot": prev.to_brain_line() if prev else None,

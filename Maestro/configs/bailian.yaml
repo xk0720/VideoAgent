@@ -56,6 +56,17 @@ models:
       poll_interval: 2.0
       timeout: 600
 
+  # ViMax 分工(2026-08-06 用户令):六个 agent 独立实例。缺省时
+  # LLM 角色沿用 models.llm、VLM 角色沿用 models.mllm 的【配置】另建
+  # 实例(绝不共享对象);想逐 agent 换型号,解注对应条目即可。
+  # crew:
+  #   screenwriter:    {name: "openai", model: "gpt-5.6-sol"}   # 剧本扩写 LLM
+  #   scene_writer:    {name: "openai", model: "gpt-5.6-sol"}   # 分镜 LLM
+  #   video_brain:     {name: "openai", model: "gpt-5.6-sol"}   # 视频 brain LLM
+  #   prompt_enhancer: {name: "openai", model: "gpt-5.6-sol"}   # 润色 LLM
+  #   reviewer:        {name: "gemini", model: "gemini-3.5-flash"} # 评审 VLM
+  #   verifier:        {name: "gemini", model: "gemini-3.5-flash"} # 验收 VLM
+
   # 以下先全部 mock —— 先把主链路跑通，之后再按需开启。
   track_extractor:
     name: "mock-track"      # 物理验证关闭：p2 中性（诚实标"未测量"，不伪造）

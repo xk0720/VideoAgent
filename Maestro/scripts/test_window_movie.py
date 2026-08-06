@@ -169,6 +169,23 @@ def main() -> int:
 
     llm = build_llm(models_cfg.get("llm"))
     mllm = build_mllm(models_cfg.get("mllm"))
+    # ViMax 分工(2026-08-06 用户令):六个 agent 各持【独立实例】,
+    # 绝不共享对象;models.crew.<role> 可逐 agent 换不同型号,缺省
+    # 沿用对应默认配置(LLM 角色 ← models.llm;VLM 角色 ← models.mllm)。
+    _crew_cfg = dict(models_cfg.get("crew") or {})
+
+    def _agent_llm(role: str):
+        return build_llm(_crew_cfg.get(role) or models_cfg.get("llm"))
+
+    def _agent_mllm(role: str):
+        return build_mllm(_crew_cfg.get(role) or models_cfg.get("mllm"))
+
+    llm_screenwriter = _agent_llm("screenwriter")     # 剧本扩写 LLM agent
+    llm_scene_writer = _agent_llm("scene_writer")     # 分镜 LLM agent
+    llm_video_brain = _agent_llm("video_brain")       # 视频 brain LLM agent
+    llm_enhancer = _agent_llm("prompt_enhancer")      # 润色 LLM agent
+    mllm_reviewer = _agent_mllm("reviewer")           # 评审 VLM agent
+    mllm_verifier = _agent_mllm("verifier")           # 验收 VLM agent
     # 任务 0:每次 WaveSpeed 调用(模型名+参数)落盘可核对
     vg_cfg = dict(models_cfg.get("video_gen") or {})
     vg_cfg.setdefault("call_log", str(run_dir / "wavespeed_calls.jsonl"))
@@ -178,9 +195,15 @@ def main() -> int:
     from maestro.memory.character_library import CharacterLibrary
     set_brain_log(run_dir / "brain_calls.jsonl")
     print(f"配置: {args.config}")
-    print(f"  brain LLM = {getattr(llm, 'model', '?')}  |  评审 VLM = "
-          f"{getattr(mllm, 'model', '?')}  |  视频 = "
-          f"{getattr(video_gen, 'model_id', '?')}")
+    print("  agent 编成(ViMax 分工,独立实例):")
+    print(f"    剧本扩写 LLM  = {getattr(llm_screenwriter, 'model', '?')}")
+    print(f"    分镜     LLM  = {getattr(llm_scene_writer, 'model', '?')}")
+    print(f"    视频brain LLM = {getattr(llm_video_brain, 'model', '?')}"
+          "  (image_plan+window_generation+orchestrator)")
+    print(f"    润色     LLM  = {getattr(llm_enhancer, 'model', '?')}")
+    print(f"    评审     VLM  = {getattr(mllm_reviewer, 'model', '?')}")
+    print(f"    验收     VLM  = {getattr(mllm_verifier, 'model', '?')}")
+    print(f"    视频生成      = {getattr(video_gen, 'model_id', '?')}")
     print(f"  调用日志: {vg_cfg['call_log']}")
     print(f"  brain 决策日志: {run_dir / 'brain_calls.jsonl'}")
 
@@ -255,7 +278,8 @@ def main() -> int:
         print(f"  素材库: {asset_memory.summarize()}"
               + (f";VLM 补标 {n_cap} 条" if n_cap else ""))
 
-    critics = [SemanticCritic(mllm=mllm), PhysicsCritic(mllm=mllm)]
+    critics = [SemanticCritic(mllm=mllm_reviewer),
+               PhysicsCritic(mllm=mllm_reviewer)]
     if args.with_physics_measure:
         from maestro.critics.physics_consistency import PhysicsConsistencyCritic
         from maestro.physics.tracks import build_track_extractor
@@ -265,7 +289,7 @@ def main() -> int:
 
     generator = GeneratorAgent(video_gen=video_gen)
     orchestrator = OrchestratorAgent(
-        llm=llm, generator=generator, refiner=RefinerAgent(),
+        llm=llm_video_brain, generator=generator, refiner=RefinerAgent(),
         image_edit=build_image_edit({"name": "wavespeed"}),  # 真实 keyframe 编辑(seedream-v4)
         skill_library=SkillLibrary(run_dir / "skills.jsonl"),
         retrieval=retrieval,   # 修复工具 retrieve_replace 的素材入口
@@ -278,14 +302,17 @@ def main() -> int:
     prompt_enhancer = None
     if args.prompt_enhancer:
         from maestro.agents.prompt_enhancer import PromptEnhancerAgent
-        prompt_enhancer = PromptEnhancerAgent(llm=llm)
+        prompt_enhancer = PromptEnhancerAgent(llm=llm_enhancer)
     res = generate_movie_windowed(
         args.prompt,
+        crew={"screenwriter": llm_screenwriter,
+              "scene_writer": llm_scene_writer,
+              "video_brain": llm_video_brain},
         board=ReviewBoard(critics=critics, metric_tool=MetricTool()),
-        generator=generator, refiner=RefinerAgent(), verifier=VerifierAgent(judge=mllm),
+        generator=generator, refiner=RefinerAgent(), verifier=VerifierAgent(judge=mllm_verifier),
         orchestrator=orchestrator, cache_dir=run_dir,
         asset_memory=asset_memory, retrieval=retrieval,
-        screenwriter=ScreenwriterAgent(llm=llm,
+        screenwriter=ScreenwriterAgent(llm=llm_screenwriter,
                                        config=cfg.get("plan") or {}),
         director=DirectorAgent(llm=llm),
         tournament=Tournament(judge=mllm),
