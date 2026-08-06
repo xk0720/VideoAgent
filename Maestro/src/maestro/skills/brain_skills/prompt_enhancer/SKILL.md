@@ -23,9 +23,8 @@ Duty 1 is FORBIDDEN in its entirety: write NO continuity with the
 previous shot — no carry-over, no entry alignment, no velocity
 handoff, no finishing gestures. The seam belongs to an automatic
 camera-move bridge clip. Polish composition, motion and camera only.
-Additionally, on a pinned shot keep the draft's pin declaration
-(the "starts EXACTLY on the first frame" opening sentence) intact —
-never polish it away.
+On API-pinned routes the first frame is enforced at the API level —
+pin-declaration sentences are noise; drop them if the draft has one.
 
 `opening_state_actual` is the previous shot's EXIT VECTOR — structured
 JSON a vision model wrote from the ACTUAL final seconds:

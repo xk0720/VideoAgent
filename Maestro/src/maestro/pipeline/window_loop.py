@@ -3748,24 +3748,14 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
-        # 钉帧声明闸(2026-08-05 用户令):i2v_first 续拍镜的 prompt 必须
-        # 显式声明"画面从首帧(=上一镜末帧)精确开始";写手漏写 →
-        # 确定性前插。转场镜(ref2v 全新构图)绝不添加;跨场景的
-        # i2v_first 钉的是本镜关键帧而非上镜末帧,声明会撒谎 → 同样不加。
-        if d["strategy"] == "i2v_first" and prev is not None \
-                and getattr(prev, "scene_idx", None) == entry.scene_idx \
-                and not _route_transition and brain_prompt \
-                and not re.search(
-                    r"从首帧|精确开始|从第一帧开始|EXACTLY on the given first frame",
-                    brain_prompt):
-            _pin_clause = (
-                "画面从首帧精确开始——首帧即上一镜的最后一帧,开场构图、"
-                "人物与光线与其完全一致,不重新构图。"
-                if prompt_lang == "zh" else
-                "The video starts EXACTLY on the given first frame — the "
-                "last frame of the previous shot; keep its composition, "
-                "people and lighting before any new motion. ")
-            brain_prompt = _pin_clause + brain_prompt
+        # 钉帧声明废除(2026-08-06 用户令:可灵 first_frame 是 API 级
+        # 硬钉,prompt 声明纯冗余):写手惯性写了 → 确定性删除。
+        if d["strategy"] == "i2v_first" and brain_prompt:
+            brain_prompt = re.sub(
+                r"[^。]*(?:从首帧|从第一帧|首帧即上一镜|第一帧与上一镜|"
+                r"上一镜的最后一帧|starts? EXACTLY on the given first"
+                r")[^。]*。\s*",
+                "", brain_prompt).strip()
         # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
         # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
         # 追加正典 = 稀释钉帧,豁免。

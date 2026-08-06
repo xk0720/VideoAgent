@@ -150,11 +150,10 @@ never an embellishment.
 - PIN vs TRANSITION (routed for you, IN ADVANCE, from the storyboard):
   the executor compares the previous shot's end-state cast with this
   shot's opening cast BEFORE anything is generated.
-  · Cast matches → your menu is i2v_first (pinned continuation). Your
-    prompt's FIRST sentence MUST declare the pin — "the video starts
-    EXACTLY on the first frame, which is the last frame of the
-    previous shot" — written in the prompt language (a deterministic
-    gate prepends it if you forget) — then motion only. RE-ANCHOR every token against THIS
+  · Cast matches → your menu is i2v_first (pinned continuation). The
+    pin is enforced at the API level (first_frame) — NEVER waste words
+    declaring it in the prompt (a gate deletes such sentences); write
+    motion only. RE-ANCHOR every token against THIS
     shot's slot manifest: slot numbers SHIFT between shots; the token
     that meant one character last shot may mean another now. Never
     reuse the previous shot's numbering from memory.
@@ -177,9 +176,8 @@ one call):
 - `i2v_first` — the previous shot's final frame (or this shot's
   keyframe on a cut) opens the shot EXACTLY at the API level, with
   portraits and the background plate riding as references. THE route
-  for in-scene continuation. The prompt opens with the pin
-  declaration ("starts EXACTLY on the first frame = the previous
-  shot's last frame", in the prompt language), then is MOTION ONLY: zero appearance restatement, zero scene
+  for in-scene continuation. The pin is API-level — no textual
+  declaration (a gate deletes it); the prompt is MOTION ONLY: zero appearance restatement, zero scene
   re-establishment — what moves, how the camera continues, one short
   preserve clause; entities by token, re-anchored to THIS shot's
   manifest.
