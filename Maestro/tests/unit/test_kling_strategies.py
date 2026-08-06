@@ -124,7 +124,10 @@ def test_i2v_first_hard_pin_and_dedup(tmp_path, monkeypatch):
         portraits={"the cat": str(port)})
     call = gen.calls[-1]
     assert str(call["first_frame"]) == str(last)      # 硬钉上镜末帧
-    assert [str(p) for p in call["reference_images"]] == [str(port)]
+    # 2026-08-06 用户令:首帧本体同图追加为末位 refer(承接句用记号
+    # 指它,裸词"首帧"模型无从对应)
+    assert [str(p) for p in call["reference_images"]] == [str(port),
+                                                          str(last)]
     assert cond["anchoring"] == "hard_first_frame"
     assert dropped, "首帧=上镜末帧 → 接缝重复帧必须切"
     # 无上镜 → 退用自有关键帧,不切

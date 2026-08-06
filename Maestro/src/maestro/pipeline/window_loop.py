@@ -2239,6 +2239,17 @@ def _slot_manifest(strategy: str, entry, prev,
                   "referenceable": True, "name": n,
                   "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
+        # 首帧本体引用(2026-08-06 用户令:承接句必须用引用,不用裸词
+        # ——首帧同图再挂一路 refer,末位编号,承接句指着它说;该行
+        # 的提及由执行器机器句负责,写手绝不自行提及)。
+        if prev_ok:
+            rows.append({
+                "slot": _ref_tok(video_gen,
+                                 len(own) + len(portraits or {}) + 1),
+                "referenceable": True, "source": "pin_frame",
+                "content": ("the first frame itself (executor owns its "
+                            "mention — never reference this slot "
+                            "yourself)")})
         return rows
     if strategy == "flf2v_own_pair" and pf is not None and pl is not None:
         rows = [{"slot": "FIRST_FRAME", "referenceable": False,
@@ -2537,6 +2548,9 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
             p_names = sorted(portraits or {})
             p_paths = [Path(portraits[n]) for n in p_names]
             all_refs = list(refs) + p_paths
+            # 首帧本体 refer(与 _slot_manifest 的 pin_frame 行 1:1)
+            if hard_prev:
+                all_refs = all_refs + [Path(first)]
             cond.update(first_anchor=str(first),
                         reference_images=([str(p) for p in all_refs]
                                           or None),
@@ -3760,15 +3774,18 @@ def generate_movie_windowed(
                 r"首帧即上一镜|第一帧与上一镜|上一镜的最后一帧|"
                 r"starts? EXACTLY on the given first)[^。]*。\s*",
                 "", brain_prompt).strip()
-            # 承接句必须指向模型看得到的输入(2026-08-06 用户纠正:
-            # "上一镜"是制片行话,模型只认本请求里的 first_frame)——
-            # 引用"首帧"本体,一句话,机器加。
+            # 承接句用【引用】说话(2026-08-06 用户令:裸词"首帧"模型
+            # 无从对应——首帧本体已挂为末位 refer,机器句指着记号说)。
+            _pin_row = next((r_ for r_ in (slots or [])
+                             if r_.get("source") == "pin_frame"), None)
             if prev is not None and not _route_transition \
-                    and getattr(prev, "scene_idx", None) == entry.scene_idx:
+                    and getattr(prev, "scene_idx", None) == entry.scene_idx \
+                    and _pin_row and _pin_row["slot"] not in brain_prompt:
+                _tok = _pin_row["slot"]
                 brain_prompt = (
-                    "画面从首帧继续。" if prompt_lang == "zh"
-                    else "The video continues from the given first frame. "
-                ) + brain_prompt
+                    f"画面从{_tok}所示的首帧继续。" if prompt_lang == "zh"
+                    else f"The video continues from the first frame shown "
+                         f"in {_tok}. ") + brain_prompt
         # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
         # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
         # 追加正典 = 稀释钉帧,豁免。

@@ -79,7 +79,9 @@ Using the slot manifest as the single source of truth:
    figure with no slot gets a short VISUAL HANDLE from the exit
    vector's pose/clothing ("the woman in the gold gown at left");
    names inside quoted lines are the script's spoken text and stay;
-5. every referenceable slot is mentioned exactly once — a portrait
+5. a slot whose content says "executor owns its mention" is LEFT
+   ALONE — never add or remove it (the executor's own clause covers
+   it); every OTHER referenceable slot is mentioned exactly once — a portrait
    slot as its token in an action clause; the background slot opening
    its beat; a non-character asset slot may keep its content words.
    Copy slot IDs VERBATIM (the gate rejects unknown IDs); rows with

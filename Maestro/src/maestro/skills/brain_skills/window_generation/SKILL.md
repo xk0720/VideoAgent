@@ -177,9 +177,10 @@ one call):
 - `i2v_first` — the previous shot's final frame (or this shot's
   keyframe on a cut) opens the shot EXACTLY at the API level, with
   portraits and the background plate riding as references. THE route
-  for in-scene continuation. The pin is API-level and the executor
-  prepends the standard short handoff clause — write no handoff
-  wording of your own; the prompt is MOTION ONLY: zero appearance restatement, zero scene
+  for in-scene continuation. The pin is API-level; the executor
+  prepends the handoff clause referencing the manifest's pin-frame
+  slot — write no handoff wording of your own and leave that slot
+  alone; the prompt is MOTION ONLY: zero appearance restatement, zero scene
   re-establishment — what moves, how the camera continues, one short
   preserve clause; entities by token, re-anchored to THIS shot's
   manifest.
