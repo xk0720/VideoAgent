@@ -1301,6 +1301,16 @@ def _prompt_lang(text: str) -> str:
 
 
 
+def _dial_text(shot_dict) -> str:
+    """dialogue 字段两种形态通吃:{speaker, line} 字典(scene_write 原始
+    输出)或纯字符串(台账扁平化)。2026-08-06 run4 事故:判据把字典当
+    字符串读,7 条完美台词全被冤枉成 mangled。"""
+    d = (shot_dict or {}).get("dialogue")
+    if isinstance(d, dict):
+        d = d.get("line")
+    return str(d or "").strip()
+
+
 def _dialogue_coverage(screenplay_text: str, shots: list) -> dict:
     """台词完整性判据(2026-08-06 xiaoming run2 事故:scene_write 把
     台词截半 —— "大海真大啊,大到能吞掉我所有的失败。"只剩前半句)。
@@ -1312,7 +1322,7 @@ def _dialogue_coverage(screenplay_text: str, shots: list) -> dict:
     spans = [x for x in re.findall(r'[“"]([^“”"]{2,})[”"]',
                                    screenplay_text or "")
              if len(x) >= 6 or re.search(r"[。!！?？,，;；…]", x)]
-    dials = [str((s_ or {}).get("dialogue") or "").strip()
+    dials = [_dial_text(s_)
              for s_ in shots if isinstance(s_, dict)]
     dials = [d for d in dials if d]
     ndials = [_norm(d) for d in dials]
@@ -1346,7 +1356,7 @@ def _patch_dialogue_coverage(screenplay_text: str, shots: list) -> list:
     for s_ in shots:
         if not isinstance(s_, dict):
             continue
-        d = str(s_.get("dialogue") or "").strip()
+        d = _dial_text(s_)
         core = d.rstrip("。!！?？…,，;；\"”“")
         if not core:
             continue
@@ -1363,7 +1373,10 @@ def _patch_dialogue_coverage(screenplay_text: str, shots: list) -> list:
             continue                     # 找不到句尾/异常长 → 不硬补
         full = sp[i:k + 1]
         if full != d:
-            s_["dialogue"] = full
+            if isinstance(s_.get("dialogue"), dict):
+                s_["dialogue"]["line"] = full
+            else:
+                s_["dialogue"] = full
             patched.append({"was": d, "now": full})
             log.warning("dialogue TRUNCATION patched: %r → %r",
                         d[:30], full[:60])

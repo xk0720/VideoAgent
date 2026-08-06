@@ -111,3 +111,17 @@ def test_regen_anchor_language_follows_project():
         assert "本镜剧本动作" in out
     finally:
         set_output_lang("en")
+
+
+def test_dialogue_coverage_accepts_dict_shape():
+    """2026-08-06 run4 事故回归:scene_write 的 dialogue 是 {speaker,line}
+    字典,判据必须读 line,不得把字典串当台词。"""
+    sp = '小明说："大海真大啊，大到能吞掉我所有的失败。"完。'
+    shots = [{"dialogue": {"speaker": "小明",
+                           "line": "大海真大啊，大到能吞掉我所有的失败。"}}]
+    assert wl._dialogue_coverage(sp, shots)["ok"]
+    bad = [{"dialogue": {"speaker": "小明", "line": "大海真大啊。"}}]
+    cov = wl._dialogue_coverage(sp, bad)
+    assert not cov["ok"]
+    wl._patch_dialogue_coverage(sp, bad)
+    assert bad[0]["dialogue"]["line"] == "大海真大啊，大到能吞掉我所有的失败。"
