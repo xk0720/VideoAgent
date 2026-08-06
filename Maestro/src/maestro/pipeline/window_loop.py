@@ -610,8 +610,18 @@ def _name_slot_map(slots) -> dict:
 
 
 _SOUND_WORD_RE = re.compile(
-    r"浪声|涛声|风声|雨声|雷声|鸟鸣|蝉鸣|钟声|鼓声|脚步声|掌声|欢呼声|"
-    r"叫声|轰鸣|海浪拍|waves?\s+(?:roar|crash)|wind\s+how|footsteps")
+    r"[一-鿿]{1,3}声|鸟鸣|蝉鸣|轰鸣|回音|海浪拍|"
+    r"waves?\s+(?:roar|crash)|wind\s+how|footsteps")
+# "X声"泛匹配的言说姿态/否定词黑名单(低声说≠环境声);按【后缀】判
+# ——泛匹配可能带前缀字("他低声"),endswith 才拦得住。
+_SOUND_BLACKLIST = ("无声", "有声", "出声", "失声", "低声", "轻声", "大声",
+                    "高声", "连声", "齐声", "柔声", "厉声", "沉声", "朗声",
+                    "同声")
+
+
+def _sound_ok(m: str) -> bool:
+    return bool(m) and m != "声" and not any(
+        m.endswith(b) for b in _SOUND_BLACKLIST)
 
 
 _RUN_AMBIENCE: list = []
@@ -625,7 +635,7 @@ def set_run_ambience(*texts) -> None:
     _RUN_AMBIENCE = []
     for t in texts:
         for m in _SOUND_WORD_RE.findall(str(t or "")):
-            if m and m not in _RUN_AMBIENCE:
+            if _sound_ok(m) and m not in _RUN_AMBIENCE:
                 _RUN_AMBIENCE.append(m)
 
 
@@ -636,7 +646,7 @@ def _scripted_sounds(*texts) -> list:
     out = list(_RUN_AMBIENCE)
     for t in texts:
         for m in _SOUND_WORD_RE.findall(str(t or "")):
-            if m and m not in out:
+            if _sound_ok(m) and m not in out:
                 out.append(m)
     return out
 
@@ -3329,6 +3339,16 @@ def generate_movie_windowed(
     # 图为法源;VLM 缺/失败 → 空描述照样入链(名字纪律不受影响),留痕。
     given_caps: dict = {}
     for _gn, _gp in (given_characters or {}).items():
+        # 钦定角色在场闸(2026-08-06 rainnight 事故:role 字典是别的
+        # 剧组的复制残留——名字在剧本里根本不出现,绑定进去会把无关
+        # 角色塞进片子)。不在场 → 响亮告警 + 跳过,cast 由剧本自证。
+        if _gn not in str(screenplay_text or user_prompt or ""):
+            log.warning("given character %r appears NOWHERE in the "
+                        "screenplay — binding SKIPPED (stale role dict "
+                        "from another project?)", _gn)
+            decisions.append({"stage": "given_character_skipped",
+                              "name": _gn, "image": str(_gp)})
+            continue
         cap = ""
         if _gp and Path(_gp).exists() and mllm is not None:
             # 正典打标优先走 caption_identity(2026-08-04 run7 事故:通用
@@ -3843,6 +3863,25 @@ def generate_movie_windowed(
                         if _snd_i else
                         " Audio: only the characters' voices — no "
                         "background music, no sound effects.")
+        # 剧本音效镜(2026-08-06 rainnight 治本:纯音效短片无一句对白,
+        # 旧规则 want_audio 只认 dialogue → 全片哑掉,剧本明写的雨声/
+        # 枪声全丢):无对白但剧本载明声音 → 照样开原生音频,压制句用
+        # 环境声版(无背景音乐、无人声旁白)。
+        if enable_audio and not want_audio and brain_prompt:
+            _snd_shot = _scripted_sounds(entry.description, entry.end_state)
+            if _snd_shot:
+                want_audio = True
+                log.info("window: %s no dialogue but scripted sounds %s — "
+                         "native audio ON (sfx shot)", entry.label,
+                         _snd_shot)
+                if "无背景音乐" not in brain_prompt                         and "no background music" not in brain_prompt:
+                    brain_prompt += (
+                        f"音频:只有剧本写明的环境声"
+                        f"({'、'.join(_snd_shot)})——无背景音乐、无人声。"
+                        if re.search(r"[一-鿿]", brain_prompt) else
+                        " Audio: only the scripted ambient sound "
+                        f"({', '.join(_snd_shot)}) — no background music, "
+                        "no voices.")
 
         # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
         # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错

@@ -125,3 +125,19 @@ def test_dialogue_coverage_accepts_dict_shape():
     assert not cov["ok"]
     wl._patch_dialogue_coverage(sp, bad)
     assert bad[0]["dialogue"]["line"] == "大海真大啊，大到能吞掉我所有的失败。"
+
+
+# ── 2026-08-06 rainnight 治本回归 ─────────────────────────────────────
+
+def test_given_character_absent_from_screenplay_is_skipped():
+    """role 字典复制残留:名字不在剧本 → 跳过绑定(闸在 generate 主链,
+    这里锁声词判据与黑名单,主链行为由集成测试覆盖)。"""
+    words = wl._scripted_sounds("雨滴敲击车窗声,枪声响起,他低声说话")
+    assert "枪声" in words
+    assert all(not w.endswith("低声") for w in words)   # 言说姿态≠环境声
+    assert any(w.endswith("声") for w in words)
+
+
+def test_sound_blacklist_rejects_speech_manner():
+    for t in ("他低声说", "她轻声回应", "全场无声", "厉声喝道"):
+        assert wl._scripted_sounds(t) == []
