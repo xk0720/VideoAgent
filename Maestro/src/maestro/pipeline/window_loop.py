@@ -3756,17 +3756,18 @@ def generate_movie_windowed(
         # 删除闸保留为写手惯性的兜底)。
         if d["strategy"] == "i2v_first" and brain_prompt:
             brain_prompt = re.sub(
-                r"[^。]*(?:从首帧|从第一帧|首帧即上一镜|第一帧与上一镜|"
-                r"上一镜的最后一帧|starts? EXACTLY on the given first"
-                r")[^。]*。\s*",
+                r"[^。]*(?:从首帧精确开始|从第一帧开始|从第一帧精确开始|"
+                r"首帧即上一镜|第一帧与上一镜|上一镜的最后一帧|"
+                r"starts? EXACTLY on the given first)[^。]*。\s*",
                 "", brain_prompt).strip()
+            # 承接句必须指向模型看得到的输入(2026-08-06 用户纠正:
+            # "上一镜"是制片行话,模型只认本请求里的 first_frame)——
+            # 引用"首帧"本体,一句话,机器加。
             if prev is not None and not _route_transition \
-                    and getattr(prev, "scene_idx", None) == entry.scene_idx \
-                    and "承接上一镜" not in brain_prompt \
-                    and "previous shot" not in brain_prompt.lower():
+                    and getattr(prev, "scene_idx", None) == entry.scene_idx:
                 brain_prompt = (
-                    "承接上一镜末帧。" if prompt_lang == "zh"
-                    else "Continuing from the previous shot's end. "
+                    "画面从首帧继续。" if prompt_lang == "zh"
+                    else "The video continues from the given first frame. "
                 ) + brain_prompt
         # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
         # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
