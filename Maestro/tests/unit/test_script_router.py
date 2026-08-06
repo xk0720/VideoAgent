@@ -195,3 +195,18 @@ def test_narration_stripped_from_prompts():
     out = re.sub(pat, "", t)
     assert "旁白" not in out and "霓虹闪烁的雨夜" not in out
     assert "雪茄吸入声" in out
+
+
+def test_pin_frame_slot_never_auto_appended():
+    """2026-08-06 rainnight run4 回归:pin_frame 行是执行器专有——
+    补挂闸不得把它的英文说明文本塞进 prompt。"""
+    from maestro.pipeline.ref_slots import validate_references
+    slots = [{"slot": "<<<image_1>>>", "referenceable": True,
+              "content": "the scene plate"},
+             {"slot": "<<<image_2>>>", "referenceable": True,
+              "source": "pin_frame",
+              "content": "the first frame itself (executor owns its "
+                         "mention — never reference this slot yourself)"}]
+    fixed, audit = validate_references("<<<image_1>>>内,人物静立。", slots)
+    assert audit["ok"] and "<<<image_2>>>" not in fixed
+    assert "executor owns" not in fixed

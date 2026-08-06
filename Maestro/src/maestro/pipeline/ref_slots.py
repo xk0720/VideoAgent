@@ -59,6 +59,12 @@ def validate_references(prompt: str, slots: list[dict]) -> tuple[str, dict]:
     for r in slots:
         if not r.get("referenceable"):
             continue
+        # 执行器专有行豁免(2026-08-06 rainnight run4:pin_frame 行的
+        # 说明文本被当内容补挂进出门 prompt)—— 它的提及由执行器机器
+        # 句负责,补挂闸绝不代劳。
+        if r.get("source") == "pin_frame" \
+                or "executor owns its mention" in str(r.get("content", "")):
+            continue
         slot = str(r.get("slot", ""))
         if slot.lower() in mentioned:
             continue
