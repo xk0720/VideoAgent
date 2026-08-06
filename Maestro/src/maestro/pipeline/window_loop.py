@@ -3295,6 +3295,9 @@ def generate_movie_windowed(
         d = _decide(
             llm, "image-plan", menu,
             {"shot": entry.to_brain_line(),
+             # 2026-08-06 xiaoming run2 事故:少这行 → zh 项目 image-plan
+             # 的 reason 走英文分支(裁决:reasons 也要中文)。
+             "prompt_language": prompt_lang,
              "cast": storyboard.cast, "setting": storyboard.setting,
              "storyboard": storyboard.to_brain_json(),
              "asset_catalog": asset_catalog,
