@@ -216,14 +216,23 @@ def test_pinned_shots_drop_background_plate(tmp_path):
     """2026-08-06 rainnight run4 板磁铁事故回归:硬钉上镜末帧的
     i2v_first 清单不得携带背景板 refer(空板会把人清场)。"""
     from types import SimpleNamespace
+
+    class _E:
+        keyframe_path = None
+
+        def __init__(self, images):
+            self.images = images
+
+        def images_by_role(self, role):
+            return [im for im in self.images if im.get("role") == role]
+
     bg = tmp_path / "bg.png"; bg.write_bytes(b"x")
     prop = tmp_path / "prop.png"; prop.write_bytes(b"x")
-    entry = SimpleNamespace(images=[
+    entry = _E([
         {"path": str(bg), "role": "reference",
          "source": "background", "description": "plate"},
         {"path": str(prop), "role": "reference",
-         "source": "asset_image", "description": "prop"}],
-        keyframe_path=None)
+         "source": "asset_image", "description": "prop"}])
     prev = SimpleNamespace(video_path=str(tmp_path / "prev.mp4"))
     rows = wl._slot_manifest("i2v_first", entry, prev,
                              portraits={"甲": str(tmp_path / "p.png")})
