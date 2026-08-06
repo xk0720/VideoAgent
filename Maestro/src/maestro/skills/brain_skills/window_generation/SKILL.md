@@ -113,7 +113,7 @@ never an embellishment.
   facts (brows tighten, gaze drops, shoulders sink). No "elegant",
   "cinematic", "beautiful".
 - NO INTRA-SHOT CUTS: a generated clip is ONE continuous take —
-  never write "cut to", "切至", "切换" inside a prompt (the model
+  never write "cut to" (in any language) inside a prompt (the model
   cannot cut; it morphs). To change framing mid-shot, write the
   camera move that gets there (a fast pan/arc/push), with direction
   and speed.

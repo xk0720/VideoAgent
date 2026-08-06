@@ -66,9 +66,9 @@ translate — whatever you drop here is lost to the film forever.
    speaker so the pieces concatenate exactly. Never put narration in
    a dialogue field — dialogue is only what is spoken aloud.
 9. ONE TAKE PER SHOT: a shot's description is ONE continuous take —
-   never write "切至/cut to" INSIDE a description (cuts happen
-   BETWEEN shots; write a camera move instead, or split into two
-   shots).
+   never write "cut to" (in any language) INSIDE a description; cuts
+   happen BETWEEN shots — write a camera move instead, or split into
+   two shots.
 10. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
    are written in THE SCREENPLAY'S LANGUAGE (`prompt_language` in the
    task JSON), EXCERPTING the script's own action and performance
@@ -76,11 +76,11 @@ translate — whatever you drop here is lost to the film forever.
    `setting` and any t2i image description stay in English (image
    models are English-biased); cast names always keep the user's
    language.
-10. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
+11. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
    WORDS ("the cat from the provided photo"), never by any reference
    ID — numbering does not exist at script time; the enhancer
    formalizes mentions into slot IDs later.
-11. MUSIC PLAN: one music description per scene (mood + genre + tempo);
+12. MUSIC PLAN: one music description per scene (mood + genre + tempo);
    omit a scene for deliberate silence. Never mention music inside
    shot descriptions.
 
