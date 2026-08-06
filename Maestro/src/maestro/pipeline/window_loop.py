@@ -1286,7 +1286,8 @@ def _apply_caption_canon(cast_canon: dict, given_caps: Optional[dict]) -> None:
 
 
 def _extract_characters(llm, screenplay: str,
-                        given: Optional[dict] = None) -> tuple[dict, str]:
+                        given: Optional[dict] = None,
+                        prompt_language: str = "en") -> tuple[dict, str]:
     """§A1 角色提取(ViMax character_extractor 规则移植):剧本 →
     {名字: "static: ...; dynamic: ..."} 正典。`given` = 用户剧本 JSON 的
     钦定角色 {名字: 图像打标描述} —— 名字逐字采用、以图为法源;缺失的
@@ -1310,17 +1311,44 @@ def _extract_characters(llm, screenplay: str,
         + json.dumps(task, ensure_ascii=False)
         + '\n\nSTRICT JSON only: {"characters": {"<name>": "static: '
           '<physique/face/hair — near-invariant traits, ENGLISH>; '
-          'dynamic: <attire/accessories/props that may vary>"}}')
+          'dynamic: <attire/accessories/props that may vary>"}}'
+        + (" Character NAMES (the keys) MUST be in the screenplay's own "
+           "language (e.g. 男人/黑帮老大/女子) — never English "
+           "descriptions; only the static/dynamic VALUES stay English."
+           if prompt_language == "zh" else ""))
     raw = ""
-    try:
-        raw = llm.complete(prompt)
-        data = _extract_json(raw)
-    except Exception:
-        data = None
     chars: dict = {}
-    if isinstance(data, dict) and isinstance(data.get("characters"), dict):
-        chars = {str(k): str(v) for k, v in data["characters"].items()
-                 if str(v).strip()}
+    for _attempt in range(2):
+        try:
+            raw = llm.complete(prompt)
+            data = _extract_json(raw)
+        except Exception:
+            data = None
+        chars = {}
+        if isinstance(data, dict) \
+                and isinstance(data.get("characters"), dict):
+            chars = {str(k): str(v) for k, v in data["characters"].items()
+                     if str(v).strip()}
+        # 名字语言闸(2026-08-06 rainnight run2 事故:派生角色被起成
+        # "the gunman",正典键顺流污染全链 —— 治本在出生地):zh 项目
+        # 派生名必须含中文;钦定名(given)原样豁免。纠正重试一次,
+        # 仍违规 → 响亮告警放行(名字仍可用,只是语言不合规)。
+        _bad = [k for k in chars
+                if prompt_language == "zh"
+                and not re.search(r"[一-鿿]", k)
+                and k not in (given or {})]
+        if not _bad:
+            break
+        log.warning("character_extract: derived cast keys NOT in the "
+                    "script's language: %s — %s", _bad,
+                    "corrective retry" if _attempt == 0
+                    else "keeping with a loud warning")
+        if _attempt == 0:
+            prompt += ("\n\nYOUR PREVIOUS REPLY VIOLATED THE NAME "
+                       f"LANGUAGE LAW: keys {_bad} must be renamed in the "
+                       "screenplay's own language (short noun phrases, "
+                       "e.g. 黑帮老大/女子). Same characters, same "
+                       "static/dynamic values, ONLY the keys renamed.")
     # 钦定角色确定性兜底:提取漏了谁就补谁(名字是引用链的钥匙,
     # 绝不许因 LLM 遗漏而断);以图像打标为 static 法源。
     for n, c in (given or {}).items():
@@ -3403,7 +3431,8 @@ def generate_movie_windowed(
                           "captioned": sorted(n for n, c in
                                               given_caps.items() if c)})
     cast_canon, ce_via = _extract_characters(
-        llm, screenplay_text, given=(given_caps or None)) \
+        llm, screenplay_text, given=(given_caps or None),
+        prompt_language=prompt_lang) \
         if (sp_via != "idea_passthrough" or given_caps) else ({}, "skipped")
     _apply_caption_canon(cast_canon, given_caps)
     decisions.append({"stage": "character_extract", "via": ce_via,

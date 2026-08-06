@@ -51,3 +51,12 @@ that have reference images — their pixels carry identity there.
 ## Output format (STRICT JSON — output this and nothing else)
 
 {"characters": {"<name>": "static: <traits>; dynamic: <traits>"}}
+
+## Name language law
+Character NAMES (the dict keys) are written in THE SCREENPLAY'S OWN
+LANGUAGE — a Chinese screenplay names its derived characters with
+short Chinese noun phrases, never as English descriptions ("the
+gunman" is FORBIDDEN on a Chinese script). Given characters keep
+their user-provided names verbatim. Only the static/dynamic
+descriptor VALUES stay English (they feed English-biased image
+models).

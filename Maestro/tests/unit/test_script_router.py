@@ -151,3 +151,23 @@ def test_sound_words_are_whole_names_per_shot():
     words = wl._scripted_sounds(t)
     assert "冰冷金属摩擦声" in words and "玻璃碎裂声" in words
     assert all("轮回" not in w for w in words)
+
+
+def test_character_extract_enforces_name_language():
+    """2026-08-06 rainnight run2 事故回归:zh 剧本派生角色名必须中文,
+    英文名触发纠正重试;重试后合规即收。"""
+    class _RetryLLM:
+        def __init__(self):
+            self.n = 0
+        def complete(self, prompt, **kw):
+            self.n += 1
+            if self.n == 1:
+                return ('{"characters": {"the gunman": "static: tall; '
+                        'dynamic: suit"}}')
+            return ('{"characters": {"黑帮老大": "static: tall; '
+                    'dynamic: suit"}}')
+    llm = _RetryLLM()
+    chars, via = wl._extract_characters(llm, "雨夜,黑帮老大点燃雪茄。",
+                                        prompt_language="zh")
+    assert llm.n == 2                       # 纠正重试发生
+    assert list(chars) == ["黑帮老大"]
