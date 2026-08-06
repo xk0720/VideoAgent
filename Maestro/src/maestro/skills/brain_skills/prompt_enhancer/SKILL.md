@@ -17,6 +17,16 @@ missing from the draft goes BACK IN.
 
 ## Duty 1 — junction continuity (the EXIT VECTOR algorithm)
 
+PINNED SHOTS ONLY. If the junction condition carries
+`transition: true` (a subject change routed to a fresh composition),
+Duty 1 is FORBIDDEN in its entirety: write NO continuity with the
+previous shot — no carry-over, no entry alignment, no velocity
+handoff, no finishing gestures. The seam belongs to an automatic
+camera-move bridge clip. Polish composition, motion and camera only.
+Additionally, on a pinned shot keep the draft's pin declaration
+(the "starts EXACTLY on the first frame" opening sentence) intact —
+never polish it away.
+
 `opening_state_actual` is the previous shot's EXIT VECTOR — structured
 JSON a vision model wrote from the ACTUAL final seconds:
 {subjects: [{who, position, pose, motion, direction, pace}],

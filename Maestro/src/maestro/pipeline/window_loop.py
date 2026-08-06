@@ -2697,6 +2697,34 @@ def _junction_is_continuation(shot_cast_names, exit_vec,
     return True
 
 
+def _script_cast_continuity(prev_entry, entry, cast,
+                            portraits: Optional[dict] = None):
+    """钉/切【提前】路由(2026-08-05 用户令):分镜剧本自带人物,生成前
+    就能定策略 —— 比较【上一镜 end_state 的人物】与【本镜 opening_frame/
+    描述 的人物】(同脸不同名按肖像路径判等):
+      本镜开场人物 ⊆ 上镜收尾人物 → (True, 理由)  钉帧续拍
+      出现上镜结尾没有的人物     → (False, 理由) 转场策略(不钉帧)
+    任一侧提取不到人物(旧剧本无标记等)→ 保守判续拍(旧行为)。"""
+    prev_txt = (getattr(prev_entry, "end_state", "") or
+                getattr(prev_entry, "description", "") or "")
+    cur_txt = (getattr(entry, "opening_frame", "") or
+               getattr(entry, "description", "") or "")
+    prev_cast = set(_cast_in_shot(prev_txt, cast) or {})
+    cur_cast = set(_cast_in_shot(cur_txt, cast) or {})
+    if not prev_cast or not cur_cast:
+        return True, "无法从剧本提取人物 — 保守判续拍"
+    # 同脸判等:名字不同但肖像同图(军官甲/乙)按脸算同一主体
+    def _face(n):
+        return str((portraits or {}).get(n) or f"name:{n}")
+    prev_faces = {_face(n) for n in prev_cast}
+    new_faces = sorted(n for n in cur_cast if _face(n) not in prev_faces)
+    if new_faces:
+        return False, (f"本镜开场出现上镜结尾没有的人物 {new_faces}"
+                       f"(上镜结尾: {sorted(prev_cast)})")
+    return True, (f"本镜开场人物 {sorted(cur_cast)} ⊆ "
+                  f"上镜结尾人物 {sorted(prev_cast)}")
+
+
 def _map_markers(text: str, name_to_slot: dict) -> str:
     """end_state/描述的 <名字> 标记 → 记号(用户令 2026-08-05:映射在
     数据层做,写手照抄)。有槽位 → <<<image_N>>>;无槽位 → 去尖括号留名
@@ -3298,24 +3326,55 @@ def generate_movie_windowed(
         spec = specs[entry.shot_idx]
         prev = storyboard.prev_generated(entry.shot_idx)
 
+        # 钉/切提前路由(2026-08-05 用户令):分镜剧本自带人物,生成前
+        # 就定策略 —— 上镜 end_state 人物 vs 本镜开场人物:一致 → 钉帧
+        # 续拍;出现新人物 → 转场策略(本镜不钉帧、全新构图,镜后自动
+        # 补运镜桥)。要提前定,因为本镜调用哪种生成形态取决于它。
+        _route_transition = False
+        _route_reason = ""
+        if prev is not None and prev.video_path and entry.shot_idx > 0 \
+                and getattr(prev, "scene_idx", None) == entry.scene_idx:
+            _cont, _route_reason = _script_cast_continuity(
+                prev, entry, storyboard.cast, storyboard.portraits)
+            _route_transition = not _cont
+
         # 需求 ②:接点实况 —— VLM 看上一镜真实尾帧出一句状态;和剧本
         # 交接棒(上一镜 end_state / 本镜 end_state)一起进 brain 上下文,
         # prompt 从实况起笔,不照剧本想象。
+        # 转场镜例外(2026-08-05 用户令):不钉帧就【禁止】书写连续性
+        # —— 不做 VLM 尾帧观察,接点上下文换成禁写连续性的公告,接缝
+        # 由自动转场桥负责。
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
-        junction_actual = _junction_state(mllm, prev, shot_dir,
-                                          tail_s=window_tail_s,
-                                          portraits=storyboard.portraits)
-        # 结构化出场矢量(用户裁决):VLM 尾段报告现在是 JSON —— 解析
-        # 成功则矢量随上下文进 brain / enhancer(速度续接的依据);解析
-        # 失败原文照发(旧后端散文兜底,诚实降级)。
-        _exit_vec = _parse_exit_vector(junction_actual)
-        junction_ctx = {
-            "prev_last_frame_actual": junction_actual or None,
-            "prev_exit_vector": _exit_vec,
-            "prev_end_state_script": (getattr(prev, "end_state", "") or None)
-            if prev else None,
-            "required_end_state": entry.end_state or None,
-        }
+        if _route_transition:
+            junction_actual = None
+            _exit_vec = None
+            junction_ctx = {
+                "transition": True,
+                "junction_note": (
+                    "转场策略:本镜是全新构图,禁止书写任何承接上一镜的"
+                    "连续性语句(不写承接/入场对齐/未尽动作);镜与镜的"
+                    "接缝由自动转场桥负责。" if prompt_lang == "zh" else
+                    "TRANSITION strategy: this shot is a FRESH composition. "
+                    "Do NOT write any continuity with the previous shot (no "
+                    "carry-over, no entry alignment, no unfinished action); "
+                    "the seam is handled by an automatic bridge clip."),
+                "required_end_state": entry.end_state or None,
+            }
+        else:
+            junction_actual = _junction_state(mllm, prev, shot_dir,
+                                              tail_s=window_tail_s,
+                                              portraits=storyboard.portraits)
+            # 结构化出场矢量(用户裁决):VLM 尾段报告现在是 JSON —— 解析
+            # 成功则矢量随上下文进 brain / enhancer(速度续接的依据);解析
+            # 失败原文照发(旧后端散文兜底,诚实降级)。
+            _exit_vec = _parse_exit_vector(junction_actual)
+            junction_ctx = {
+                "prev_last_frame_actual": junction_actual or None,
+                "prev_exit_vector": _exit_vec,
+                "prev_end_state_script": (getattr(prev, "end_state", "")
+                                          or None) if prev else None,
+                "required_end_state": entry.end_state or None,
+            }
 
         # P1-1(ViMax 借鉴):按 <标记> 确定性解析本镜出场角色 ——
         # cast 注入与评审 check 都只对出场者,不再靠 LLM 自判。
@@ -3375,24 +3434,25 @@ def generate_movie_windowed(
             _pin_only = [m for m in menu if m["name"] == "i2v_first"]
             _cut_only = [m for m in menu if m["name"] == "ref2v"]
             if _pin_only and _prev_entry.scene_idx == entry.scene_idx:
-                # 钉/切路由(2026-08-05 用户令):主体相同 → 钉帧续拍;
-                # 主体不同 → ref2v 硬切 + 自动运镜转场桥(否则钉住的
-                # 像素和要求的人物是两拨人,模型只能原地变形换人)。
-                if _junction_is_continuation(shot_cast, _exit_vec,
-                                             storyboard.portraits):
+                # 钉/切路由(2026-08-05 用户令):按分镜剧本提前定 ——
+                # 人物一致 → 钉帧续拍;出现新人物 → 转场策略:ref2v
+                # 全新构图 + 自动运镜转场桥(否则钉住的像素和要求的
+                # 人物是两拨人,模型只能原地变形换人)。
+                if not _route_transition:
                     menu = _pin_only
                     log.info("window: %s same-scene continuation → menu "
-                             "pinned to i2v_first (rule)", entry.label)
+                             "pinned to i2v_first (%s)", entry.label,
+                             _route_reason)
                 elif _cut_only:
                     menu = _cut_only
                     needs_bridge = True
-                    log.info("window: %s same-scene SUBJECT CUT (tail "
-                             "subjects differ) → ref2v hard cut + camera-"
-                             "move junction bridge", entry.label)
+                    log.info("window: %s same-scene TRANSITION (%s) → "
+                             "ref2v fresh composition + camera-move "
+                             "junction bridge", entry.label, _route_reason)
                 else:
                     menu = _pin_only
-                    log.info("window: %s subject cut but no ref2v in menu "
-                             "— pinning as fallback", entry.label)
+                    log.info("window: %s transition wanted but no ref2v "
+                             "in menu — pinning as fallback", entry.label)
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
@@ -3471,7 +3531,9 @@ def generate_movie_windowed(
                                                           _name_slot_map(slots),
                                                           storyboard.cast,
                                                           portraits=storyboard.portraits)
-                                                      or junction_actual,
+                                                      or (junction_ctx
+                                                          if _route_transition
+                                                          else junction_actual),
                                                       ensure_ascii=False),
                                                   source_videos=source_videos,
                                                   cast=shot_cast,
@@ -3497,6 +3559,24 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
+        # 钉帧声明闸(2026-08-05 用户令):i2v_first 续拍镜的 prompt 必须
+        # 显式声明"画面从首帧(=上一镜末帧)精确开始";写手漏写 →
+        # 确定性前插。转场镜(ref2v 全新构图)绝不添加;跨场景的
+        # i2v_first 钉的是本镜关键帧而非上镜末帧,声明会撒谎 → 同样不加。
+        if d["strategy"] == "i2v_first" and prev is not None \
+                and getattr(prev, "scene_idx", None) == entry.scene_idx \
+                and not _route_transition and brain_prompt \
+                and not re.search(
+                    r"从首帧|精确开始|EXACTLY on the given first frame",
+                    brain_prompt):
+            _pin_clause = (
+                "画面从首帧精确开始——首帧即上一镜的最后一帧,开场构图、"
+                "人物与光线与其完全一致,不重新构图。"
+                if prompt_lang == "zh" else
+                "The video starts EXACTLY on the given first frame — the "
+                "last frame of the previous shot; keep its composition, "
+                "people and lighting before any new motion. ")
+            brain_prompt = _pin_clause + brain_prompt
         # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
         # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
         # 追加正典 = 稀释钉帧,豁免。
@@ -3893,14 +3973,17 @@ def generate_movie_windowed(
                     Path(best.video_path),
                     shot_dir / f"shot{entry.shot_idx:03d}_jbridge_first.png")
                 if _bl is not None and _bf is not None:
-                    _bp = ("转场运镜:镜头以一次平稳连贯的摇移或推拉,从上一"
-                           "画面的主体自然过渡到新画面的主体与构图,沿途保持"
-                           "同一空间、光线与人群状态,不引入新人物与新动作,"
-                           "一气呵成。" if prompt_lang == "zh" else
-                           "Transition camera move: one smooth continuous "
-                           "pan/track from the previous framing's subjects "
-                           "to the new framing, same space, lighting and "
-                           "crowd; no new subjects, no new actions.")
+                    # 桥 prompt 铁律(2026-08-05 用户令):只写运镜,短句,
+                    # 缓速;内容落在首末两帧的真实画面上,不发明两端不
+                    # 存在的元素;人物绝不原地变形。
+                    _bp = ("转场运镜:镜头缓缓地以一次连贯的摇移或推拉,"
+                           "从上一画面的构图平稳过渡到新画面的构图;速度"
+                           "舒缓,无剪辑感,人物不在原地变换面貌或服装。"
+                           if prompt_lang == "zh" else
+                           "Transition camera move: one slow continuous "
+                           "pan or dolly from the previous framing to the "
+                           "new framing; gentle pace, no cut feeling, "
+                           "characters never morph in place.")
                     _bridge = video_gen.frame_to_frame(
                         prompt=_bp, first_frame=_bl, last_frame=_bf,
                         out_path=(shot_dir /
