@@ -26,7 +26,9 @@ log = get_logger("maestro.cinegraph")
 # 帧是关键路径:图像端点的分钟级网络抖动(2026-08-06 事故:上传三连
 # SSL EOF 杀掉整个 run)靠客户端内秒级重试骑不过去 —— 这里再加一层
 # 间隔拉开的重试;持续故障仍然如实上抛。
-_SPACED_WAITS_S = (0, 30, 60)
+# 梯子加长(2026-08-07 run6:代理阵发断连一波数分钟,90s 窗被打穿):
+# 累计覆盖 ~8.5 分钟。
+_SPACED_WAITS_S = (0, 30, 60, 120, 300)
 
 
 def _spaced_retry(fn, tag: str):
