@@ -628,6 +628,7 @@ def _sound_ok(m: str) -> bool:
 
 
 _RUN_AMBIENCE: list = []
+_RUN_SOUND_LEXICON: list = []
 
 
 def set_run_ambience(*texts) -> None:
@@ -642,16 +643,35 @@ def set_run_ambience(*texts) -> None:
                 _RUN_AMBIENCE.append(m)
 
 
+def set_run_sound_lexicon(*texts) -> None:
+    """剧本级声词词典(2026-08-06 cinegraph run3 事故:分镜把"冰冷金属
+    摩擦声"嵌进句中,距标点 >7 字,锚定正则漏提 → 覆盖闸误报全缺、
+    音效镜险些哑掉)。剧本里声词天然贴标点,起跑扫一次;之后逐镜
+    提取按【词典词直查子串】兜住句中嵌入——锚定正则只负责发现新词。"""
+    global _RUN_SOUND_LEXICON
+    _RUN_SOUND_LEXICON = []
+    for t in texts:
+        for m in _SOUND_WORD_RE.findall(str(t or "")):
+            if _sound_ok(m) and m not in _RUN_SOUND_LEXICON:
+                _RUN_SOUND_LEXICON.append(m)
+
+
 def _scripted_sounds(*texts) -> list:
     """剧本载明的环境声(2026-08-06 run5 音频死循环:剧本明写"浪声
     轰鸣",压制句+评审却把一切音效当缺陷,修复轮打不可能赢的仗)。
-    识别描述/剧本片段里的声音词,返回去重列表(顺序稳定)。"""
+    识别描述/剧本片段里的声音词,返回去重列表(顺序稳定):
+    run 级环境声 ∪ 词典词子串直查 ∪ 锚定正则新词;包含去重留超集。"""
     out = list(_RUN_AMBIENCE)
+    joined = "\n".join(str(t or "") for t in texts)
+    for w in _RUN_SOUND_LEXICON:
+        if w in joined and w not in out:
+            out.append(w)
     for t in texts:
         for m in _SOUND_WORD_RE.findall(str(t or "")):
             if _sound_ok(m) and m not in out:
                 out.append(m)
-    return out
+    # 包含去重(枪声 ⊂ 突发的巨大枪声 → 留超集,压制句不列双份)
+    return [w for w in out if not any(w != o and w in o for o in out)]
 
 
 def _with_dialogue(prompt: str, entry, cast: dict,
@@ -1390,16 +1410,19 @@ def _sound_coverage(screenplay_text: str, shots: list) -> list:
     spl = set(_scripted_sounds(screenplay_text))
     if not spl:
         return []
-    have: set = set()
+    texts, have = [], set()
     for s_ in shots:
         if isinstance(s_, dict):
-            have.update(_scripted_sounds(
-                str(s_.get("description") or ""),
-                str(s_.get("end_state") or "")))
-    # 包含式覆盖(2026-08-06 run5 假阳性:"突发的巨大枪声"已带"枪声",
-    # 精确相等判缺是冤枉)
+            texts.append(str(s_.get("description") or "") + "\n"
+                         + str(s_.get("end_state") or ""))
+            have.update(_scripted_sounds(texts[-1]))
+    full = "\n".join(texts)
+    # 覆盖判据【直查全文子串】(2026-08-06 cinegraph run3 误报:声词嵌
+    # 在句中,锚定正则重提取为空,三个在场声词被冤成全缺)——词在
+    # 全文里就是在;正则提取词仅补"分镜只写了子串"(h ⊂ w)的超集案
+    # (2026-08-06 run5:剧本"突发的巨大枪声" vs 分镜"枪声")。
     return sorted(w for w in spl
-                  if not any(w in h or h in w for h in have))
+                  if w not in full and not any(h in w for h in have))
 
 
 def _dial_text(shot_dict) -> str:
@@ -1578,14 +1601,30 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
         )
         raw = ""
         data = None
-        for _attempt in range(2):        # 空响应/坏 JSON 先重试一次
+        # 预算拆帐(2026-08-06 cinegraph run3 事故:空回复烧掉唯一
+        # attempt,声效闸失守只能响亮放行):坏回复(空/坏 JSON)与
+        # 语义闸门纠错互不挤兑——坏回复独立 2 发,每道闸门各 1 发。
+        _bad = 0
+        _retried: set = set()
+        while True:
             try:
                 raw = llm.complete(prompt)
                 data = _extract_json(raw)
-            except Exception:
+            except Exception as exc:
+                log.warning("scene_write: LLM call failed (%s)",
+                            str(exc)[:160])
                 data = None
             _shots_ok = (isinstance(data, dict)
                          and isinstance(data.get("shots"), list))
+            if not _shots_ok:
+                _bad += 1
+                if _bad <= 2:
+                    log.warning("scene_write: LLM reply unusable (raw %d "
+                                "chars) — retry %d/2 before the "
+                                "deterministic fallback", len(raw or ""),
+                                _bad)
+                    continue
+                break
             if _shots_ok and prompt_language == "zh":
                 # 语言闸(2026-08-05 run11 事故):zh 项目分镜写成英文 →
                 # 纠正重试一次;仍英文 → 判不可用,落摘抄兜底(拆剧本
@@ -1600,11 +1639,12 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                                 "LAW violated%s", len(_texts) - _zh_n,
                                 len(_texts),
                                 " — retrying with a corrective" if
-                                _attempt == 0 else
+                                "lang" not in _retried else
                                 "; falling back to verbatim excerpts")
                     data = None
                     _shots_ok = False
-                    if _attempt == 0:
+                    if "lang" not in _retried:
+                        _retried.add("lang")
                         prompt += ("\n\nYOUR PREVIOUS REPLY VIOLATED THE "
                                    "SCRIPT LANGUAGE LAW: every description/"
                                    "end_state/opening_frame MUST be in "
@@ -1612,6 +1652,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                                    "verbatim. Rewrite the SAME storyboard "
                                    "in Chinese.")
                         continue
+                    break
             if _shots_ok:
                 # 台词完整性闸(2026-08-06 xiaoming run2 事故:台词被
                 # 截半):缺块/残句 → 纠正重试一次;仍失败 → 确定性
@@ -1621,9 +1662,10 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                     log.warning("scene_write: DIALOGUE COVERAGE failed "
                                 "(missing %d, mangled %d) — %s",
                                 len(_cov["missing"]), len(_cov["mangled"]),
-                                "corrective retry" if _attempt == 0
+                                "corrective retry" if "dial" not in _retried
                                 else "deterministic patch")
-                    if _attempt == 0:
+                    if "dial" not in _retried:
+                        _retried.add("dial")
                         prompt += (
                             "\n\nYOUR PREVIOUS REPLY VIOLATED THE DIALOGUE "
                             "VERBATIM & COMPLETE LAW. These screenplay "
@@ -1656,9 +1698,11 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         log.warning("scene_write: cast keys NOT in the "
                                     "script's language on a zh project: "
                                     "%s — %s", _bad_keys,
-                                    "corrective retry" if _attempt == 0
-                                    else "keeping with a loud warning")
-                        if _attempt == 0:
+                                    "corrective retry" if "cast" not in
+                                    _retried else
+                                    "keeping with a loud warning")
+                        if "cast" not in _retried:
+                            _retried.add("cast")
                             prompt += (
                                 "\n\nYOUR PREVIOUS REPLY VIOLATED THE "
                                 "SCRIPT LANGUAGE LAW for entity names: "
@@ -1680,9 +1724,11 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                     log.warning("scene_write: SOUND COVERAGE failed — "
                                 "scripted sounds %s land in NO shot "
                                 "description — %s", _snd_missing,
-                                "corrective retry" if _attempt == 0
-                                else "keeping with a loud warning")
-                    if _attempt == 0:
+                                "corrective retry" if "sound" not in
+                                _retried else
+                                "keeping with a loud warning")
+                    if "sound" not in _retried:
+                        _retried.add("sound")
                         prompt += (
                             "\n\nYOUR PREVIOUS REPLY DROPPED SCRIPTED "
                             "SOUNDS. These sound words from the screenplay "
@@ -1697,10 +1743,6 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         _shots_ok = False
                         continue
                 break
-            if _attempt == 0:
-                log.warning("scene_write: LLM reply unusable (raw %d "
-                            "chars) — retrying once before the "
-                            "deterministic fallback", len(raw or ""))
         brain_log("window/scene_write", {
             "raw": raw, "parsed": data if isinstance(data, dict) else None,
             "usable": bool(isinstance(data, dict)
@@ -3467,6 +3509,9 @@ def generate_movie_windowed(
     set_output_lang(prompt_lang)
     log.info("window: prompt language = %s (follows the screenplay; "
              "ALL model outputs follow it too)", prompt_lang)
+    # 剧本级声词词典【必须先于分镜闸门】:声效覆盖闸/逐镜声提取都靠它
+    # 兜住句中嵌入的声词;每 run 重播种,防跨 run 全局残留。
+    set_run_sound_lexicon(screenplay_text or user_prompt)
     # 钦定角色图像打标(剧本 JSON 输入):VLM 看图出 static 描述,
     # 图为法源;VLM 缺/失败 → 空描述照样入链(名字纪律不受影响),留痕。
     given_caps: dict = {}

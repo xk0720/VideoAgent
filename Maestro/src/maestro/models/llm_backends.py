@@ -216,7 +216,20 @@ class OpenAICompatLLM(BaseLLMClient):
                 f"LLM('{self.name}' model={self.model}) HTTP "
                 f"{resp.status_code}: {resp.text[:1000]}"
             )
-        return resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        choice = body["choices"][0]
+        content = choice["message"]["content"]
+        if not content:
+            # Reasoning models share the completion budget between thinking
+            # and visible text — a long think returns 200 with EMPTY content
+            # (finish_reason=length). Name the cause so retries upstream
+            # aren't misread as network flaps (incident 2026-08-06).
+            import logging
+            logging.getLogger("maestro.models.llm").warning(
+                "LLM(%s/%s) returned EMPTY content (finish_reason=%s, "
+                "usage=%s)", self.name, self.model,
+                choice.get("finish_reason"), body.get("usage"))
+        return content
 
 
 class AnthropicLLM(BaseLLMClient):

@@ -19,6 +19,8 @@ models:
     name: "openai"
     model: "gpt-5.6-sol"   # brain 默认(2026-07-17 换代);gpt-5/o 系列自动用 max_completion_tokens、
                            # 不发 temperature(它们拒收);gpt-4o 等旧模型也兼容
+    max_tokens: 16384      # 推理模型思考与正文共享此预算(2026-08-06 事故:
+                           # 4096 被思考吃满 → 正文 0 字,分镜/机位树空回复)
 
   # 多模态大模型（语义/物理 VLM 评审 + 镜头对比 + 素材打标）。
   # Gemini 官方 generateContent 端点;$GEMINI_MODEL / $GEMINI_BASE_URL 可覆盖。

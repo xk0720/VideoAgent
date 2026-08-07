@@ -25,7 +25,8 @@ from ..pipeline.window_loop import (_cast_in_shot, _ensure_cast_portraits,
                                     _extract_characters, _names_to_tokens,
                                     _prompt_lang, _scripted_sounds,
                                     _strip_markers, _write_outline,
-                                    _write_screenplay, set_run_ambience)
+                                    _write_screenplay, set_run_ambience,
+                                    set_run_sound_lexicon)
 from ..tools.video_concat import VideoConcatTool
 from ..types import CandidateClip, ShotSpec
 from .camera_tree import construct_camera_tree
@@ -103,6 +104,8 @@ def generate_movie_cinegraph(
     prompt_lang = _prompt_lang(screenplay_text or user_prompt)
     set_output_lang(prompt_lang)
     zh = prompt_lang == "zh"
+    # 剧本级声词词典先于分镜闸门(句中嵌入声词的兜底;每 run 重播种)
+    set_run_sound_lexicon(screenplay_text or user_prompt)
     given_caps: dict = {}
     for _gn, _gp in (given_characters or {}).items():
         if _gn not in str(screenplay_text or user_prompt or ""):

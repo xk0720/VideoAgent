@@ -239,3 +239,79 @@ def test_pinned_shots_drop_background_plate(tmp_path):
     contents = " | ".join(str(r.get("content")) for r in rows)
     assert "plate" not in contents          # 板被剔除
     assert "prop" in contents               # 非板自有图保留
+
+
+def test_sound_coverage_mid_sentence_no_false_alarm():
+    """2026-08-06 cinegraph run3 误报:声词嵌在句中(距标点>7字),锚定
+    正则重提取为空,在场声词被冤成全缺 → 覆盖判据直查全文子串。"""
+    from maestro.pipeline.window_loop import (_sound_coverage,
+                                              set_run_ambience,
+                                              set_run_sound_lexicon)
+    set_run_ambience()
+    set_run_sound_lexicon()
+    sp = ("暗巷里,冰冷金属摩擦声。窗碎,枪声。最后,突发的巨大枪声。")
+    shots = [
+        {"description": "高对比度戏剧性打光下响起冰冷金属摩擦声",
+         "end_state": ""},
+        {"description": "他扣动扳机,伴随突发的巨大枪声、金属回音",
+         "end_state": ""},
+    ]
+    assert _sound_coverage(sp, shots) == []       # 全部在场,不得误报
+
+
+def test_scripted_sounds_lexicon_catches_embedded():
+    """词典词直查子串:分镜句中嵌入的剧本声词必须被逐镜提取认出
+    (否则音效镜被判无声直接哑掉);包含去重留超集。"""
+    from maestro.pipeline.window_loop import (_scripted_sounds,
+                                              set_run_ambience,
+                                              set_run_sound_lexicon)
+    set_run_ambience()
+    set_run_sound_lexicon("雨夜,冰冷金属摩擦声。之后,枪声。")
+    got = _scripted_sounds("打光下响起冰冷金属摩擦声,他扣动扳机,"
+                           "伴随突发的巨大枪声")
+    assert "冰冷金属摩擦声" in got                 # 句中嵌入,词典兜住
+    assert "枪声" in got                           # 剧本词在超集词内
+    got2 = _scripted_sounds("窗碎,突发的巨大枪声。")
+    assert got2 == ["突发的巨大枪声"]              # 标点后正则得超集,
+    set_run_sound_lexicon()                        # 子串去重;清词典
+
+
+def test_outline_gate_budget_survives_empty_reply():
+    """2026-08-06 cinegraph run3:空回复烧掉唯一 attempt,声效闸失守。
+    预算拆帐后:空回复 → 坏回复预算;闸门纠错额度不受影响。"""
+    import json as _json
+    from maestro.pipeline.window_loop import (_write_outline,
+                                              set_run_ambience,
+                                              set_run_sound_lexicon)
+    set_run_ambience()
+    set_run_sound_lexicon()
+    good = {"cast": {"男人": "static: x; dynamic: y"},
+            "setting": "night alley",
+            "shots": [{"description": "Shot 1: <男人>开枪,枪声。",
+                       "duration_s": 5, "end_state": "<男人>静止。",
+                       "variation": "small", "camera": 0, "bg": "bg_1"}],
+            "music_plan": {}}
+    bad = {k: v for k, v in good.items()}
+    bad["shots"] = [{"description": "Shot 1: <男人>开枪。",
+                     "duration_s": 5, "end_state": "<男人>静止。",
+                     "variation": "small", "camera": 0, "bg": "bg_1"}]
+
+    class _LLM:
+        def __init__(self):
+            self.n = 0
+
+        def complete(self, prompt, **kw):
+            self.n += 1
+            if self.n == 1:
+                return ""                          # 空回复(传输性)
+            if self.n == 2:
+                return _json.dumps(bad, ensure_ascii=False)   # 丢声词
+            return _json.dumps(good, ensure_ascii=False)      # 纠错后
+
+    llm = _LLM()
+    shots, durs, ends, meta, via = _write_outline(
+        llm, "雨夜。男人开枪,枪声。", [], episode_guidance={},
+        max_shots=6, fallback_fn=lambda: ["fallback"],
+        cast_canon={}, prompt_language="zh")
+    assert llm.n == 3                # 空回复没吞掉声效闸的纠错机会
+    assert "枪声" in shots[0]
