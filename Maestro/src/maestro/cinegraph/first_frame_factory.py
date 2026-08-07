@@ -59,6 +59,29 @@ NEW_CAMERA_NOTE = (
     "portraits. Don't change the background.")
 
 
+def ensure_english_t2i_prompt(llm, prompt: str) -> str:
+    """flux 英文偏置法(window 同律,2026-08-07 run4 事故:选图 agent
+    按 ViMax 语言规则产中文生图 prompt,直发 flux 生出水墨山水)——
+    seedream 双语无碍,唯 t2i 兜底(flux)必须英文;翻译失败留原文
+    (审查闸兜底)。"""
+    from ..pipeline.window_loop import _is_mostly_chinese
+    if llm is None or not _is_mostly_chinese(prompt):
+        return prompt
+    try:
+        en = str(llm.complete(
+            "Translate this image-generation prompt into concise cinematic "
+            "English. Keep every visual fact (subjects, layout, lighting, "
+            "mood); output ONLY the translation:\n" + prompt) or "").strip()
+        if len(en) >= 15 and not _is_mostly_chinese(en):
+            return en
+        log.warning("cinegraph: t2i translation unusable (%d chars) — "
+                    "keeping the original prompt", len(en))
+    except Exception as exc:
+        log.warning("cinegraph: t2i translation failed (%s) — keeping "
+                    "the original prompt", str(exc)[:120])
+    return prompt
+
+
 def generate_frame(image_edit, t2i_fn, selector_output: dict,
                    out_path: Path) -> Path:
     """选图产物 → 帧图(幂等)。"""

@@ -214,7 +214,9 @@ def generate_movie_cinegraph(
 
     def _t2i(prompt, out):
         if video_gen is not None and hasattr(video_gen, "text_to_image"):
-            return video_gen.text_to_image(prompt, out)
+            from .first_frame_factory import ensure_english_t2i_prompt
+            return video_gen.text_to_image(
+                ensure_english_t2i_prompt(llm_video_brain, prompt), out)
         raise RuntimeError("no t2i backend")
 
     # ── 首帧审查闸(我们的加笔):mllm 图注 × llm 裁决,一次重掷 ──

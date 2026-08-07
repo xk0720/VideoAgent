@@ -130,3 +130,25 @@ def test_spaced_retry_rides_transient(monkeypatch):
     import pytest as _pt
     with _pt.raises(RuntimeError, match="spaced attempts"):
         fff._spaced_retry(dead, tag="t")
+
+
+def test_t2i_prompt_forced_english(monkeypatch):
+    """2026-08-07 run4 事故:中文 prompt 直发 flux 生出水墨山水 ——
+    t2i 兜底必须英文;翻译坏/失败留原文交审查闸。"""
+    from maestro.cinegraph.first_frame_factory import \
+        ensure_english_t2i_prompt
+
+    class _LLM:
+        def complete(self, prompt, **kw):
+            return ("Cinematic wide shot: neon-lit rainy alley, a black "
+                    "luxury sedan centered on the wet street.")
+    zh = "电影感全景:霓虹闪烁的雨夜暗巷,黑色豪华轿车静止在画面中央。"
+    out = ensure_english_t2i_prompt(_LLM(), zh)
+    assert "sedan" in out
+
+    class _Bad:
+        def complete(self, prompt, **kw):
+            return "{}"
+    assert ensure_english_t2i_prompt(_Bad(), zh) == zh      # 坏译留原文
+    en = "A cinematic alley at night."
+    assert ensure_english_t2i_prompt(_LLM(), en) == en      # 英文直通
