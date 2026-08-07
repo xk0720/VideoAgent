@@ -48,6 +48,50 @@ def _is_reasoning_model(model: str) -> bool:
     return m.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
+# Transient transport failures (rate limits, gateway hiccups, dropped
+# connections) must be retried HERE, at the transport layer — every agent
+# shares this client, and a per-caller retry can't tell a garbage reply
+# from a dead socket (incident 2026-08-06: two consecutive empty replies
+# burned both camera-tree attempts and degraded the tree to flat).
+# Mirrors WaveSpeedClient's poll/upload transient handling.
+_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+_TRANSIENT_BACKOFF_S = (2.0, 5.0)
+
+
+def _post_with_transient_retry(url: str, payload: dict, headers: dict,
+                               timeout: float, tag: str):
+    import time as _time
+
+    import requests
+
+    last_exc: Exception | None = None
+    for attempt in range(1 + len(_TRANSIENT_BACKOFF_S)):
+        try:
+            resp = requests.post(url, json=payload, headers=headers,
+                                 timeout=timeout)
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError) as exc:
+            last_exc = exc
+            resp = None
+        if resp is not None and resp.status_code not in _TRANSIENT_STATUS:
+            return resp
+        if attempt < len(_TRANSIENT_BACKOFF_S):
+            import logging
+            logging.getLogger("maestro.models.llm").warning(
+                "LLM(%s) transient %s — retry %d/%d",
+                tag,
+                (f"HTTP {resp.status_code}" if resp is not None
+                 else type(last_exc).__name__),
+                attempt + 1, len(_TRANSIENT_BACKOFF_S))
+            _time.sleep(_TRANSIENT_BACKOFF_S[attempt])
+    if resp is not None:
+        return resp                      # exhausted: surface the HTTP error
+    raise RuntimeError(f"LLM({tag}) transport failed after "
+                       f"{1 + len(_TRANSIENT_BACKOFF_S)} attempts: "
+                       f"{last_exc}")
+
+
 class OpenAICompatLLM(BaseLLMClient):
     """Any OpenAI-compatible chat-completions endpoint via raw `requests`.
 
@@ -140,7 +184,8 @@ class OpenAICompatLLM(BaseLLMClient):
         payload = self._payload(prompt, **kwargs)
         url = f"{self.base_url}/chat/completions"
         timeout = float(kwargs.get("timeout", 120))
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        resp = _post_with_transient_retry(url, payload, headers, timeout,
+                                          tag=f"{self.name}/{self.model}")
         if resp.status_code == 400:
             # Param-name mismatch safety net (proxies / older gateways):
             # if the server rejects the token-limit PARAM NAME, retry ONCE
@@ -161,8 +206,9 @@ class OpenAICompatLLM(BaseLLMClient):
                     swapped["max_completion_tokens"] = swapped.pop("max_tokens")
                     swapped.pop("temperature", None)  # reasoning models reject it
             if swapped is not None:
-                resp = requests.post(url, json=swapped, headers=headers,
-                                     timeout=timeout)
+                resp = _post_with_transient_retry(
+                    url, swapped, headers, timeout,
+                    tag=f"{self.name}/{self.model}")
         if resp.status_code >= 400:
             # Surface the API's own explanation — raise_for_status() drops the
             # body, which is where the server says WHICH field is wrong.

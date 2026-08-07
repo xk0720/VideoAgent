@@ -69,14 +69,16 @@ def construct_camera_tree(llm, cameras: list, shots: list) -> list:
     prompt = _TREE_SYSTEM + "\n\n<CAMERA_SEQ input>\n" + seq
     for _attempt in range(2):
         raw = ""
+        call_err = None
         try:
             raw = llm.complete(prompt)
             data = _extract_json(raw)
-        except Exception:
-            data = None
+        except Exception as exc:            # NEVER swallow: the log must
+            data = None                     # distinguish transport failure
+            call_err = f"LLM call failed: {str(exc)[:200]}"   # from bad JSON
         items = (data or {}).get("camera_parent_items") \
             if isinstance(data, dict) else None
-        err = _validate_items(cameras, shots, items)
+        err = call_err or _validate_items(cameras, shots, items)
         brain_log("cinegraph/camera_tree", {
             "raw": raw, "parsed": data if isinstance(data, dict) else None,
             "usable": err is None, "error": err,

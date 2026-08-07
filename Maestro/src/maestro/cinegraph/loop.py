@@ -236,7 +236,9 @@ def generate_movie_cinegraph(
                 log.warning("cinegraph: frame review REJECTED — %s",
                             d.get("reason"))
                 return False
-        except Exception:
+        except Exception as exc:
+            log.warning("cinegraph: frame review errored (%s) — "
+                        "fail-open, frame accepted", str(exc)[:160])
             return True
         return True
 
