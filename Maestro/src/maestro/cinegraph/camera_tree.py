@@ -28,10 +28,22 @@ Your task is to analyze the input camera position data to construct a "camera po
 The input is a sequence of cameras. The sequence will be enclosed within <CAMERA_SEQ> and </CAMERA_SEQ>.
 Each camera contains a sequence of shots filmed by the camera, which will be enclosed within <CAMERA_N> and </CAMERA_N>, where N is the index of the camera.
 
+Below is an example of the input format:
+
+<CAMERA_SEQ>
+<CAMERA_0>
+Shot 0: Medium shot of the street. Alice and Bob are walking towards each other.
+Shot 2: Medium shot of the street. Alice and Bob hug each other.
+</CAMERA_0>
+<CAMERA_1>
+Shot 1: Close-up of the Alice's face. Her expression shifts from surprise to delight as she recognizes Bob.
+</CAMERA_1>
+</CAMERA_SEQ>
+
 [Output]
 STRICT JSON only:
 {"camera_parent_items": [{"parent_cam_idx": <int|null>, "parent_shot_idx": <int|null>, "reason": "<str>", "is_parent_fully_covers_child": <bool|null>, "missing_info": "<str|null>"} , ...]}
-The length of the list must equal the number of cameras; the root camera's item uses null parent_cam_idx/parent_shot_idx.
+The length of the list must equal the number of cameras; the root camera's item uses null parent_cam_idx/parent_shot_idx (its reason should explain why it is a root camera). missing_info holds the elements in the child shot that are not covered by the parent shot; null when fully covered.
 
 [Guidelines]
 - The language of all output values (not include keys) should be consistent with the language of the input.
@@ -41,7 +53,7 @@ The length of the list must equal the number of cameras; the root camera's item 
 - Logical Consistency: The camera tree should be acyclic, avoid circular dependencies. If a camera is contained by multiple potential parents, select the best match (based on shot size and content). If there is no suitable parent camera, output None.
 - When a broader perspective is not available, choose the shot with the largest overlapping field of view as the parent (the one with the most information overlap), or a shot can also serve as the parent of a reverse shot. When two cameras can be the parent of each other, choose the one with the smaller index as the parent of the camera with the larger index.
 - Only one camera can exist without a parent.
-- When describing the elements lost in a shot, carefully compare the details between the parent shot and the child shot.
+- When describing the elements lost in a shot, carefully compare the details between the parent shot and the child shot. For example, the parent shot is a medium shot of Character A and Character B facing each other (both in profile to the camera), while the child shot is a close-up of Character A (with Character A facing the camera directly). In this case, the child shot lacks the frontal view information of Character A.
 - The first camera must be the root of the camera tree.
 """
 
