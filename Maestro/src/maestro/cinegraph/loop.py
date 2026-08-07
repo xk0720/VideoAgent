@@ -229,10 +229,15 @@ def generate_movie_cinegraph(
         try:
             got = str(_cap(Path(frame)) or "")[:600]
             from ..pipeline.window_loop import _extract_json
+            # 只认矛盾,不认缺席(2026-08-07 run5:图注没提"居中/广角"
+            # 被连拒两轮 —— 图注是有损摘要,漏项不是罪证)
             raw = llm_video_brain.complete(
-                "Does the generated frame match the intended description "
-                "well enough to animate? Judge composition, characters "
-                "present, and setting.\nINTENDED: " + want_desc[:600]
+                "A frame was generated for an intended description; you "
+                "only see a LOSSY caption of it. Reject ONLY if the "
+                "caption CONTRADICTS the intent (wrong subject, wrong "
+                "setting, wrong style, or a key character clearly absent "
+                "or extra). A detail the caption merely does not mention "
+                "is NOT a defect.\nINTENDED: " + want_desc[:600]
                 + "\nGENERATED (caption): " + got
                 + '\nSTRICT JSON only: {"ok": true|false, '
                   '"reason": "<one sentence>"}')
