@@ -66,6 +66,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt",
                     default="a glass falls off a table; shards scatter on the floor")
+    ap.add_argument("--mode", default="window",
+                    choices=["window", "cinegraph"],
+                    help="window=像素连续派(钉帧/矢量/桥);cinegraph="
+                         "ViMax 式构图一致派(机位树/首帧派生/选图/"
+                         "多视图注册表,2026-08-07)")
     ap.add_argument("--config", default=str(REPO_ROOT / "configs" / "basic.yaml"),
                     help="模型/参数全部来自这里(不设模型命令行旗子)")
     ap.add_argument("--out-dir", default=None)
@@ -303,6 +308,36 @@ def main() -> int:
     if args.prompt_enhancer:
         from maestro.agents.prompt_enhancer import PromptEnhancerAgent
         prompt_enhancer = PromptEnhancerAgent(llm=llm_enhancer)
+    if args.mode == "cinegraph":
+        from maestro.cinegraph import generate_movie_cinegraph
+        res = generate_movie_cinegraph(
+            args.prompt,
+            cache_dir=run_dir, llm=llm,
+            crew={"screenwriter": llm_screenwriter,
+                  "scene_writer": llm_scene_writer,
+                  "video_brain": llm_video_brain},
+            mllm=mllm_reviewer, video_gen=video_gen,
+            image_edit=build_image_edit({"name": "wavespeed"}),
+            board=ReviewBoard(critics=critics, metric_tool=MetricTool()),
+            asset_memory=asset_memory,
+            screenwriter=ScreenwriterAgent(llm=llm_screenwriter,
+                                           config=cfg.get("plan") or {}),
+            screenplay=_screenplay_text,
+            given_characters=_given_chars,
+            character_library=CharacterLibrary(REPO_ROOT / "data"
+                                               / "character_library"),
+            prompt_enhancer=prompt_enhancer,
+            plan_cfg=cfg.get("plan") or {},
+            max_turns=args.max_turns,
+            enable_audio=args.audio)
+        _section("cinegraph 决策流水")
+        for d in res.decisions:
+            print(f"  [{d.get('stage', '—'):11s}] "
+                  f"{str(d.get('label', '—')):<10s} → "
+                  f"{str(d.get('strategy', d.get('via', '—'))):20s} "
+                  f"{str(d.get('reason', ''))[:60]}")
+        print("成片:", getattr(res, "movie_path", None))
+        return
     res = generate_movie_windowed(
         args.prompt,
         crew={"screenwriter": llm_screenwriter,

@@ -1715,6 +1715,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
             shots, durs, ends, variations, openings, dialogues, seen = \
                 [], [], [], [], [], [], set()
             speakers, bgs = [], []
+            cameras = []          # cinegraph 机位标注(缺省回退在返回处)
             for s_ in data["shots"][:max_shots]:
                 # 兼容两种形态:纯字符串,或 {description, duration_s, end_state}
                 if isinstance(s_, dict):
@@ -1752,6 +1753,17 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                         speakers.append("")
                     bgs.append(str(s_.get("bg", "") or "").strip()
                                if isinstance(s_, dict) else "")
+                    # cinegraph 机位标注(可选字段;非法 → None)
+                    _camv = (s_.get("camera")
+                             if isinstance(s_, dict) else None)
+                    try:
+                        cameras.append(
+                            int(str(_camv).strip().lstrip("Cc"))
+                            if _camv is not None
+                            and str(_camv).strip().lstrip("Cc").isdigit()
+                            else None)
+                    except Exception:
+                        cameras.append(None)
                     # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
                     # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
                     # 用模型自然默认(用户裁决:绝不 feed 任何预设值)。
@@ -1813,6 +1825,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                      "dialogues": dialogues,
                      "dialogue_speakers": speakers,
                      "bgs": bgs,
+                     "cameras": cameras,
                      "music_plan": music_plan}, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
@@ -1821,6 +1834,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
         {"cast": dict(cast_canon or {}), "setting": "",
          "variations": [""] * len(fb),
          "opening_frames": [""] * len(fb), "dialogues": [""] * len(fb),
+         "cameras": [None] * len(fb),
          "dialogue_speakers": [""] * len(fb), "bgs": [""] * len(fb),
          "music_plan": {}}, "fallback"
 

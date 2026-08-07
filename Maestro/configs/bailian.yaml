@@ -75,6 +75,13 @@ models:
   audio_gen:
     name: "mock-audio-gen"  # 音频暂为占位
 
+# 管线模式(2026-08-07 用户令):window=像素连续派(钉帧/出场矢量/
+# 自动桥);cinegraph=ViMax 式构图一致派(机位树/首帧派生/参考图选择/
+# 多视图肖像注册表,镜间硬切不追像素连续)。跑法:
+#   python scripts/test_window_movie.py --mode cinegraph --config ... 
+# pipeline:
+#   mode: "window"
+
 # 规划
 plan:
   n_shots: 3

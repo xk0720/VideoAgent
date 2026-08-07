@@ -65,28 +65,37 @@ translate — whatever you drop here is lost to the film forever.
    duration to fit) OR split across CONSECUTIVE shots of the same
    speaker so the pieces concatenate exactly. Never put narration in
    a dialogue field — dialogue is only what is spoken aloud.
-9. ONE TAKE PER SHOT: a shot's description is ONE continuous take —
+9. CAMERA DISCIPLINE (cinegraph): every shot carries a `camera`
+   integer — shots filmed from the SAME position/angle/shot-size share
+   one camera id. Before opening a new camera, check whether an
+   existing one can film the shot; open a new id only when shot size,
+   angle, or focus differ significantly. Camera 0 belongs to the
+   FIRST shot and should be the widest establishing view when the
+   story allows. When describing visual elements, state each
+   element's position in the frame and each character's facing
+   direction — the camera tree is inferred from these descriptions.
+10. ONE TAKE PER SHOT: a shot's description is ONE continuous take —
    never write "cut to" (in any language) INSIDE a description; cuts
    happen BETWEEN shots — write a camera move instead, or split into
    two shots.
-10. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
+11. SCRIPT LANGUAGE LAW: shot descriptions, end states and dialogue
    are written in THE SCREENPLAY'S LANGUAGE (`prompt_language` in the
    task JSON), EXCERPTING the script's own action and performance
    wording verbatim wherever it exists — translation is loss. Only
    `setting` and any t2i image description stay in English (image
    models are English-biased); cast names always keep the user's
    language.
-11. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
+12. ASSET MENTION LAW: user-provided assets are mentioned in NATURAL
    WORDS ("the cat from the provided photo"), never by any reference
    ID — numbering does not exist at script time; the enhancer
    formalizes mentions into slot IDs later.
-12. SOUND ANNOTATIONS RIDE (hard law, gated): sound-effect words the
+13. SOUND ANNOTATIONS RIDE (hard law, gated): sound-effect words the
    screenplay stages ("...sheng" annotations, gunshots, rain hitting
    glass) ARE script content — carry each sound word VERBATIM into
    the description (or end_state) of the shot where it occurs (a
    deterministic gate rejects storyboards that drop them). Music is
    the one exception — it belongs to MUSIC PLAN, never descriptions.
-13. MUSIC PLAN: one music description per scene (mood + genre + tempo);
+14. MUSIC PLAN: one music description per scene (mood + genre + tempo);
    omit a scene for deliberate silence. Never mention music inside
    shot descriptions.
 
@@ -100,6 +109,7 @@ translate — whatever you drop here is lost to the film forever.
             "duration_s": <int 4-10>,
             "end_state": "<the cut-moment freeze frame + camera state>",
             "variation": "large|medium|small",
+            "camera": <int camera id, same position/angle => same id>,
             "opening_frame": "<first shot & scene cuts ONLY: one purely
              static opening snapshot; omit for continuing shots>",
             "dialogue": {"speaker": "<cast key>", "line": "<one line>"},
