@@ -124,8 +124,13 @@ def derive_new_camera(video_gen, parent_ff: Path, parent_desc: str,
             old_audio = getattr(video_gen, "generate_audio", False)
             video_gen.generate_audio = False
             try:
-                video_gen.generate(prompt, 5, video_out, fps=24, seed=777,
-                                   reference_images=[Path(parent_ff)])
+                # 派生是机位一致性的命脉 —— 网络抖动值得间隔重试
+                # (2026-08-07 run6:可灵上传一抖,cam2 白丢派生链)
+                _spaced_retry(
+                    lambda: video_gen.generate(
+                        prompt, 5, video_out, fps=24, seed=777,
+                        reference_images=[Path(parent_ff)]),
+                    tag=f"two-shot derivation {tag}")
             finally:
                 video_gen.generate_audio = old_audio
         cut = _frame_after_cut(video_out, frame_out)

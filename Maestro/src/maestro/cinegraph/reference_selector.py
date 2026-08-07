@@ -7,10 +7,25 @@
 """
 from __future__ import annotations
 
+import re
+
 from ..logging_utils import brain_log, get_logger
 from ..pipeline.window_loop import _extract_json
 
 log = get_logger("maestro.cinegraph")
+
+
+def _normalize_image_refs(text: str, n: int) -> str:
+    """1 基笔误归一(2026-08-07 run6:模型写 "Image 1 为主场景…Image 2
+    中的老大",契约是 0 基,而装配前缀只定义到 Image n-1)——文本引用
+    全体 ∈[1..n] 且不含 Image 0 时判定 1 基,统一减一(升序替换防连锁)。"""
+    ks = sorted({int(m) for m in re.findall(r"Image\s*(\d+)", text or "")})
+    if ks and ks[0] >= 1 and ks[-1] == n:
+        log.warning("cinegraph: selector text used 1-based Image refs %s "
+                    "(contract is 0-based) — renumbering", ks)
+        for k in ks:
+            text = re.sub(rf"Image\s*{k}\b", f"Image {k - 1}", text)
+    return text
 
 # ── ViMax system prompt 原文移植(输出契约换 STRICT JSON)──
 _SELECT_SYSTEM = """
@@ -88,7 +103,7 @@ def select_reference_images(llm, available_pairs: list,
                         "n_available": len(available_pairs)}})
         if err is None:
             return {"reference_image_path_and_text_pairs": pairs,
-                    "text_prompt": text}
+                    "text_prompt": _normalize_image_refs(text, len(pairs))}
         log.warning("cinegraph: reference selection unusable (%s) — %s",
                     err, "retrying" if _attempt == 0 else "degrading")
         prompt += (f"\n\nYOUR PREVIOUS REPLY WAS INVALID: {err}. "

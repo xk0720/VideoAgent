@@ -152,3 +152,16 @@ def test_t2i_prompt_forced_english(monkeypatch):
     assert ensure_english_t2i_prompt(_Bad(), zh) == zh      # 坏译留原文
     en = "A cinematic alley at night."
     assert ensure_english_t2i_prompt(_LLM(), en) == en      # 英文直通
+
+
+def test_selector_one_based_refs_renumbered():
+    """2026-08-07 run6:模型文本用 1 基编号(Image 1/Image 2),装配
+    前缀只定义 Image 0..n-1 → 确定性归一;0 基/越界不满编不动。"""
+    from maestro.cinegraph.reference_selector import _normalize_image_refs
+    assert _normalize_image_refs(
+        "以Image 1为主场景,替换为Image 2中的老大", 2) \
+        == "以Image 0为主场景,替换为Image 1中的老大"
+    keep = "以Image 0为主参考,Image 1中的老大"
+    assert _normalize_image_refs(keep, 2) == keep          # 0 基不动
+    partial = "参考Image 1的外貌"
+    assert _normalize_image_refs(partial, 2) == partial    # 未及 n,存疑不动
