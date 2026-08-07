@@ -24,7 +24,8 @@ def _normalize_image_refs(text: str, n: int) -> str:
         log.warning("cinegraph: selector text used 1-based Image refs %s "
                     "(contract is 0-based) — renumbering", ks)
         for k in ks:
-            text = re.sub(rf"Image\s*{k}\b", f"Image {k - 1}", text)
+            # \b 对中文失效(汉字属 \w,"2中"无边界)→ 数字前瞻断字
+            text = re.sub(rf"Image\s*{k}(?!\d)", f"Image {k - 1}", text)
     return text
 
 # ── ViMax system prompt 原文移植(输出契约换 STRICT JSON)──
