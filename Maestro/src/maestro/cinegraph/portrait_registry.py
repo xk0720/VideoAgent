@@ -63,8 +63,11 @@ def build_portrait_registry(portraits: dict, image_edit, out_dir: Path,
                 continue
             else:
                 try:
-                    image_edit.edit(front, tmpl.format(identifier=name),
-                                    outp)
+                    from .first_frame_factory import _spaced_retry
+                    _spaced_retry(
+                        lambda: image_edit.edit(
+                            front, tmpl.format(identifier=name), outp),
+                        tag=f"{view} view for {name}")
                 except Exception as exc:
                     log.warning("cinegraph: %s view for %r FAILED (%s) — "
                                 "skipped", view, name, str(exc)[:120])

@@ -15,12 +15,33 @@
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
 from ..logging_utils import get_logger
 
 log = get_logger("maestro.cinegraph")
+
+# 帧是关键路径:图像端点的分钟级网络抖动(2026-08-06 事故:上传三连
+# SSL EOF 杀掉整个 run)靠客户端内秒级重试骑不过去 —— 这里再加一层
+# 间隔拉开的重试;持续故障仍然如实上抛。
+_SPACED_WAITS_S = (0, 30, 60)
+
+
+def _spaced_retry(fn, tag: str):
+    last: Exception | None = None
+    for wait in _SPACED_WAITS_S:
+        if wait:
+            log.warning("cinegraph: %s failed (%s) — retrying in %ds",
+                        tag, str(last)[:140], wait)
+            time.sleep(wait)
+        try:
+            return fn()
+        except Exception as exc:
+            last = exc
+    raise RuntimeError(f"cinegraph: {tag} failed after "
+                       f"{len(_SPACED_WAITS_S)} spaced attempts: {last}")
 
 # ViMax generate_transition_video 的 prompt 原文
 _TWO_SHOT_PROMPT = (
@@ -52,11 +73,14 @@ def generate_frame(image_edit, t2i_fn, selector_output: dict,
     refs = [Path(p) for p, _ in pairs if Path(p).exists()]
     if refs and image_edit is not None:
         # seedream 多图:images[0]=主参考(Image 0),其余随行
-        return Path(image_edit.edit(refs[0], prompt, out_path,
-                                    references=refs[1:] or None))
+        return Path(_spaced_retry(
+            lambda: image_edit.edit(refs[0], prompt, out_path,
+                                    references=refs[1:] or None),
+            tag=f"frame edit {out_path.name}"))
     if t2i_fn is None:
         raise RuntimeError("cinegraph: no image generator available")
-    return Path(t2i_fn(prompt, out_path))
+    return Path(_spaced_retry(lambda: t2i_fn(prompt, out_path),
+                              tag=f"frame t2i {out_path.name}"))
 
 
 def derive_new_camera(video_gen, parent_ff: Path, parent_desc: str,

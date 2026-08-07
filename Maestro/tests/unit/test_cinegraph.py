@@ -110,3 +110,23 @@ def test_frame_after_cut_detects_hard_cut(tmp_path):
     import cv2
     img = cv2.imread(str(out))
     assert img.mean() > 200                       # 白帧(切后)
+
+
+def test_spaced_retry_rides_transient(monkeypatch):
+    """图像端点分钟级抖动:失败一次后成功即返回;穷尽才上抛。"""
+    from maestro.cinegraph import first_frame_factory as fff
+    monkeypatch.setattr(fff.time, "sleep", lambda s: None)
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("SSL EOF")
+        return "ok"
+    assert fff._spaced_retry(flaky, tag="t") == "ok" and len(calls) == 2
+
+    def dead():
+        raise RuntimeError("down")
+    import pytest as _pt
+    with _pt.raises(RuntimeError, match="spaced attempts"):
+        fff._spaced_retry(dead, tag="t")
