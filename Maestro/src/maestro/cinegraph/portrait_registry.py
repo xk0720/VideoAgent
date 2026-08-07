@@ -47,9 +47,11 @@ def build_portrait_registry(portraits: dict, image_edit, out_dir: Path,
             log.warning("cinegraph: portrait for %r missing (%s) — "
                         "character excluded from the registry", name, front)
             continue
+        # 配文 = ViMax pipeline 723-731 行原文("A front view portrait
+        # of X."),选图 agent 靠这几个字识别视图
         entry = {"front": {
             "path": str(front),
-            "description": f"A front-view portrait of {name}."}}
+            "description": f"A front view portrait of {name}."}}
         for view, tmpl in (("side", _SIDE_PROMPT), ("back", _BACK_PROMPT)):
             if view not in views:
                 continue
@@ -75,9 +77,7 @@ def build_portrait_registry(portraits: dict, image_edit, out_dir: Path,
             if outp.exists():
                 entry[view] = {
                     "path": str(outp),
-                    "description": (f"A {view}-view portrait of {name}"
-                                    + (", no facial features visible."
-                                       if view == "back" else "."))}
+                    "description": f"A {view} view portrait of {name}."}
         registry[name] = entry
     return registry
 

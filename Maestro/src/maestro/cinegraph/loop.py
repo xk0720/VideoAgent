@@ -300,8 +300,9 @@ def generate_movie_cinegraph(
             derived = derive_new_camera(
                 video_gen, cam_ff[parent_cam.idx], p_shot.visual_desc,
                 first.visual_desc, frames_dir, tag=f"cam{cam.idx}")
-            if derived is not None and cam.is_parent_fully_covers_child \
-                    and not cam.missing_info:
+            # ViMax 判据原样(pipeline 398 行):有父且 missing_info 为空
+            # → 派生帧直接采用,不再过选图(fully_covers 旗仅记录)
+            if derived is not None and not cam.missing_info:
                 shutil.copy(derived, out)      # 全覆盖 → 直接采用派生帧
                 cam_ff[cam.idx] = out
                 decisions.append({"stage": "camera_ff", "label": str(cam.idx),
