@@ -259,6 +259,29 @@ def _names_to_tokens(text: str, name_to_slot: dict) -> str:
     return "".join(parts)
 
 
+def _scene_text_for_prompt(text: str) -> str:
+    """台账文本 → 可入 prompt 的画面散文(共用清洗器,2026-08-08 用户
+    连环质询:重掷锚句与派生双镜是机械搬运路径,没有写手把关,台账里
+    合法存在的记录格式原文直达 API)。四步:剥 "Shot N:" 前缀;剥旁白
+    (带引号与无引号两种形态 —— 旁白是后期制作);剥 "音效:" 标注;
+    删【纯声词句】(整句只剩声词+顿号 → 无声样片里的纯噪声);收尾
+    标点归一。声词嵌在动作句里("枪声中他转身")不动 —— 只删纯声词句。"""
+    t = _SHOT_PREFIX_RE.sub("", str(text or "").strip())
+    t = re.sub(r"(?:画外)?旁白[:：]?\s*[\"“][^\"“”]*"
+               r"[\"”]。?\s*", "", t)
+    t = re.sub(r"(?:画外)?旁白[:：].*?(?=音效[:：]|$)", "", t, flags=re.S)
+    t = re.sub(r"音效[:：][^。]*。?", "", t)
+    parts = [s for s in re.split(r"(?<=[。;;!?！?])", t) if s.strip()]
+    keep = []
+    for s in parts:
+        core = s
+        for w in _scripted_sounds(s):
+            core = core.replace(w, "")
+        if re.sub(r"[、,,。;;!?！?\s]", "", core):
+            keep.append(s)
+    return "".join(keep).strip().rstrip("。. ")
+
+
 def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
                   action: str = "", end_state: str = "") -> str:
     """全修(regenerate)的 prompt 合成 —— P0-B(2026-07-18,attempt3):
@@ -277,17 +300,10 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
     if not hint:
         return base
     pin = _PIN_SENTENCE if strategy == "ti2v_prev_plus_keyframe" else ""
-    act = _SHOT_PREFIX_RE.sub("", str(action or "").strip())
-    # 标注剥除(2026-08-08 用户质询:锚句把描述里的"旁白:…/音效:…"
-    # 标注原文抄进 API——旁白无引号形态穿透了引号版剥除闸)。旁白是
-    # 后期制作,音效由压制句承载:锚句只保动作本体。
-    act = re.sub(r"(?:画外)?旁白[:：].*?(?=音效[:：]|$)", "", act,
-                 flags=re.S)
-    act = re.sub(r"音效[:：].*$", "", act, flags=re.S)
-    act = act.strip().rstrip("。. ")
+    act = _scene_text_for_prompt(action)
     anchor = ""
     if act:
-        es = str(end_state or "").strip().rstrip("。. ")
+        es = _scene_text_for_prompt(end_state)
         # 锚句 = 纯画面散文(2026-08-08 用户质询:"本镜剧本动作:/收束
         # 为:"是给人看的脚手架标签,不是画面语言,模型会当字面文本读
         # —— prompt 就该像主链一样是纯描述)。动作句 + 收束句直接拼,
@@ -3285,11 +3301,14 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
     if bg_path and Path(bg_path).exists():
         refs.append(Path(bg_path))
         bg_tok = _ref_tok(video_gen, len(refs))
-    first_desc = _strip_markers(getattr(prev_entry, "end_state", "")
-                                or getattr(prev_entry, "description", ""))
-    second_desc = _map_markers((getattr(entry, "opening_frame", "")
-                                or getattr(entry, "description", "")),
-                               tokmap)
+    # 共用清洗器(2026-08-08 用户质询:双镜描述机械搬运台账文本,
+    # "Shot N:" 前缀/带引号旁白/纯声词句原文直达 API)
+    first_desc = _scene_text_for_prompt(_strip_markers(
+        getattr(prev_entry, "end_state", "")
+        or getattr(prev_entry, "description", "")))
+    second_desc = _scene_text_for_prompt(_map_markers(
+        (getattr(entry, "opening_frame", "")
+         or getattr(entry, "description", "")), tokmap))
     tok1 = _ref_tok(video_gen, 1)
     # ViMax 双镜骨架原文 + 槽位语义(多参考是我们的扩展:原版只挂父帧,
     # 新人长相全靠模型瞎想 —— 挂肖像把长相钉死)

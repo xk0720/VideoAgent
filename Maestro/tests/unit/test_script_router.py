@@ -546,3 +546,27 @@ def test_regen_anchor_strips_annotations():
         assert "。。" not in out            # 全角句号不叠加
     finally:
         set_output_lang("en")
+
+
+def test_scene_text_cleaner_full_dirt():
+    """2026-08-08 用户三连质询的合订本:Shot 前缀/带引号旁白/无引号
+    旁白/音效标注/纯声词句/收尾标点 —— 一个清洗器全治;嵌在动作句里
+    的声词不动。"""
+    from maestro.pipeline.window_loop import (_scene_text_for_prompt,
+                                              set_run_ambience,
+                                              set_run_sound_lexicon)
+    set_run_ambience()
+    set_run_sound_lexicon()
+    dirty = ('Shot 4: 近景特写中,<<<image_3>>>的手将金色手枪抵在'
+             '<<<image_2>>>额头;破碎的玻璃碎片在空中飞舞。'
+             '冰冷金属摩擦声、玻璃碎裂声。'
+             '旁白:"当冰冷的金色手枪抵在她的额头。"')
+    out = _scene_text_for_prompt(dirty)
+    assert "Shot 4" not in out
+    assert "旁白" not in out and "抵在她的额头" not in out
+    assert "冰冷金属摩擦声" not in out          # 纯声词句删除
+    assert "玻璃碎片在空中飞舞" in out          # 动作本体保留
+    assert not out.endswith("。")               # 收尾标点归一
+    # 声词嵌在动作句里 → 整句保留
+    keep = _scene_text_for_prompt("枪声回荡中他缓缓转身。")
+    assert "枪声回荡中他缓缓转身" in keep
