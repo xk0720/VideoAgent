@@ -349,3 +349,60 @@ def test_add_transition_failure_never_replayed_nor_crashes(tmp_path):
               if a["tool"] == "add_transition" and a["outcome"] == "failed"]
     assert failed and "DataInspectionFailed" in failed[0]["error"]
     assert getattr(res.clip, "transition_path", None) in (None, "")
+
+
+def test_propagate_head_anchors_on_own_first_frame(tmp_path, monkeypatch):
+    """2026-08-08 根修:融合派全员 ref2v(无条件首帧),单拍镜段修落
+    头段 → 左锚回落原片自身首帧,修复真执行而非空转 None。"""
+    import maestro.pipeline.timeline as tl
+
+    class _Seg:
+        def __init__(self, tmp):
+            self.idx = 0
+            self.start_frame, self.end_frame = 0, 120
+            self.video_path = tmp / "s0.mp4"
+            self.video_path.write_text("SEG")
+            self.first_frame_path = tmp / "s0_f.png"
+            self.first_frame_path.write_text("F")
+            self.last_frame_path = None
+
+    class _TL:
+        degraded = False
+        fps = 24.0
+        n_frames = 120
+
+        def __init__(self, tmp):
+            self.segments = [_Seg(tmp)]
+
+        def segment_for_frame_range(self, fr):
+            return self.segments[0]
+
+    class _Defect:
+        frame_range = (29, 80)
+        fix_modality = "motion"
+
+    class _Gen:
+        def __init__(self):
+            self.calls = []
+
+        def capabilities(self):
+            return {"t2v", "i2v", "flf2v"}
+
+        def generate(self, prompt, duration, out_path, first_frame=None,
+                     reference_images=None, **k):
+            self.calls.append({"first": str(first_frame)})
+            p = Path(out_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("V")
+            return p
+
+    monkeypatch.setattr(tl, "_fit_to_seconds", lambda v, d, o: v)
+    monkeypatch.setattr(tl, "extract_frame", lambda v, i, o: None)
+    monkeypatch.setattr(tl, "_splice", lambda paths, out: out)
+    d = tmp_path / "t"
+    d.mkdir()
+    gen = _Gen()
+    out = tl.propagate_repair(_TL(d), _Defect(), video_gen=gen,
+                              hint="fix", cache_dir=tmp_path / "r")
+    assert out is not None
+    assert gen.calls and gen.calls[0]["first"].endswith("s0_f.png")

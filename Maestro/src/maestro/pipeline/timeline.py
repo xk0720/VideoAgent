@@ -388,7 +388,15 @@ def propagate_repair(
     cascade_needed = False
 
     if left_anchor is None and i == 0:
-        # head 跨度且无条件首帧可锚 —— 无法在不动第 0 帧的前提下双锚重生。
+        # 头段左锚回落【原片自身首帧】(2026-08-08 根修:融合派全员
+        # ref2v 后无条件首帧,单拍镜任何段修都落头段,此前四连空转烧掉
+        # 修复轮)—— 段修的本意就是保开头不动,拿它当锚天经地义。
+        left_anchor = segs[0].first_frame_path
+        if left_anchor is not None:
+            log.info("propagate_repair: head span anchored on the clip's "
+                     "OWN first frame (no condition image)")
+    if left_anchor is None and i == 0:
+        # 连自身首帧都提不出(时间线未抽帧)—— 诚实降级整镜工具。
         log.info("propagate_repair: head span with no usable left anchor "
                  "(no first-frame condition image) — degrading to whole-clip "
                  "tools")

@@ -505,3 +505,23 @@ def test_derive_junction_frame_fail_returns_none(tmp_path):
         assert got is None                       # 降级条件①,不炸
     finally:
         fff._SPACED_WAITS_S = old
+
+
+def test_regen_prompt_reinjects_pin_clause():
+    """2026-08-08 根修(融合 run1 shot4:重掷丢机器句反而更差):清单
+    有 pin_frame 行且 hint 未提 → 机器承接句照初掷同款前置。"""
+    from maestro.language import set_output_lang
+    set_output_lang("zh")
+    try:
+        slots = [{"slot": "<<<image_1>>>", "referenceable": True,
+                  "content": "c"},
+                 {"slot": "<<<image_4>>>", "referenceable": True,
+                  "source": "pin_frame",
+                  "content": "the first frame itself (executor owns its "
+                             "mention)"}]
+        out = wl._regen_prompt("ref2v", "base", "修正:枪口只闪一次",
+                               slots, action="<<<image_1>>>举枪",
+                               end_state="静止")
+        assert out.startswith("画面从<<<image_4>>>所示的首帧继续。")
+    finally:
+        set_output_lang("en")

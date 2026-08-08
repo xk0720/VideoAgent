@@ -291,6 +291,17 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
             anchor = (f"This shot's scripted action: {act}"
                   + (f", ending as: {es}." if es else "."))
     prompt = " ".join(x for x in (pin, hint.strip(), anchor) if x)
+    # pin 承接句回注(2026-08-08 根修:融合 run1 shot4 重掷丢机器句后
+    # 反而更差 —— 派生帧 refer 随行但 prompt 无所指,锚定被稀释):清单
+    # 里有 pin_frame 行且 hint 没提它 → 机器句照初掷同款前置。
+    _pin_row = next((r_ for r_ in (slots or [])
+                     if r_.get("source") == "pin_frame"), None)
+    if _pin_row and _pin_row.get("slot") \
+            and _pin_row["slot"] not in prompt:
+        from ..language import zh as _zh2
+        prompt = ((f"画面从{_pin_row['slot']}所示的首帧继续。" if _zh2()
+                   else f"The video continues from the first frame shown "
+                        f"in {_pin_row['slot']}. ") + prompt)
     fixed, audit = validate_references(prompt, slots)
     if not audit["ok"]:
         log.warning("regen hint references unknown slots %s — falling back "
