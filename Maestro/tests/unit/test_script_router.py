@@ -570,3 +570,64 @@ def test_scene_text_cleaner_full_dirt():
     # 声词嵌在动作句里 → 整句保留
     keep = _scene_text_for_prompt("枪声回荡中他缓缓转身。")
     assert "枪声回荡中他缓缓转身" in keep
+
+
+def test_derive_second_desc_all_references(tmp_path):
+    """2026-08-08 用户令:第二镜描述里人物与场景全部记号指称 ——
+    描述里出现的 cast 全员挂肖像记号(不只判官名单);换景时描述
+    正文以场景板记号开笔。"""
+    import subprocess
+    prev_video = tmp_path / "prev.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=gray:s=160x90:d=0.3", str(prev_video)], check=True)
+    xm = tmp_path / "xm.png"
+    al = tmp_path / "al.png"
+    bg = tmp_path / "bg.png"
+    for p in (xm, al, bg):
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+             "-i", "color=c=gray:s=160x90:d=0.1", "-frames:v", "1",
+             str(p)], check=True)
+
+    class _VG:
+        generate_audio = False
+
+        def __init__(self):
+            self.calls = []
+
+        def ref_token(self, n):
+            return f"<<<image_{n}>>>"
+
+        def generate(self, prompt, duration, out_path, fps=24, seed=0,
+                     reference_images=None, **kw):
+            self.calls.append({"prompt": prompt,
+                               "refs": [str(r) for r in
+                                        (reference_images or [])]})
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error",
+                 "-f", "lavfi", "-i", "color=c=black:s=160x90:d=1",
+                 "-f", "lavfi", "-i", "color=c=white:s=160x90:d=1",
+                 "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0",
+                 str(out_path)], check=True)
+            return out_path
+
+    from types import SimpleNamespace as _NS
+    vg = _VG()
+    prev = _NS(video_path=str(prev_video), end_state="<小明>静立。",
+               description="", opening_frame="")
+    # 描述里出现 小明(判官名单只报 阿浪)→ 小明也必须记号化
+    entry = _NS(shot_idx=5, end_state="",
+                opening_frame="<阿浪>落在礁石上,<小明>抬头看它。",
+                description="")
+    got = wl._derive_junction_frame(
+        vg, None, None, prev, prev, entry, ["阿浪"], CAST,
+        {"阿浪": str(al), "小明": str(xm)}, str(bg),
+        tmp_path / "shot005", "zh")
+    assert got is not None
+    p = vg.calls[0]["prompt"]
+    second = [ln for ln in p.split("\n")
+              if ln.startswith("The second shot")][0]
+    assert "所示的场景中" in second               # 场景记号开笔
+    assert "小明" not in second and "阿浪" not in second   # 无裸名
+    assert second.count("<<<image_") >= 3        # 场景+两人物记号在场

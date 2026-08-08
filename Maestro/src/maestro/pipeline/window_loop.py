@@ -3290,9 +3290,15 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
                        shot_dir / "junction_prev_last.png")
     if tail is None:
         return None
+    _desc_src = (getattr(entry, "opening_frame", "")
+                 or getattr(entry, "description", ""))
+    # 人物全引用(2026-08-08 用户令):记号覆盖【描述里出现的所有
+    # cast】∪ 判官的开场名单 —— 第二镜描述里不许有裸名人物。
+    _names = sorted(set(open_cast)
+                    | set(_cast_in_shot(_desc_src, cast) or set()))
     refs: list = [Path(tail)]
     tokmap: dict = {}
-    for n in open_cast:
+    for n in _names:
         p = (portraits or {}).get(n)
         if p and Path(p).exists():
             refs.append(Path(p))
@@ -3306,9 +3312,14 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
     first_desc = _scene_text_for_prompt(_strip_markers(
         getattr(prev_entry, "end_state", "")
         or getattr(prev_entry, "description", "")))
-    second_desc = _scene_text_for_prompt(_map_markers(
-        (getattr(entry, "opening_frame", "")
-         or getattr(entry, "description", "")), tokmap))
+    second_desc = _scene_text_for_prompt(_map_markers(_desc_src, tokmap))
+    if bg_tok:
+        # 场景也是引用(2026-08-08 用户令):换景时第二镜描述正文里
+        # 直接指称场景板,不只靠随行图
+        second_desc = ((f"在{bg_tok}所示的场景中,{second_desc}"
+                        if prompt_lang == "zh" else
+                        f"In the location shown in {bg_tok}, "
+                        f"{second_desc}"))
     tok1 = _ref_tok(video_gen, 1)
     # ViMax 双镜骨架原文 + 槽位语义(多参考是我们的扩展:原版只挂父帧,
     # 新人长相全靠模型瞎想 —— 挂肖像把长相钉死)
