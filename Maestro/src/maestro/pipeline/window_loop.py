@@ -288,15 +288,15 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
     anchor = ""
     if act:
         es = str(end_state or "").strip().rstrip("。. ")
-        # 锚句语言随项目(2026-08-06 xiaoming run2 事故:英文脚手架
-        # "This shot's scripted action:" 原样泄进中文 prompt)
+        # 锚句 = 纯画面散文(2026-08-08 用户质询:"本镜剧本动作:/收束
+        # 为:"是给人看的脚手架标签,不是画面语言,模型会当字面文本读
+        # —— prompt 就该像主链一样是纯描述)。动作句 + 收束句直接拼,
+        # 语言随原料(act/end_state 本就来自剧本语言)。
         from ..language import zh as _zh
         if _zh():
-            anchor = (f"本镜剧本动作:{act}"
-                      + (f";收束为:{es}。" if es else "。"))
+            anchor = f"{act}。" + (f"{es}。" if es else "")
         else:
-            anchor = (f"This shot's scripted action: {act}"
-                  + (f", ending as: {es}." if es else "."))
+            anchor = f"{act}." + (f" {es}." if es else "")
     prompt = " ".join(x for x in (pin, hint.strip(), anchor) if x)
     # pin 承接句回注(2026-08-08 根修:融合 run1 shot4 重掷丢机器句后
     # 反而更差 —— 派生帧 refer 随行但 prompt 无所指,锚定被稀释):清单

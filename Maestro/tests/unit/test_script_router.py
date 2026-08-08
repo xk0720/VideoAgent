@@ -108,7 +108,7 @@ def test_regen_anchor_language_follows_project():
               "content": "c"}],
             action="<<<image_1>>>紧攥拳头", end_state="静止")
         assert "scripted action" not in out
-        assert "本镜剧本动作" in out
+        assert "紧攥拳头" in out
     finally:
         set_output_lang("en")
 

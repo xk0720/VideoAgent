@@ -176,17 +176,18 @@ def test_regen_action_anchor_guarantees_motion():
         end_state="the cat stands at the bowl, head lowered, eating")
     assert out.startswith(_PIN_SENTENCE)
     assert hint in out
-    # "Shot N: scene N —" 台账前缀已剥;起点/过程/终点三件套齐
-    assert "This shot's scripted action: the cat reaches the bowl" in out
+    # "Shot N: scene N —" 台账前缀已剥;起点/过程/终点三件套齐;
+    # 锚句 = 纯散文,无脚手架标签(2026-08-08 用户质询)
+    assert "the cat reaches the bowl" in out
     assert "Shot 4" not in out
-    assert "ending as: the cat stands at the bowl" in out
+    assert "scripted action" not in out
+    assert "the cat stands at the bowl" in out
 
 
 def test_regen_action_anchor_without_end_state():
     out = _regen_prompt("extend_prev", "base", "fix the paw.", [],
                         action="the cat trots on")
-    assert out == ("fix the paw. This shot's scripted action: "
-                   "the cat trots on.")
+    assert out == "fix the paw. the cat trots on."
 
 
 def test_setting_scrub_verbatim_replaced_case_insensitive():
