@@ -525,3 +525,24 @@ def test_regen_prompt_reinjects_pin_clause():
         assert out.startswith("画面从<<<image_4>>>所示的首帧继续。")
     finally:
         set_output_lang("en")
+
+
+def test_regen_anchor_strips_annotations():
+    """2026-08-08 用户质询:动作锚机械抄描述,"旁白:…/音效:…"标注
+    与全角句号一并跟进 API → 锚句只保动作本体,单句号收尾。"""
+    from maestro.language import set_output_lang
+    set_output_lang("zh")
+    try:
+        slots = [{"slot": "<<<image_1>>>", "referenceable": True,
+                  "content": "c"}]
+        out = wl._regen_prompt(
+            "ref2v", "base", "修正:去除多余闪光", slots,
+            action=("近景特写,<<<image_1>>>举枪抵额;车窗骤碎。"
+                    "旁白:恩怨了结,还是轮回开启?音效:金属摩擦声。"),
+            end_state="<<<image_1>>>静止,摄影机静止。")
+        assert "旁白" not in out and "音效" not in out
+        assert "轮回" not in out
+        assert "举枪抵额" in out            # 动作本体保留
+        assert "。。" not in out            # 全角句号不叠加
+    finally:
+        set_output_lang("en")

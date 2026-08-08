@@ -277,10 +277,17 @@ def _regen_prompt(strategy: str, base: str, hint: str, slots: list,
     if not hint:
         return base
     pin = _PIN_SENTENCE if strategy == "ti2v_prev_plus_keyframe" else ""
-    act = _SHOT_PREFIX_RE.sub("", str(action or "").strip()).rstrip(". ")
+    act = _SHOT_PREFIX_RE.sub("", str(action or "").strip())
+    # 标注剥除(2026-08-08 用户质询:锚句把描述里的"旁白:…/音效:…"
+    # 标注原文抄进 API——旁白无引号形态穿透了引号版剥除闸)。旁白是
+    # 后期制作,音效由压制句承载:锚句只保动作本体。
+    act = re.sub(r"(?:画外)?旁白[:：].*?(?=音效[:：]|$)", "", act,
+                 flags=re.S)
+    act = re.sub(r"音效[:：].*$", "", act, flags=re.S)
+    act = act.strip().rstrip("。. ")
     anchor = ""
     if act:
-        es = str(end_state or "").strip().rstrip(". ")
+        es = str(end_state or "").strip().rstrip("。. ")
         # 锚句语言随项目(2026-08-06 xiaoming run2 事故:英文脚手架
         # "This shot's scripted action:" 原样泄进中文 prompt)
         from ..language import zh as _zh
