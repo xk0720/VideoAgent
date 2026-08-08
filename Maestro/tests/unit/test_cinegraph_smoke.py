@@ -111,8 +111,10 @@ class _VG:
         return _mk_mp4(Path(out_path))
 
     def frame_to_frame(self, prompt, first_frame, last_frame, out_path,
-                       duration=5, seed=0):
-        self.calls.append({"kind": "flf2v", "prompt": prompt})
+                       duration=5, seed=0, reference_images=None):
+        self.calls.append({"kind": "flf2v", "prompt": prompt,
+                           "refs": [str(r) for r in
+                                    (reference_images or [])]})
         return _mk_mp4(Path(out_path))
 
 

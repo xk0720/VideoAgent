@@ -125,49 +125,40 @@ never an embellishment.
   phrase camera motion so it could read as subject motion ("the camera
   slowly dollies in", never "the scene moves closer").
 
-## Junction rules (continuation shots)
+## Junction rules (routed for you, IN ADVANCE)
 
-- CONTINUATION LAWS BELOW APPLY TO PINNED SHOTS ONLY. When `junction`
-  carries `transition: true` there is NO vector and continuity writing
-  is FORBIDDEN — skip OPEN FROM THE EXIT VECTOR / VELOCITY HANDOFF /
-  FINISH THE GESTURE entirely and write a fresh composition.
-- OPEN FROM THE EXIT VECTOR: `prev_last_frame_actual` is a structured
-  exit vector (subjects with position/pose/motion/direction/pace,
-  camera framing/motion/speed, unfinished_action) written by a vision
-  model from the previous shot's ACTUAL final seconds. The first beat
-  matches it field by field; when it contradicts the scripted end
-  state, the vector wins.
-- PRE-MAPPED JUNCTION: the vector arrives with subjects ALREADY
-  tokenized (`who` is the slot token) and unresolved figures already
-  stripped down to a count — COPY the subjects as given (position,
-  pose, motion come from each entry; the vector wins over the script).
-  For unresolved figures write AT MOST one generic subordinated clause
-  ("background figures remain still") — never describe, name or
-  position them individually; when uncertain, delete.
-- VELOCITY HANDOFF: a moving subject opens mid-motion with
-  continuative phrasing ("continues her walk at the same pace" —
-  never "begins"); a camera with speed ≠ none keeps that move and
-  speed in the first sentence. NEVER reverse the camera's direction
-  across the cut.
-- FINISH THE GESTURE: when `unfinished_action` is set, the first
-  clause completes that action before anything new starts.
-- PIN vs TRANSITION (routed for you, IN ADVANCE, from the storyboard):
-  the executor compares the previous shot's end-state cast with this
-  shot's opening cast BEFORE anything is generated.
-  · Cast matches → your menu is i2v_first (pinned continuation). The
-    pin is enforced at the API level (first_frame). At most ONE brief
-    handoff clause is allowed ("continuing from the previous shot's
-    end", a few words); long pin declarations are deleted by a gate.
-    Write motion only. RE-ANCHOR every token against THIS
-    shot's slot manifest: slot numbers SHIFT between shots; the token
-    that meant one character last shot may mean another now. Never
-    reuse the previous shot's numbering from memory.
-  · New character appears → your menu is ref2v (TRANSITION). Write a
-    FRESH composition for the new subjects; ANY continuity phrasing is
-    FORBIDDEN (no carry-over, no entry alignment, no finishing the
-    previous gesture — never morph the previous people into the new
-    ones). A slow camera-move bridge clip is generated automatically
-    to own the seam.
+The executor classifies every junction BEFORE generation and tells you
+via `junction.junction_kind`. Three kinds, three laws — obey the one
+you are given:
+
+- `continue` (same cast, same background): `prev_tail_report` is a
+  vision model's reading of the previous shot's ACTUAL final seconds,
+  two fields — `camera_angle` (framing, height/angle, camera position
+  and motion state) and `character_actions` (per character: position
+  + what they are visibly doing; `who` arrives already tokenized).
+  Open THIS shot from that reality: first beat matches the reported
+  camera angle and each character's position/action; a moving subject
+  opens mid-motion with continuative phrasing ("continues her walk" —
+  never "begins"); never reverse the camera's direction across the
+  cut. When the report contradicts the scripted end state, the report
+  wins (it is what was actually filmed). The report is an OPENING
+  anchor only — never re-narrate it as this shot's content. There is
+  NO pinned first frame: the enhancer polishes continuity; you write
+  the shot's own action faithfully from its script.
+- `cut` (same cast, background changed): hard cut. Write a FRESH
+  composition; ANY continuity phrasing is FORBIDDEN (no carry-over,
+  no entry alignment, no finishing the previous gesture). Character
+  and location consistency ride on the reference images.
+- `derive` (cast changed): the opening frame ALREADY EXISTS as a
+  derived stitch frame riding as the manifest's LAST pin_frame row.
+  The executor owns its mention (a machine clause cites its token) —
+  NEVER reference that slot yourself, and write NO continuity with
+  the previous shot; describe this shot's own action fresh from its
+  script.
+- RE-ANCHOR every token against THIS shot's slot manifest: slot
+  numbers SHIFT between shots; the token that meant one character
+  last shot may mean another now. Never reuse the previous shot's
+  numbering from memory.
 - SETTLE-TO-CUT: unless the script's end_state explicitly keeps
   motion running, the final beat reaches stillness — camera settled,
   subjects at rest — so the NEXT shot inherits a clean still joint.

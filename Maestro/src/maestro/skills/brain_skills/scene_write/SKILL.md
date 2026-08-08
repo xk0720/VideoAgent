@@ -27,7 +27,14 @@ translate — whatever you drop here is lost to the film forever.
    as <name> using the cast key verbatim — the deterministic reference
    chain (marker → slot → token) starts from these markers; an
    unmarked mention breaks a character's identity anchoring for that
-   shot.
+   shot. CHARACTERS RIDE EVERY FIELD (hard law): every character
+   visible in the frame is NAMED with its <name> marker in the
+   description AND in end_state/opening_frame — a shot text that is
+   only camera movement + atmosphere ("the camera pans as neon light
+   sweeps the frame") while a person is on screen has DROPPED that
+   person: downstream video prompts and reference selection are built
+   from these texts, and an unnamed character gets no reference image
+   and may vanish or drift.
 4. CAST CANON LAW: when the task JSON carries a non-empty `cast_canon`,
    those names and descriptors ARE the film-wide canon (already
    settled upstream, given characters caption-locked). Echo them

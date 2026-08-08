@@ -2385,7 +2385,18 @@ def _slot_manifest(strategy: str, entry, prev,
     # ── 百炼可灵新策略(2026-08-03):编号按方言渲染;i2v_first 的
     # refer 编号不含 first_frame(M0 实测:<<<image_1>>> 指首张 refer)──
     if strategy == "ref2v":
-        own = list(refs)
+        # 派生缝合(2026-08-07 用户令,条件②):派生帧作 pin_frame 行,
+        # 末位编号、执行器专属提及("画面从 <<<image_K>>> 继续");挂它
+        # 时背景板剔除(板磁铁法:帧自带空间,板会抢方向盘)。
+        _pin_paths = {str(im.get("path")) for im in
+                      (getattr(entry, "images", None) or [])
+                      if im.get("source") == "pin_frame"}
+        own = [x for x in refs if str(x) not in _pin_paths]
+        if _pin_paths:
+            _bgp = {str(im.get("path")) for im in
+                    (getattr(entry, "images", None) or [])
+                    if im.get("source") == "background"}
+            own = [x for x in own if str(x) not in _bgp]
         rows = [{"slot": _ref_tok(video_gen, i + 1), "referenceable": True,
                  "content": _c(p, "a planned reference image")}
                 for i, p in enumerate(own)]
@@ -2393,6 +2404,14 @@ def _slot_manifest(strategy: str, entry, prev,
                   "referenceable": True, "name": n,
                   "content": _portrait_slot_content(n)}
                  for j, n in enumerate(sorted(portraits or {}))]
+        if _pin_paths:
+            rows.append({
+                "slot": _ref_tok(video_gen,
+                                 len(own) + len(portraits or {}) + 1),
+                "referenceable": True, "source": "pin_frame",
+                "content": ("the first frame itself (executor owns its "
+                            "mention — never reference this slot "
+                            "yourself)")})
         return rows
     if strategy == "i2v_first":
         rows = [{"slot": "FIRST_FRAME", "referenceable": False,
@@ -2687,18 +2706,30 @@ def _generate_with_condition(strategy: str, entry, prev, spec: ShotSpec,
     if strategy == "ref2v":
         # 百炼可灵参考生视频(2026-08-03):计划图 + 肖像全走 refer 通道,
         # 编号按方言(<<<image_N>>>,顺序 = media 数组顺序)。
+        # 派生缝合(2026-08-07):pin_frame 行末位随行,与 _slot_manifest
+        # 1:1(own 剔板剔 pin → 肖像 → pin 末位)。
         p_names = sorted(portraits or {})
         p_paths = [Path(portraits[n]) for n in p_names]
-        all_refs = list(refs) + p_paths
+        _pin = [im for im in (getattr(entry, "images", None) or [])
+                if im.get("source") == "pin_frame"]
+        _own = [x for x in refs
+                if str(x) not in {str(i_.get("path")) for i_ in _pin}]
+        if _pin:
+            _bgp = {str(im.get("path")) for im in
+                    (getattr(entry, "images", None) or [])
+                    if im.get("source") == "background"}
+            _own = [x for x in _own if str(x) not in _bgp]
+        all_refs = _own + p_paths + [Path(_pin[0]["path"])] if _pin \
+            else _own + p_paths
         if all_refs:
             cond.update(reference_images=[str(p) for p in all_refs],
                         anchoring="ref2v")
             fallback = (spec.prompt + ". " + " ".join(
                 f"{_ref_tok(video_gen, i + 1)} shows: "
                 f"{_desc_of(entry, p_) or 'a planned reference image'} — "
-                f"keep it consistent." for i, p_ in enumerate(refs))
+                f"keep it consistent." for i, p_ in enumerate(_own))
                 + "".join(
-                    f" {_ref_tok(video_gen, len(refs) + j + 1)} is the "
+                    f" {_ref_tok(video_gen, len(_own) + j + 1)} is the "
                     f"official portrait of {n} — match the character's "
                     f"appearance to it; never copy its pose or framing."
                     for j, n in enumerate(p_names)))
@@ -3103,6 +3134,187 @@ def _script_cast_continuity(prev_entry, entry, cast,
                        f"(上镜结尾: {sorted(prev_cast)})")
     return True, (f"本镜开场人物 {sorted(cur_cast)} ⊆ "
                   f"上镜结尾人物 {sorted(prev_cast)}")
+
+
+def _judge_junction_cast(llm, prev_entry, entry, cast,
+                         portraits: Optional[dict] = None,
+                         prompt_language: str = "en"):
+    """人物同异判官(2026-08-07 用户令,三条件融合派):分镜文字只提到
+    谁 ≠ 画面里只有谁("上镜末尾<小明>在哭"时小红可能仍在画面里)——
+    交给 LLM 用剧情推理【实际在场】的人物集合;坏输出退化为确定性
+    集合相等比对(同脸不同名按肖像路径判等)。
+    返回 (same: bool, reason: str, cur_open_cast: list)。"""
+    cast_keys = sorted((cast or {}).keys())
+
+    def _face(n):
+        return str((portraits or {}).get(n) or f"name:{n}")
+
+    def _same_sets(a, b):
+        return {_face(n) for n in a} == {_face(n) for n in b}
+
+    prev_txt = ((getattr(prev_entry, "description", "") or "") + "\n"
+                + (getattr(prev_entry, "end_state", "") or ""))
+    cur_txt = ((getattr(entry, "description", "") or "") + "\n"
+               + (getattr(entry, "opening_frame", "") or ""))
+    if llm is not None and cast_keys:
+        try:
+            raw = llm.complete(
+                "Two consecutive shots of one film. Reason about who is "
+                "PHYSICALLY IN FRAME at the END of the previous shot and "
+                "at the START of the current shot. The storyboard text "
+                "may mention only the character who acts — others can "
+                "still be in frame (e.g. both sit in the same car "
+                "throughout). Use the story logic. Only these character "
+                "names exist: " + json.dumps(cast_keys, ensure_ascii=False)
+                + "\nPREVIOUS SHOT (description + end state):\n" + prev_txt
+                + "\nCURRENT SHOT (description + opening):\n" + cur_txt
+                + '\nSTRICT JSON only: {"prev_end_cast": [<names>], '
+                  '"cur_open_cast": [<names>], "reason": "<one sentence'
+                + (", in Chinese" if prompt_language == "zh" else "")
+                + '>"}')
+            data = _extract_json(raw) or {}
+            pe = [n for n in (data.get("prev_end_cast") or [])
+                  if n in cast_keys]
+            co = [n for n in (data.get("cur_open_cast") or [])
+                  if n in cast_keys]
+            if pe and co:
+                same = _same_sets(pe, co)
+                reason = (f"LLM 判定 上镜末在场{sorted(pe)} vs 本镜开场"
+                          f"{sorted(co)}: {str(data.get('reason'))[:120]}")
+                brain_log("window/junction_cast_judge", {
+                    "raw": raw, "parsed": data, "usable": True,
+                    "error": None})
+                return same, reason, sorted(set(co))
+            brain_log("window/junction_cast_judge", {
+                "raw": raw, "parsed": data, "usable": False,
+                "error": "empty/unknown cast lists"})
+        except Exception as exc:
+            log.warning("junction cast judge failed (%s) — deterministic "
+                        "fallback", str(exc)[:120])
+    # 确定性兜底:标记提取 + 集合相等(新法:增员或离场都算变)
+    prev_cast = set(_cast_in_shot(
+        (getattr(prev_entry, "end_state", "") or
+         getattr(prev_entry, "description", "") or ""), cast) or {})
+    cur_cast = set(_cast_in_shot(
+        (getattr(entry, "opening_frame", "") or
+         getattr(entry, "description", "") or ""), cast) or {})
+    if not prev_cast or not cur_cast:
+        return True, "兜底:任一侧提取不到人物 — 保守判人物一致", \
+            sorted(cur_cast)
+    same = _same_sets(prev_cast, cur_cast)
+    return same, (f"兜底集合比对 上镜末{sorted(prev_cast)} vs 本镜开场"
+                  f"{sorted(cur_cast)}"), sorted(cur_cast)
+
+
+def _parse_tail_report(text):
+    """片尾理解报告解析:{"camera_angle", "character_actions"} → dict;
+    坏 JSON → None(调用方原文照发,诚实降级)。"""
+    data = _extract_json(str(text or "").strip())
+    if not isinstance(data, dict):
+        return None
+    if not (data.get("camera_angle") or data.get("character_actions")):
+        return None
+    return {"camera_angle": str(data.get("camera_angle") or ""),
+            "character_actions": [
+                a for a in (data.get("character_actions") or [])
+                if isinstance(a, dict)]}
+
+
+def _map_tail_report(report, name_to_slot: dict, cast,
+                     portraits: Optional[dict] = None):
+    """报告的 who → 记号(同 _map_junction 的肖像路径判等);无槽者保名。"""
+    if not isinstance(report, dict):
+        return report
+    _slot_by_path = {}
+    for _n, _tok in (name_to_slot or {}).items():
+        _pp = (portraits or {}).get(_n)
+        if _pp:
+            _slot_by_path.setdefault(str(_pp), _tok)
+    acts = []
+    for a in (report.get("character_actions") or []):
+        who = str(a.get("who", "")).strip()
+        tok = (name_to_slot or {}).get(who) \
+            or _slot_by_path.get(str((portraits or {}).get(who, "")))
+        acts.append({**a, "who": tok or who})
+    return {"camera_angle": report.get("camera_angle", ""),
+            "character_actions": acts}
+
+
+def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
+                           open_cast, cast, portraits, bg_path,
+                           shot_dir: Path, prompt_lang: str):
+    """条件②(2026-08-07 用户令):人物变了 → ViMax 双镜切缝合。
+    参考图 = [上镜真实末帧] + [本镜开场人物肖像…] (+ 新背景板);双镜
+    prompt 用 ViMax 骨架,第二镜描述取自本镜脚本,人物用记号指称。
+    切后帧过帧审查(只认矛盾);拒 → 换 seed 重派生一次;仍拒/失败 →
+    None(调用方降级条件① ref2v 硬切)。"""
+    from ..cinegraph.first_frame_factory import (_frame_after_cut,
+                                                 _spaced_retry,
+                                                 frame_review_ok)
+    shot_dir.mkdir(parents=True, exist_ok=True)
+    tail = _last_frame(Path(prev.video_path),
+                       shot_dir / "junction_prev_last.png")
+    if tail is None:
+        return None
+    refs: list = [Path(tail)]
+    tokmap: dict = {}
+    for n in open_cast:
+        p = (portraits or {}).get(n)
+        if p and Path(p).exists():
+            refs.append(Path(p))
+            tokmap[n] = _ref_tok(video_gen, len(refs))
+    bg_tok = None
+    if bg_path and Path(bg_path).exists():
+        refs.append(Path(bg_path))
+        bg_tok = _ref_tok(video_gen, len(refs))
+    first_desc = _strip_markers(getattr(prev_entry, "end_state", "")
+                                or getattr(prev_entry, "description", ""))
+    second_desc = _map_markers((getattr(entry, "opening_frame", "")
+                                or getattr(entry, "description", "")),
+                               tokmap)
+    tok1 = _ref_tok(video_gen, 1)
+    # ViMax 双镜骨架原文 + 槽位语义(多参考是我们的扩展:原版只挂父帧,
+    # 新人长相全靠模型瞎想 —— 挂肖像把长相钉死)
+    prompt = ("Two shots. The transition between the shots is a cut to. "
+              "The style of the two shots should be consistent."
+              f"\nThe first shot description: {first_desc}."
+              f"\nThe second shot description: {second_desc}."
+              f"\n{tok1} is the exact frame the first shot starts on."
+              + "".join(f" {t} is the official portrait of {n} — identity "
+                        f"only, never copy its pose or framing."
+                        for n, t in tokmap.items())
+              + (f" {bg_tok} shows the second shot's location — same "
+                 f"space, ignore its empty framing." if bg_tok else ""))
+    want = _strip_markers(getattr(entry, "opening_frame", "")
+                          or getattr(entry, "description", ""))
+    for attempt, seed in enumerate((777, 778)):
+        vout = shot_dir / f"junction_two_shot_s{seed}.mp4"
+        fout = shot_dir / f"junction_derived_s{seed}.png"
+        try:
+            if not vout.exists():
+                old_a = getattr(video_gen, "generate_audio", False)
+                video_gen.generate_audio = False
+                try:
+                    _spaced_retry(
+                        lambda: video_gen.generate(
+                            prompt, 5, vout, fps=24, seed=seed,
+                            reference_images=refs),
+                        tag=f"junction derivation shot{entry.shot_idx}")
+                finally:
+                    video_gen.generate_audio = old_a
+            frame = _frame_after_cut(vout, fout)
+        except Exception as exc:
+            log.warning("window: junction derivation FAILED for shot %d "
+                        "(%s) — falling back to the hard-cut route",
+                        entry.shot_idx, str(exc)[:160])
+            return None
+        if frame_review_ok(mllm, llm, frame, want):
+            return Path(frame)
+        log.warning("window: derived junction frame REJECTED (attempt "
+                    "%d) — %s", attempt + 1,
+                    "re-deriving with a new seed" if attempt == 0
+                    else "falling back to the hard-cut route")
+    return None
 
 
 def _map_markers(text: str, name_to_slot: dict) -> str:
@@ -3662,19 +3874,35 @@ def generate_movie_windowed(
         for _bk in _need_keys:
             aprompt = _bg_prompts[_bk]
             adir.mkdir(parents=True, exist_ok=True)
-            try:
-                got = video_gen.text_to_image(
-                    aprompt, adir / f"bg_{_bk}.png")
-                storyboard.backgrounds[_bk] = {"path": str(got),
-                                               "src": "t2i"}
-                decisions.append({"stage": "background_asset", "bg": _bk,
-                                  "via": "t2i", "path": str(got)})
-            except Exception as exc:
-                log.warning("background asset %s failed (%s) — that "
-                            "background rides on text only", _bk, exc)
-                decisions.append({"stage": "background_asset", "bg": _bk,
-                                  "via": "failed"})
+            # 资产保障(2026-08-07 用户令 First):背景板必须到手 ——
+            # 网络抖动走间隔重试;穷尽仍失败 → 响亮报错停跑,不再
+            # "rides on text only" 静默降级。
+            from ..cinegraph.first_frame_factory import _spaced_retry
+            got = _spaced_retry(
+                lambda: video_gen.text_to_image(aprompt,
+                                                adir / f"bg_{_bk}.png"),
+                tag=f"background asset {_bk}")
+            storyboard.backgrounds[_bk] = {"path": str(got), "src": "t2i"}
+            decisions.append({"stage": "background_asset", "bg": _bk,
+                              "via": "t2i", "path": str(got)})
         storyboard._save()
+        # 资产保障闸(2026-08-07 用户令 First):逐镜断言 人物图 + 背景图
+        # 齐备 —— 缺一不开拍,报错点名到镜,绝不静默。
+        _missing_assets: list = []
+        for _e in storyboard.entries:
+            for _n in _cast_in_shot(_e.description, storyboard.cast):
+                _pp = (storyboard.portraits or {}).get(_n)
+                if not _pp or not Path(_pp).exists():
+                    _missing_assets.append(
+                        f"shot {_e.shot_idx}: character {_n!r} 无肖像")
+            _k = (getattr(_e, "bg_id", "") or f"scene_{_e.scene_idx}")
+            _b = (storyboard.backgrounds or {}).get(_k) or {}
+            if not _b.get("path") or not Path(str(_b["path"])).exists():
+                _missing_assets.append(
+                    f"shot {_e.shot_idx}: background {_k} 无场景板")
+        if _missing_assets:
+            raise RuntimeError("asset guarantee failed — "
+                               + "; ".join(_missing_assets))
     if storyboard.cast:
         log.info("window: cast canon — %s",
                  "; ".join(f"{k}: {v[:60]}" for k, v in
@@ -3743,17 +3971,31 @@ def generate_movie_windowed(
         spec = specs[entry.shot_idx]
         prev = storyboard.prev_generated(entry.shot_idx)
 
-        # 钉/切提前路由(2026-08-05 用户令):分镜剧本自带人物,生成前
-        # 就定策略 —— 上镜 end_state 人物 vs 本镜开场人物:一致 → 钉帧
-        # 续拍;出现新人物 → 转场策略(本镜不钉帧、全新构图,镜后自动
-        # 补运镜桥)。要提前定,因为本镜调用哪种生成形态取决于它。
-        _route_transition = False
+        # 三叉分诊(2026-08-07 用户令,三条件融合派):按交界处发生了
+        # 什么定缝法 —— 人物变(LLM 思考判在场,非文字提及)→ derive
+        # 派生缝合;同人异景 → cut 硬切换场;同人同景 → continue(暂不
+        # 钉帧,VLM 片尾报告喂 enhancer 承接)。钉帧策略暂退役。
+        _junction_kind = None       # None | continue | cut | derive
         _route_reason = ""
-        if prev is not None and prev.video_path and entry.shot_idx > 0 \
-                and getattr(prev, "scene_idx", None) == entry.scene_idx:
-            _cont, _route_reason = _script_cast_continuity(
-                prev, entry, storyboard.cast, storyboard.portraits)
-            _route_transition = not _cont
+        _open_cast: list = []
+        _bg_prev = _bg_cur = None
+        if prev is not None and prev.video_path and entry.shot_idx > 0:
+            _bg_prev = (getattr(prev, "bg_id", "")
+                        or f"scene_{prev.scene_idx}")
+            _bg_cur = (getattr(entry, "bg_id", "")
+                      or f"scene_{entry.scene_idx}")
+            _same_cast, _cast_reason, _open_cast = _judge_junction_cast(
+                llm_video_brain, prev, entry, storyboard.cast,
+                storyboard.portraits, prompt_lang)
+            if not _same_cast:
+                _junction_kind = "derive"
+            elif _bg_prev != _bg_cur:
+                _junction_kind = "cut"
+            else:
+                _junction_kind = "continue"
+            _route_reason = f"bg {_bg_prev}→{_bg_cur}; {_cast_reason}"
+            log.info("window: %s junction → %s (%s)", entry.label,
+                     _junction_kind, _route_reason[:200])
 
         # 需求 ②:接点实况 —— VLM 看上一镜真实尾帧出一句状态;和剧本
         # 交接棒(上一镜 end_state / 本镜 end_state)一起进 brain 上下文,
@@ -3762,36 +4004,81 @@ def generate_movie_windowed(
         # —— 不做 VLM 尾帧观察,接点上下文换成禁写连续性的公告,接缝
         # 由自动转场桥负责。
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
-        if _route_transition:
-            junction_actual = None
-            _exit_vec = None
+        junction_actual = None
+        if _junction_kind == "derive":
+            # 条件②:ViMax 双镜切缝合 —— 派生帧作 pin_frame refer 行
+            # (末位编号+机器承接句);派生失败/两拒 → 降级条件①硬切。
+            _bgrec = (storyboard.backgrounds or {}).get(_bg_cur) or {}
+            _derived = _derive_junction_frame(
+                video_gen, mllm, llm_video_brain, prev, prev, entry,
+                _open_cast, storyboard.cast, storyboard.portraits,
+                (_bgrec.get("path") if _bg_prev != _bg_cur else None),
+                shot_dir, prompt_lang)
+            if _derived is not None:
+                entry.images = list(entry.images or []) + [{
+                    "path": str(_derived), "role": "reference",
+                    "source": "pin_frame",
+                    "description": "derived junction first frame"}]
+                decisions.append({"stage": "junction", "label": entry.label,
+                                  "strategy": "derive",
+                                  "reason": _route_reason[:160]})
+            else:
+                _junction_kind = "cut"
+                decisions.append({"stage": "junction", "label": entry.label,
+                                  "strategy": "derive→cut",
+                                  "reason": "派生失败/两拒 — 降级硬切"})
+        if _junction_kind == "derive":
             junction_ctx = {
-                "transition": True,
+                "junction_kind": "derive",
                 "junction_note": (
-                    "转场策略:本镜是全新构图,禁止书写任何承接上一镜的"
-                    "连续性语句(不写承接/入场对齐/未尽动作);镜与镜的"
-                    "接缝由自动转场桥负责。" if prompt_lang == "zh" else
-                    "TRANSITION strategy: this shot is a FRESH composition. "
-                    "Do NOT write any continuity with the previous shot (no "
-                    "carry-over, no entry alignment, no unfinished action); "
-                    "the seam is handled by an automatic bridge clip."),
+                    "缝合策略:本镜首帧已由派生帧给定(清单末位 pin_frame "
+                    "行,其提及由执行器负责,你绝不引用该槽位);按本镜"
+                    "剧本全新书写画面与动作,禁止书写任何承接上一镜的"
+                    "连续性语句。" if prompt_lang == "zh" else
+                    "STITCH strategy: the opening frame is given by a "
+                    "derived frame (the manifest's last pin_frame row; the "
+                    "executor owns its mention — never reference that slot "
+                    "yourself). Write the shot fresh from its own script; "
+                    "do NOT write any continuity with the previous shot."),
                 "required_end_state": entry.end_state or None,
             }
-        else:
+        elif _junction_kind == "cut":
+            junction_ctx = {
+                "junction_kind": "cut",
+                "junction_note": (
+                    "硬切换场:背景已变,本镜是全新构图;禁止书写任何承接"
+                    "上一镜的连续性语句(不写承接/入场对齐/未尽动作);"
+                    "人物与场景一致性由引用图保证。" if prompt_lang == "zh"
+                    else
+                    "HARD CUT: the background changed — this shot is a "
+                    "FRESH composition. Do NOT write any continuity with "
+                    "the previous shot (no carry-over, no entry alignment, "
+                    "no unfinished action); character and location "
+                    "consistency ride on the reference images."),
+                "required_end_state": entry.end_state or None,
+            }
+            decisions.append({"stage": "junction", "label": entry.label,
+                              "strategy": "cut",
+                              "reason": _route_reason[:160]})
+        elif _junction_kind == "continue":
+            # 条件③:VLM 片尾理解报告(camera_angle + character_actions)
+            # → enhancer 据实承接;结构化矢量退役(2026-08-07 用户令)。
             junction_actual = _junction_state(mllm, prev, shot_dir,
                                               tail_s=window_tail_s,
                                               portraits=storyboard.portraits)
-            # 结构化出场矢量(用户裁决):VLM 尾段报告现在是 JSON —— 解析
-            # 成功则矢量随上下文进 brain / enhancer(速度续接的依据);解析
-            # 失败原文照发(旧后端散文兜底,诚实降级)。
-            _exit_vec = _parse_exit_vector(junction_actual)
+            _tail_rep = _parse_tail_report(junction_actual)
             junction_ctx = {
-                "prev_last_frame_actual": junction_actual or None,
-                "prev_exit_vector": _exit_vec,
+                "junction_kind": "continue",
+                "prev_tail_report": _tail_rep or (junction_actual or None),
                 "prev_end_state_script": (getattr(prev, "end_state", "")
                                           or None) if prev else None,
                 "required_end_state": entry.end_state or None,
             }
+            decisions.append({"stage": "junction", "label": entry.label,
+                              "strategy": "continue",
+                              "reason": _route_reason[:160]})
+        else:
+            junction_ctx = {"required_end_state": entry.end_state or None}
 
         # P1-1(ViMax 借鉴):按 <标记> 确定性解析本镜出场角色 ——
         # cast 注入与评审 check 都只对出场者,不再靠 LLM 自判。
@@ -3842,34 +4129,17 @@ def generate_movie_windowed(
         # —— 它写 video_prompt 时引用编号只许照抄所选策略的清单,不许猜。
         menu = _condition_menu(entry, prev, video_gen,
                                portraits=shot_portraits)
-        # 钉帧默认化(2026-08-04 用户令):同 scene 续拍必须钉上镜尾帧
-        # (i2v_first),不给 brain 裁量;跨 scene(或无上镜)才开放全
-        # 菜单。旧后端菜单没有 i2v_first → 不受影响。
+        # 菜单锁定(2026-08-07 用户令,三条件融合派):三种交界一律
+        # ref2v(钉帧暂退役,自动转场桥退役)—— derive 的承接由派生帧
+        # pin 行负责,continue 的承接由片尾报告+enhancer 负责,cut 本就
+        # 是硬切。旧后端菜单没有 ref2v → 保留全菜单交 brain 裁量。
         needs_bridge = False
-        if prev is not None and prev.video_path and entry.shot_idx > 0:
-            _prev_entry = storyboard.entries[entry.shot_idx - 1]
-            _pin_only = [m for m in menu if m["name"] == "i2v_first"]
+        if _junction_kind is not None:
             _cut_only = [m for m in menu if m["name"] == "ref2v"]
-            if _pin_only and _prev_entry.scene_idx == entry.scene_idx:
-                # 钉/切路由(2026-08-05 用户令):按分镜剧本提前定 ——
-                # 人物一致 → 钉帧续拍;出现新人物 → 转场策略:ref2v
-                # 全新构图 + 自动运镜转场桥(否则钉住的像素和要求的
-                # 人物是两拨人,模型只能原地变形换人)。
-                if not _route_transition:
-                    menu = _pin_only
-                    log.info("window: %s same-scene continuation → menu "
-                             "pinned to i2v_first (%s)", entry.label,
-                             _route_reason)
-                elif _cut_only:
-                    menu = _cut_only
-                    needs_bridge = True
-                    log.info("window: %s same-scene TRANSITION (%s) → "
-                             "ref2v fresh composition + camera-move "
-                             "junction bridge", entry.label, _route_reason)
-                else:
-                    menu = _pin_only
-                    log.info("window: %s transition wanted but no ref2v "
-                             "in menu — pinning as fallback", entry.label)
+            if _cut_only:
+                menu = _cut_only
+                log.info("window: %s junction=%s → menu locked to ref2v",
+                         entry.label, _junction_kind)
         slots_by_strategy = {
             m["name"]: _slot_manifest(m["name"], entry, prev,
                                       use_prev_tail=True,
@@ -3878,16 +4148,15 @@ def generate_movie_windowed(
                                       video_gen=video_gen)
             for m in menu}
         # 记号化接点(用户令 2026-08-05:映射在数据层做,写手照抄)——
-        # 用清单里记号最多的策略做映射源(ref2v/i2v_first 编号同序);
-        # 矢量主体 who→记号,无槽者聚合为背景一句;end_state 标记同映射。
+        # 用清单里记号最多的策略做映射源;片尾报告的 who→记号;
+        # end_state 标记同映射。
         _ns_best = max((_name_slot_map(v) for v in slots_by_strategy.values()),
                        key=len, default={})
         _junction_mapped = dict(junction_ctx)
-        _vm = _map_junction(_exit_vec, _ns_best, storyboard.cast,
-                            portraits=storyboard.portraits)
-        if _vm is not None:
-            _junction_mapped["prev_last_frame_actual"] = _vm
-            _junction_mapped.pop("prev_exit_vector", None)
+        if isinstance(_junction_mapped.get("prev_tail_report"), dict):
+            _junction_mapped["prev_tail_report"] = _map_tail_report(
+                _junction_mapped["prev_tail_report"], _ns_best,
+                storyboard.cast, portraits=storyboard.portraits)
         for _k in ("prev_end_state_script", "required_end_state"):
             if _junction_mapped.get(_k):
                 _junction_mapped[_k] = _map_markers(_junction_mapped[_k],
@@ -3943,14 +4212,7 @@ def generate_movie_windowed(
                 conditions=_conditions_for_prompt(d["strategy"], entry, prev,
                                                   use_tail,
                                                   junction=json.dumps(
-                                                      _map_junction(
-                                                          _exit_vec,
-                                                          _name_slot_map(slots),
-                                                          storyboard.cast,
-                                                          portraits=storyboard.portraits)
-                                                      or (junction_ctx
-                                                          if _route_transition
-                                                          else junction_actual),
+                                                      _junction_mapped,
                                                       ensure_ascii=False),
                                                   source_videos=source_videos,
                                                   cast=shot_cast,
@@ -3976,22 +4238,20 @@ def generate_movie_windowed(
                 decisions.append({"stage": "prompt_enhance",
                                   "label": entry.label,
                                   "strategy": d["strategy"], "via": "llm"})
-        # 钉帧承接句机器化(2026-08-06 用户令:不打补丁——brain 从技能层
-        # 就不写声明,机器判定钉帧策略后【直接加】一句短承接;长声明
-        # 删除闸保留为写手惯性的兜底)。
-        if d["strategy"] == "i2v_first" and brain_prompt:
+        # 承接句机器化(2026-08-06 用户令:不打补丁——写手从技能层就不写
+        # 声明,机器按【清单里有无 pin_frame 行】直接加一句短承接;长
+        # 声明删除闸保留为写手惯性的兜底)。钉帧与派生缝合同法:凡挂了
+        # pin 行(i2v_first 的上镜末帧 / derive 的派生帧),机器句指着
+        # 记号说"从它继续"。
+        _pin_row = next((r_ for r_ in (slots or [])
+                         if r_.get("source") == "pin_frame"), None)
+        if _pin_row and brain_prompt:
             brain_prompt = re.sub(
                 r"[^。]*(?:从首帧精确开始|从第一帧开始|从第一帧精确开始|"
                 r"首帧即上一镜|第一帧与上一镜|上一镜的最后一帧|"
                 r"starts? EXACTLY on the given first)[^。]*。\s*",
                 "", brain_prompt).strip()
-            # 承接句用【引用】说话(2026-08-06 用户令:裸词"首帧"模型
-            # 无从对应——首帧本体已挂为末位 refer,机器句指着记号说)。
-            _pin_row = next((r_ for r_ in (slots or [])
-                             if r_.get("source") == "pin_frame"), None)
-            if prev is not None and not _route_transition \
-                    and getattr(prev, "scene_idx", None) == entry.scene_idx \
-                    and _pin_row and _pin_row["slot"] not in brain_prompt:
+            if _pin_row["slot"] not in brain_prompt:
                 _tok = _pin_row["slot"]
                 brain_prompt = (
                     f"画面从{_tok}所示的首帧继续。" if prompt_lang == "zh"

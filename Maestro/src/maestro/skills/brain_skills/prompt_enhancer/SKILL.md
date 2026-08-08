@@ -15,49 +15,50 @@ fixed in `shot_description`; you adjust seams, wording and references —
 you never add, drop or reorder an action. Anything of the description
 missing from the draft goes BACK IN.
 
-## Duty 1 — junction continuity (the EXIT VECTOR algorithm)
+## Duty 1 — junction continuity (the TAIL REPORT algorithm)
 
-PINNED SHOTS ONLY. If the junction condition carries
-`transition: true` (a subject change routed to a fresh composition),
-Duty 1 is FORBIDDEN in its entirety: write NO continuity with the
-previous shot — no carry-over, no entry alignment, no velocity
-handoff, no finishing gestures. The seam belongs to an automatic
-camera-move bridge clip. Polish composition, motion and camera only.
-On API-pinned routes the first frame is enforced at the API level —
-pin-declaration sentences are noise; drop them if the draft has one.
+Obey `junction_kind` in the junction condition — three kinds:
 
-`opening_state_actual` is the previous shot's EXIT VECTOR — structured
-JSON a vision model wrote from the ACTUAL final seconds:
-{subjects: [{who, position, pose, motion, direction, pace}],
- camera: {framing, motion, speed}, unfinished_action}
-(a plain sentence on fallback backends — apply the same steps from its
-facts). Polish the draft's opening and closing in four steps:
+`continue` shots ONLY get continuity polish. `prev_tail_report` is a
+vision model's reading of the previous shot's ACTUAL final seconds,
+two fields:
+{camera_angle: "<framing, camera height/angle, position relative to
+ subjects, motion state>",
+ character_actions: [{who (already tokenized), position, action}]}
+(a plain sentence on fallback backends — apply the same steps from
+its facts). There is NO pinned first frame — YOUR wording is the only
+continuity channel. Polish the draft's opening and closing:
 
-1. ENTRY ALIGNMENT — the first beat matches the vector field by field:
-   its shot size = the vector's framing; its camera = the vector's
-   camera motion continued (or opening settled); every subject at the
-   vector's position and pose. Subjects are NAMED (portrait-matched by
-   the vision model): bind each token to its own name's vector entry —
-   never re-assign positions by script expectation. A draft opening
-   that contradicts the vector is rewritten — the vector wins over
-   the script.
-2. VELOCITY HANDOFF — a subject with motion="moving" opens
-   mid-motion, continuative phrasing only ("continues her walk toward
-   the dais at the same pace") — never "begins/starts". Camera speed
-   ≠ none → the first sentence continues that move at that speed.
-   Everything at_rest opens at rest; a new action needs a visible
-   cause written in.
-3. FINISH THE GESTURE — when `unfinished_action` is set, the first
-   beat's first clause COMPLETES that action before anything new
-   ("she completes the fan-lowering motion, then …"). The model must
-   continue the old motion, not restart it.
+1. OPENING FROM REALITY — the first beat opens on the reported
+   camera_angle (same framing, same side of the subjects; continue
+   its motion state or open settled) and places every character at
+   the reported position doing the reported action. Bind each token
+   to its own entry — never re-assign positions by script
+   expectation. A draft opening that contradicts the report is
+   rewritten — the report wins over the script (it is what was
+   actually filmed).
+2. CONTINUATIVE PHRASING — a character reported mid-action opens
+   continuing it ("continues her walk at the same pace"), never
+   "begins/starts"; never reverse the camera's direction across the
+   cut. Everything reported still opens at rest; a new action needs
+   a visible cause written in.
+3. ANCHOR ONLY — the report shapes the OPENING; never re-narrate it
+   as the shot's content, and appearance drift in it is NOT copied
+   forward (identity lives in the references).
 4. SETTLE-TO-CUT — the final beat reaches stillness: camera settled,
    subjects at a describable rest matching `required_end_state`.
    Exception: end_state explicitly says motion continues → keep it
    moving with an anti-settle clause instead.
 
-Appearance drift in the vector is NOT copied forward (identity lives
-in the references); when vector and script conflict, the vector wins.
+`cut` shots: Duty 1 is FORBIDDEN in its entirety — write NO
+continuity with the previous shot (no carry-over, no entry
+alignment, no finishing gestures); the cut IS the transition. Polish
+composition, motion and camera only.
+
+`derive` shots: the opening frame already exists as the manifest's
+LAST pin_frame row; the executor owns its mention — never reference
+that slot yourself, and write NO continuity with the previous shot.
+Pin-declaration sentences are noise; drop them if the draft has one.
 
 ## Duty 2 — THE REFERENCE RULE (the outgoing contract)
 

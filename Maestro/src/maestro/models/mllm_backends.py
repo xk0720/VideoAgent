@@ -1197,37 +1197,38 @@ class GeminiVLM(OpenAICompatVLM):
 
 
 # 接点实况的共用指令(GeminiVLM 与 LocalQwenVLM 同一份 —— 两种模式同语义)
-# 结构化出场矢量(用户裁决):散文接点只能传"位置",矢量还要传"速度"
-# —— 下一镜靠它续运动而不是重新起意(接缝不自然的主根)。
+# 片尾理解报告(2026-08-07 用户令,三条件融合派):结构化出场矢量退役,
+# 换两部分理解 —— camera_angle(机位视角)+ character_actions(人物动作)。
+# enhancer 拿它润色下一镜开场的承接;具名法保留(2026-08-05:肖像随片
+# 发,who 必须是角色名 —— 下游绑定不靠写手猜)。
 _JUNCTION_VIDEO_INSTRUCTION = (
     "This is the FINAL few seconds of a video shot, followed by the "
     "cast's OFFICIAL PORTRAITS, each labeled with the character's "
-    "name. Report the EXIT VECTOR at its very last moment, judged "
-    "from the actual motion across the clip (not from blur). For each "
-    "subject, MATCH them against the portraits: when a person matches "
+    "name. Report the shot's ENDING STATE in two parts, judged from "
+    "the actual motion across the clip (not from blur). For each "
+    "person, MATCH them against the portraits: when a person matches "
     "a portrait, `who` MUST be that exact character name (copy the "
     "label verbatim); only a person matching no portrait gets a short "
     "visual handle. STRICT JSON only:\n"
-    '{"subjects": [{"who": "<short visual handle>", "position": '
-    '"<left/center/right + near/far>", "pose": "<one clause>", '
-    '"motion": "at_rest"|"moving", "direction": "<if moving>", '
-    '"pace": "<slow|walking|fast, if moving>"}], '
-    '"camera": {"framing": "<wide|medium|close-up …>", "motion": '
-    '"static"|"push-in"|"pull-back"|"pan-left"|"pan-right"|"tilt-up"|'
-    '"tilt-down"|"tracking", "speed": "none"|"slow"|"medium"|"fast"}, '
-    '"unfinished_action": "<an action visibly mid-course, else null>"}\n'
+    '{"camera_angle": "<one clause: framing (wide/medium/close-up), '
+    'camera height/angle, where the camera sits relative to the '
+    'subjects, and its motion state at the last moment>", '
+    '"character_actions": [{"who": "<character name>", "position": '
+    '"<left/center/right + near/far>", "action": "<one clause: what '
+    'they are visibly doing at the last moment — pose, motion or '
+    'stillness, direction>"}]}\n'
     "Only what is visible — no speculation. No other text."
 )
 
 _JUNCTION_INSTRUCTION = (
-    "This is the FINAL frame of a video shot. Report the EXIT VECTOR "
-    "for continuity into the next shot — motion judged from blur and "
-    "posture (single-frame fallback; be honest about uncertainty). "
-    "STRICT JSON only, same schema:\n"
-    '{"subjects": [{"who": "<short visual handle>", "position": "…", '
-    '"pose": "…", "motion": "at_rest"|"moving", "direction": "…", '
-    '"pace": "…"}], "camera": {"framing": "…", "motion": "static", '
-    '"speed": "none"}, "unfinished_action": null}\n'
+    "This is the FINAL frame of a video shot. Report the shot's "
+    "ENDING STATE for continuity into the next shot — motion judged "
+    "from blur and posture (single-frame fallback; be honest about "
+    "uncertainty). STRICT JSON only, same schema:\n"
+    '{"camera_angle": "<one clause: framing, camera height/angle, '
+    'position relative to subjects, motion state>", '
+    '"character_actions": [{"who": "<name or short handle>", '
+    '"position": "…", "action": "…"}]}\n'
     "Only what is visible — no speculation. No other text."
 )
 

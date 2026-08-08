@@ -61,6 +61,39 @@ NEW_CAMERA_NOTE = (
     "portraits. Don't change the background.")
 
 
+def frame_review_ok(mllm, llm, frame: Path, want_desc: str) -> bool:
+    """帧审查(共享版,2026-08-07):VLM 图注 × LLM 裁决,【只认矛盾,
+    不认缺席】(图注是有损摘要,漏项不是罪证 —— run5 教训)。任一端
+    缺席/异常 → fail-open 放行并留痕(审查是辅助,不是关卡制造机)。"""
+    if mllm is None or llm is None:
+        return True
+    _cap = getattr(mllm, "caption_image", None)
+    if _cap is None:
+        return True
+    try:
+        got = str(_cap(Path(frame)) or "")[:600]
+        from ..pipeline.window_loop import _extract_json
+        raw = llm.complete(
+            "A frame was generated for an intended description; you "
+            "only see a LOSSY caption of it. Reject ONLY if the "
+            "caption CONTRADICTS the intent (wrong subject, wrong "
+            "setting, wrong style, or a key character clearly absent "
+            "or extra). A detail the caption merely does not mention "
+            "is NOT a defect.\nINTENDED: " + str(want_desc)[:600]
+            + "\nGENERATED (caption): " + got
+            + '\nSTRICT JSON only: {"ok": true|false, '
+              '"reason": "<one sentence>"}')
+        d = _extract_json(raw) or {}
+        if not bool(d.get("ok", True)):
+            log.warning("frame review REJECTED — %s", d.get("reason"))
+            return False
+    except Exception as exc:
+        log.warning("frame review errored (%s) — fail-open, frame "
+                    "accepted", str(exc)[:160])
+        return True
+    return True
+
+
 def ensure_english_t2i_prompt(llm, prompt: str) -> str:
     """flux 英文偏置法(window 同律,2026-08-07 run4 事故:选图 agent
     按 ViMax 语言规则产中文生图 prompt,直发 flux 生出水墨山水)——

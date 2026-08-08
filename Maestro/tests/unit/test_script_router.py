@@ -315,3 +315,193 @@ def test_outline_gate_budget_survives_empty_reply():
         cast_canon={}, prompt_language="zh")
     assert llm.n == 3                # 空回复没吞掉声效闸的纠错机会
     assert "枪声" in shots[0]
+
+
+# ── 三条件融合派(2026-08-07 用户令)────────────────────────────────
+
+
+def test_judge_llm_thinks_beyond_mentions():
+    """判官核心场景:上镜文字只提<小明>在哭,本镜只提<小红>——但剧情
+    上两人全程同框 → LLM 判在场集合相同 → same=True。"""
+    import json as _json
+
+    class _LLM:
+        def complete(self, prompt, **kw):
+            return _json.dumps({"prev_end_cast": ["小明", "阿浪"],
+                                "cur_open_cast": ["阿浪", "小明"],
+                                "reason": "两人全程同车"},
+                               ensure_ascii=False)
+    same, why, oc = wl._judge_junction_cast(
+        _LLM(), _e(end_state="<小明>在哭。"),
+        _e(opening="<阿浪>在做什么。"), CAST, PORTRAITS, "zh")
+    assert same and oc == ["小明", "阿浪"]
+
+
+def test_judge_bad_llm_falls_back_to_set_equality():
+    """坏输出 → 确定性兜底;新法:离场也算变(集合相等才 same)。"""
+    class _Bad:
+        def complete(self, prompt, **kw):
+            return "not json"
+    same, why, oc = wl._judge_junction_cast(
+        _Bad(), _e(end_state="<小明>与<阿浪>对视。"),
+        _e(opening="<阿浪>歪头。"), CAST, PORTRAITS, "zh")
+    assert not same          # 小明离场 → 集合不等 → 变
+    assert oc == ["阿浪"]
+
+
+def test_judge_fallback_same_face_equivalence():
+    class _Bad:
+        def complete(self, prompt, **kw):
+            raise RuntimeError("down")
+    same, _, _ = wl._judge_junction_cast(
+        _Bad(), _e(end_state="<军官甲>低声说完。"),
+        _e(opening="<军官乙>转脸。"), CAST, PORTRAITS, "zh")
+    assert same              # 同脸不同名按肖像判等
+
+
+def test_judge_rejects_unknown_names():
+    """LLM 幻觉出 cast 外的名字 → 剔除;两侧剔空 → 走兜底。"""
+    import json as _json
+
+    class _Hallu:
+        def complete(self, prompt, **kw):
+            return _json.dumps({"prev_end_cast": ["路人甲"],
+                                "cur_open_cast": ["路人乙"],
+                                "reason": "x"}, ensure_ascii=False)
+    same, why, _ = wl._judge_junction_cast(
+        _Hallu(), _e(end_state="<小明>静立。"),
+        _e(opening="<小明>特写。"), CAST, PORTRAITS, "zh")
+    assert same and "兜底" in why
+
+
+def test_tail_report_parse_and_map():
+    rep = wl._parse_tail_report(
+        '{"camera_angle": "medium shot, camera left of <小明>, static", '
+        '"character_actions": [{"who": "小明", "position": "center", '
+        '"action": "stands still"}]}')
+    assert rep["camera_angle"].startswith("medium")
+    mapped = wl._map_tail_report(rep, {"小明": "<<<image_2>>>"}, CAST,
+                                 portraits=PORTRAITS)
+    assert mapped["character_actions"][0]["who"] == "<<<image_2>>>"
+    assert wl._parse_tail_report("prose sentence") is None
+    assert wl._parse_tail_report("") is None
+
+
+def test_ref2v_manifest_pin_row_last_and_plate_dropped():
+    """条件② ref2v:派生帧 = 末位 pin_frame 行(执行器专属提及);
+    挂 pin 时背景板剔除(板磁铁法)。"""
+    entry = SimpleNamespace(
+        images=[
+            {"path": "/bg/plate.png", "role": "reference",
+             "source": "background", "description": "bg plate"},
+            {"path": "/d/derived.png", "role": "reference",
+             "source": "pin_frame", "description": "derived"}],
+        keyframe_path=None)
+    entry.images_by_role = lambda role: [
+        im for im in entry.images if im.get("role") == role]
+    rows = wl._slot_manifest("ref2v", entry, None, True,
+                             portraits={"小明": "/p/xm.png"},
+                             video_gen=None)
+    assert rows[-1].get("source") == "pin_frame"
+    assert "executor owns" in rows[-1]["content"]
+    assert not any("bg plate" in str(r.get("content")) for r in rows)
+    # 无 pin 时板照常在列
+    entry2 = SimpleNamespace(
+        images=[{"path": "/bg/plate.png", "role": "reference",
+                 "source": "background", "description": "bg plate"}],
+        keyframe_path=None)
+    entry2.images_by_role = lambda role: [
+        im for im in entry2.images if im.get("role") == role]
+    rows2 = wl._slot_manifest("ref2v", entry2, None, True,
+                              portraits={}, video_gen=None)
+    assert any("bg plate" in str(r.get("content")) for r in rows2)
+
+
+def test_derive_junction_frame_assembly(tmp_path):
+    """条件②装配:refs=[上镜末帧, 开场人物肖像, 新背景板];双镜 prompt
+    含两镜描述+记号语义;切后帧返回。"""
+    import subprocess
+    prev_video = tmp_path / "prev.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=gray:s=160x90:d=0.3", str(prev_video)], check=True)
+    port = tmp_path / "xm.png"
+    bg = tmp_path / "bg.png"
+    for p in (port, bg):
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+             "-i", "color=c=gray:s=160x90:d=0.1", "-frames:v", "1",
+             str(p)], check=True)
+
+    class _VG:
+        generate_audio = False
+
+        def __init__(self):
+            self.calls = []
+
+        def ref_token(self, n):
+            return f"<<<image_{n}>>>"
+
+        def generate(self, prompt, duration, out_path, fps=24, seed=0,
+                     reference_images=None, **kw):
+            self.calls.append({"prompt": prompt,
+                               "refs": [str(r) for r in
+                                        (reference_images or [])]})
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error",
+                 "-f", "lavfi", "-i", "color=c=black:s=160x90:d=1",
+                 "-f", "lavfi", "-i", "color=c=white:s=160x90:d=1",
+                 "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0",
+                 str(out_path)], check=True)
+            return out_path
+
+    vg = _VG()
+    prev = SimpleNamespace(video_path=str(prev_video),
+                           end_state="<小明>静立。", description="",
+                           opening_frame="")
+    entry = SimpleNamespace(shot_idx=3, end_state="",
+                            opening_frame="<阿浪>落在礁石上。",
+                            description="")
+    got = wl._derive_junction_frame(
+        vg, None, None, prev, prev, entry, ["阿浪"], CAST,
+        {"阿浪": str(port)}, str(bg), tmp_path / "shot003", "zh")
+    assert got is not None and got.exists()
+    call = vg.calls[0]
+    assert call["refs"][1] == str(port)          # 末帧后第一位 = 肖像
+    assert call["refs"][2] == str(bg)            # 背景板殿后
+    assert "Two shots" in call["prompt"]
+    assert "<小明>静立" not in call["prompt"]     # 标记已剥
+    assert "小明静立" in call["prompt"]           # 第一镜描述在场
+    assert "<<<image_2>>>" in call["prompt"]      # 第二镜人物记号化
+
+
+def test_derive_junction_frame_fail_returns_none(tmp_path):
+    import subprocess
+    prev_video = tmp_path / "prev.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=gray:s=160x90:d=0.3", str(prev_video)], check=True)
+
+    class _Dead:
+        generate_audio = False
+
+        def ref_token(self, n):
+            return f"<<<image_{n}>>>"
+
+        def generate(self, *a, **k):
+            raise RuntimeError("network down")
+    import maestro.cinegraph.first_frame_factory as fff
+    old = fff._SPACED_WAITS_S
+    fff._SPACED_WAITS_S = (0,)
+    try:
+        prev = SimpleNamespace(video_path=str(prev_video),
+                               end_state="x", description="",
+                               opening_frame="")
+        entry = SimpleNamespace(shot_idx=1, opening_frame="y",
+                                description="", end_state="")
+        got = wl._derive_junction_frame(
+            _Dead(), None, None, prev, prev, entry, [], CAST, {},
+            None, tmp_path / "shot001", "zh")
+        assert got is None                       # 降级条件①,不炸
+    finally:
+        fff._SPACED_WAITS_S = old

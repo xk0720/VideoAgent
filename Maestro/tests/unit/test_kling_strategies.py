@@ -153,3 +153,23 @@ def test_ref_gate_accepts_kling_dialect():
     bad, audit2 = validate_references("<<<image_9>>> appears.", slots)
     assert bad == "" and not audit2["ok"]
     assert "<<<image_9>>>" in audit2["unknown"]
+
+def test_flf2v_carries_reference_images(monkeypatch, tmp_path):
+    """2026-08-07 用户令+M-test:首末帧+refer 混装合法 —— flf2v 的
+    media 必须按 first_frame/last_frame/refer 顺序装配肖像。"""
+    from maestro.models.video_gen_backends import BailianKlingClient
+    vg = BailianKlingClient(config={"api_key": "k"})
+    up = {}
+    monkeypatch.setattr(vg, "_upload_media",
+                        lambda p: up.setdefault(str(p), f"oss://{p}"))
+    captured = {}
+
+    def fake_submit(model, payload, out_path):
+        captured["media"] = payload["input"]["media"]
+        return out_path
+    monkeypatch.setattr(vg, "_submit_and_poll", fake_submit)
+    f1, f2, port = tmp_path/"a.png", tmp_path/"b.png", tmp_path/"p.png"
+    vg.frame_to_frame("x", f1, f2, tmp_path/"o.mp4", duration=5,
+                      reference_images=[port])
+    kinds = [m["type"] for m in captured["media"]]
+    assert kinds == ["first_frame", "last_frame", "refer"]

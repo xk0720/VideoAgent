@@ -69,12 +69,15 @@ def test_bg_frame_upgrade_default_off():
 
 # ── 出场矢量 + 静接律(接缝一致性机制)───────────────────────────────
 
-def test_junction_instructions_demand_exit_vector_json():
+def test_junction_instructions_demand_tail_report_json():
+    """片尾理解报告(2026-08-07 用户令):两部分 —— camera_angle +
+    character_actions;具名法保留(who=角色名,按肖像认人)。"""
     from maestro.models.mllm_backends import (_JUNCTION_INSTRUCTION,
                                               _JUNCTION_VIDEO_INSTRUCTION)
     for t in (_JUNCTION_VIDEO_INSTRUCTION, _JUNCTION_INSTRUCTION):
-        assert "EXIT VECTOR" in t and "STRICT JSON" in t
-        assert '"unfinished_action"' in t and '"camera"' in t
+        assert "STRICT JSON" in t
+        assert '"camera_angle"' in t and '"character_actions"' in t
+    assert "MATCH them against the portraits" in _JUNCTION_VIDEO_INSTRUCTION
 
 
 def test_parse_exit_vector_json_and_prose_fallback():
@@ -89,17 +92,21 @@ def test_parse_exit_vector_json_and_prose_fallback():
     assert wl._parse_exit_vector("") is None
 
 
-def test_skills_carry_exit_vector_and_settle_laws():
+def test_skills_carry_tail_report_and_settle_laws():
+    """三条件融合派(2026-08-07 用户令):enhancer 承接 = 片尾报告;
+    cut/derive 禁写连续性;SETTLE-TO-CUT 恒在。"""
     from pathlib import Path as _P
     base = _P("src/maestro/skills/brain_skills")
     pe = (base / "prompt_enhancer/SKILL.md").read_text()
-    for marker in ("ENTRY ALIGNMENT", "VELOCITY HANDOFF",
-                   "FINISH THE GESTURE", "SETTLE-TO-CUT"):
+    for marker in ("OPENING FROM REALITY", "CONTINUATIVE PHRASING",
+                   "SETTLE-TO-CUT", "prev_tail_report", "junction_kind"):
         assert marker in pe, marker
     sw = (base / "scene_write/SKILL.md").read_text()
     assert "SETTLE-TO-CUT" in sw
     wg = (base / "window_generation/SKILL.md").read_text()
-    assert "EXIT VECTOR" in wg and "VELOCITY HANDOFF" in wg
+    for marker in ("junction_kind", "prev_tail_report", "`cut`",
+                   "`derive`", "pin_frame"):
+        assert marker in wg, marker
 
 
 def test_draft_prompt_persists_in_ledger(tmp_path):
@@ -170,11 +177,13 @@ def test_junction_state_passes_portraits(tmp_path, monkeypatch):
 
 
 def test_skills_carry_named_binding_law():
+    """具名绑定法(2026-08-05)三条件版:报告的 who 已记号化,写手照
+    条目绑定,绝不按剧本臆测重排位。"""
     from pathlib import Path as _P
     base = _P("src/maestro/skills/brain_skills")
-    assert "PRE-MAPPED JUNCTION" in \
+    assert "already tokenized" in \
         (base / "window_generation/SKILL.md").read_text()
-    assert "bind each token to its own name's vector entry" in \
+    assert "Bind each token" in \
         (base / "prompt_enhancer/SKILL.md").read_text()
 
 

@@ -498,6 +498,7 @@ class WaveSpeedClient(BaseVideoGenClient):
         out_path: Path,
         duration: Optional[float] = None,
         seed: int = 0,
+        reference_images: Optional[List[Path]] = None,
     ) -> Path:
         """First+last-frame video. Capability "flf2v" (optional; see
         BaseVideoGenClient.capabilities). Two routes by `flf2v_model`:
@@ -505,6 +506,10 @@ class WaveSpeedClient(BaseVideoGenClient):
             first+last model on WaveSpeed (i2v with a native `last_image`);
           • legacy `wavespeed-ai/wan-flf2v` — UniVA's route, old schema.
         Both frames are uploaded and passed by URL."""
+        if reference_images:
+            logger.info("wavespeed flf2v has no refer channel — %d "
+                        "reference image(s) ignored (identity rides the "
+                        "frames)", len(reference_images))
         model = self.flf2v_model
         first_url = self._upload_media(first_frame)
         last_url = self._upload_media(last_frame)
@@ -1003,13 +1008,18 @@ class BailianKlingClient(BaseVideoGenClient):
         out_path: Path,
         duration: Optional[float] = 5,
         seed: int = 0,
+        reference_images: Optional[List[Path]] = None,
     ) -> Path:
         """首尾帧生成(capability "flf2v",M0 flf2v 形态验证)。转场时长由
-        调用方传(裁决:转场固定 3s);timeline.py 以 duration= 关键字调用。"""
+        调用方传(裁决:转场固定 3s);timeline.py 以 duration= 关键字调用。
+        reference_images:肖像等 refer 随行(M-test 2026-08-07 验证
+        first_frame+last_frame+refer 混装合法,身份锚定不破坏首末帧)。"""
         media = [
             {"type": "first_frame", "url": self._upload_media(first_frame)},
             {"type": "last_frame", "url": self._upload_media(last_frame)},
         ]
+        for r in (reference_images or []):
+            media.append({"type": "refer", "url": self._upload_media(r)})
         model, payload = self._build_payload(prompt, media, duration, seed)
         return self._submit_and_poll(model, payload, out_path)
 

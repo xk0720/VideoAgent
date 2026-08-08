@@ -352,7 +352,9 @@ def generate_movie_cinegraph(
         motion = _NARRATION_RE.sub("", motion).strip()
         refs = []
         tokmap = {}
-        if portraits_as_refer and lf is None:
+        # 肖像 refer 全镜随行(2026-08-07 用户令"必须要引用";M-test 验证
+        # first+last+refer 混装合法):flf2v 首末帧只锚两端,中段身份靠它
+        if portraits_as_refer:
             for j, n in enumerate(s.ff_chars):
                 p = storyboard.portraits.get(n)
                 if p and Path(p).exists():
@@ -398,7 +400,8 @@ def generate_movie_cinegraph(
                         video_gen.frame_to_frame(
                             prompt=motion, first_frame=ff, last_frame=lf,
                             out_path=vout, duration=s.duration or 5,
-                            seed=turn)
+                            seed=turn,
+                            reference_images=(refs or None))
                     else:
                         video_gen.generate(
                             motion, s.duration, vout, fps=fps, seed=turn,
