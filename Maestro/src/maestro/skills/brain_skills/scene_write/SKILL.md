@@ -40,10 +40,34 @@ translate — whatever you drop here is lost to the film forever.
    settled upstream, given characters caption-locked). Echo them
    unchanged into `cast`; never rename, restyle or drop an entry. You
    may ADD new characters the canon lacks.
-5. BACKGROUND PREDICTION: assign every shot a `bg` id. Same physical
-   space = same id across shots and scenes (a ballroom revisited later
-   keeps its id); a genuinely new space gets a new id. One id will
-   become ONE background plate shared by all its shots.
+5. BACKGROUND PREDICTION (view-region law): assign every shot a `bg`
+   id. One id = one VISUAL ENVIRONMENT the camera actually sees, and
+   each id becomes ONE reference plate shared by all its shots — so
+   the test is always: "could a single still photograph of this space
+   serve every shot that carries the id?"
+   · INSIDE vs OUTSIDE of the same venue are ALWAYS different ids —
+     a storefront seen from the street and the room behind it share
+     zero visible walls (incident: a bakery film gave its exterior
+     facade and its interior counter one id; the interior shots had
+     no usable anchor and every one invented a different room).
+   · A different room, street, corridor or vehicle interior = a new
+     id, even within one venue: shop floor bg_1, the street outside
+     its door bg_2, the back kitchen bg_3; a car's dark interior and
+     the alley the car parks in are two ids.
+   · DIFFERENT ANGLES of the same space SHARE the id — over-the-
+     shoulder, reverse, close-up inside one room all keep that room's
+     id (angle changes are handled downstream by frame derivation;
+     over-splitting ids explodes plates and breaks space identity).
+   · A space revisited later keeps its id (a ballroom left in scene 1
+     and re-entered in scene 3 is still bg_1) — same id = the SAME
+     physical place on screen.
+   · Windows and doorways do not merge spaces: shooting THROUGH a car
+     window from the street is the street's id; shooting from inside
+     the car is the interior's id.
+   Worked example — "clerk in a convenience store, a boy runs in from
+   the rainy street, later they talk in the back doorway": store
+   floor bg_1, rainy street outside bg_2, back doorway bg_3; every
+   interior shot (counter, aisle, close-ups) stays bg_1.
 6. SETTLE-TO-CUT (junction law): by default every shot ENDS settled —
    camera static, subjects at a describable rest — and the next shot
    opens from that stillness; still-to-still is the most seamless cut

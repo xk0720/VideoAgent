@@ -3276,12 +3276,15 @@ def _map_tail_report(report, name_to_slot: dict, cast,
 
 def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
                            open_cast, cast, portraits, bg_path,
-                           shot_dir: Path, prompt_lang: str):
-    """条件②(2026-08-07 用户令):人物变了 → ViMax 双镜切缝合。
-    参考图 = [上镜真实末帧] + [本镜开场人物肖像…] (+ 新背景板);双镜
-    prompt 用 ViMax 骨架,第二镜描述取自本镜脚本,人物用记号指称。
-    切后帧过帧审查(只认矛盾);拒 → 换 seed 重派生一次;仍拒/失败 →
-    None(调用方降级条件① ref2v 硬切)。"""
+                           shot_dir: Path, prompt_lang: str,
+                           stitcher=None, tail_report=None):
+    """交界派生(2026-08-07 条件②;2026-08-09 扩展到同人同景):ViMax
+    双镜切缝合。参考图 = [上镜真实末帧] + [本镜开场人物肖像…] (+ 换景
+    时新背景板;同景【不挂板】—— 板会和运镜打架,切后空间由双镜的
+    3D 推导给出)。两镜描述:缝合师 agent(默认)→ 坏输出退化模板
+    装配(第一镜=end_state,第二镜=本镜剧本,记号指称)。切后帧过帧
+    审查(只认矛盾);拒 → 换 seed 重派生一次;仍拒/失败 → None
+    (调用方按交界类型降级:人物变→cut;同人同景→continue)。"""
     from ..cinegraph.first_frame_factory import (_frame_after_cut,
                                                  _spaced_retry,
                                                  frame_review_ok)
@@ -3307,19 +3310,53 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
     if bg_path and Path(bg_path).exists():
         refs.append(Path(bg_path))
         bg_tok = _ref_tok(video_gen, len(refs))
-    # 共用清洗器(2026-08-08 用户质询:双镜描述机械搬运台账文本,
-    # "Shot N:" 前缀/带引号旁白/纯声词句原文直达 API)
-    first_desc = _scene_text_for_prompt(_strip_markers(
-        getattr(prev_entry, "end_state", "")
-        or getattr(prev_entry, "description", "")))
-    second_desc = _scene_text_for_prompt(_map_markers(_desc_src, tokmap))
-    if bg_tok:
-        # 场景也是引用(2026-08-08 用户令):换景时第二镜描述正文里
-        # 直接指称场景板,不只靠随行图
-        second_desc = ((f"在{bg_tok}所示的场景中,{second_desc}"
-                        if prompt_lang == "zh" else
-                        f"In the location shown in {bg_tok}, "
-                        f"{second_desc}"))
+    # 两镜描述:缝合师 agent 组稿(2026-08-09 用户令,默认启用)——
+    # 第一镜以实拍片尾报告为准,第二镜提炼"切后第一眼";坏输出退化
+    # 模板装配(共用清洗器,2026-08-08 连环质询的六种脏全免疫)。
+    first_desc = second_desc = None
+    if stitcher is not None:
+        _slot_table = ([{"slot": _ref_tok(video_gen, 1),
+                         "kind": "tail_frame",
+                         "content": "the exact frame the first shot "
+                                    "starts on (the previous clip's "
+                                    "real final frame)"}]
+                       + [{"slot": t, "kind": "portrait", "name": n,
+                           "content": f"official portrait of {n}"}
+                          for n, t in tokmap.items()]
+                       + ([{"slot": bg_tok, "kind": "location",
+                            "content": "the second shot's location "
+                                       "(empty plate)"}]
+                          if bg_tok else []))
+        try:
+            got = stitcher.run(
+                prev_end_state=_scene_text_for_prompt(_strip_markers(
+                    getattr(prev_entry, "end_state", "")
+                    or getattr(prev_entry, "description", ""))),
+                tail_report=tail_report,
+                cur_opening=_scene_text_for_prompt(
+                    _map_markers(_desc_src, tokmap)),
+                slot_table=_slot_table, prompt_language=prompt_lang)
+        except Exception as exc:
+            log.warning("junction stitcher errored (%s) — template "
+                        "assembly", str(exc)[:120])
+            got = None
+        if got:
+            first_desc = got["first_shot_desc"]
+            second_desc = got["second_shot_desc"]
+    if not first_desc or not second_desc:
+        # 确定性模板装配(退化路径,台账留痕由调用方 decisions 记)
+        first_desc = _scene_text_for_prompt(_strip_markers(
+            getattr(prev_entry, "end_state", "")
+            or getattr(prev_entry, "description", "")))
+        second_desc = _scene_text_for_prompt(_map_markers(_desc_src,
+                                                          tokmap))
+        if bg_tok:
+            # 场景也是引用(2026-08-08 用户令):换景时第二镜描述正文
+            # 里直接指称场景板,不只靠随行图
+            second_desc = ((f"在{bg_tok}所示的场景中,{second_desc}"
+                            if prompt_lang == "zh" else
+                            f"In the location shown in {bg_tok}, "
+                            f"{second_desc}"))
     tok1 = _ref_tok(video_gen, 1)
     # ViMax 双镜骨架原文 + 槽位语义(多参考是我们的扩展:原版只挂父帧,
     # 新人长相全靠模型瞎想 —— 挂肖像把长相钉死)
@@ -3665,6 +3702,8 @@ def generate_movie_windowed(
     pin_gate_mad: float = 0.0,          # §G 钉帧完整性闸门阈值(≤0 关闭;
                                         # 荐 8.0 —— 帧 1→2 像素差超阈当场重掷)
     enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
+    use_junction_agent: bool = True,    # 缝合师(2026-08-09 用户令,默认开;
+                                        # 关 = 派生描述回模板装配,回滚开关)
     character_library=None,             # 跨片角色肖像库(2026-07-31)
     screenplay: Optional[str] = None,   # M2:用户自带剧本(给了就跳过 §A0)
     enable_review: bool = True,         # M2:评审/修复总开关(关 = 首选即收)
@@ -3751,6 +3790,12 @@ def generate_movie_windowed(
     llm_screenwriter = _crew.get("screenwriter") or llm
     llm_scene_writer = _crew.get("scene_writer") or llm
     llm_video_brain = _crew.get("video_brain") or llm
+    # 缝合师(2026-08-09):video_brain 底座 + junction_stitch 技能;
+    # use_junction_agent=False 即回滚到模板装配。
+    junction_stitcher = None
+    if use_junction_agent:
+        from ..agents.junction_stitcher import JunctionStitcherAgent
+        junction_stitcher = JunctionStitcherAgent(llm=llm_video_brain)
     screenwriter = screenwriter or ScreenwriterAgent()
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
@@ -4037,10 +4082,15 @@ def generate_movie_windowed(
                 storyboard.portraits, prompt_lang)
             if not _same_cast:
                 _junction_kind = "derive"
+                _derive_fallback = "cut"
             elif _bg_prev != _bg_cur:
                 _junction_kind = "cut"
             else:
-                _junction_kind = "continue"
+                # 2026-08-09 用户令:同人同景也走派生 —— 背景一样不等于
+                # 视角一样,双镜的 3D 感知负责换角度;派生失败退 continue
+                # (文字承接,同景硬切会跳)。
+                _junction_kind = "derive"
+                _derive_fallback = "continue"
             _route_reason = f"bg {_bg_prev}→{_bg_cur}; {_cast_reason}"
             log.info("window: %s junction → %s (%s)", entry.label,
                      _junction_kind, _route_reason[:200])
@@ -4054,14 +4104,21 @@ def generate_movie_windowed(
         shot_dir = cache_dir / f"shot{entry.shot_idx:03d}"
         junction_actual = None
         if _junction_kind == "derive":
-            # 条件②:ViMax 双镜切缝合 —— 派生帧作 pin_frame refer 行
-            # (末位编号+机器承接句);派生失败/两拒 → 降级条件①硬切。
+            # 交界派生:ViMax 双镜切缝合 —— 派生帧作 pin_frame refer 行
+            # (末位编号+机器承接句)。片尾报告先行(缝合师第一镜以实拍
+            # 为准);派生失败/两拒 → 按交界类型降级(人物变→cut;
+            # 同人同景→continue)。
+            junction_actual = _junction_state(
+                mllm, prev, shot_dir, tail_s=window_tail_s,
+                portraits=storyboard.portraits)
             _bgrec = (storyboard.backgrounds or {}).get(_bg_cur) or {}
             _derived = _derive_junction_frame(
                 video_gen, mllm, llm_video_brain, prev, prev, entry,
                 _open_cast, storyboard.cast, storyboard.portraits,
                 (_bgrec.get("path") if _bg_prev != _bg_cur else None),
-                shot_dir, prompt_lang)
+                shot_dir, prompt_lang,
+                stitcher=junction_stitcher,
+                tail_report=_parse_tail_report(junction_actual))
             if _derived is not None:
                 entry.images = list(entry.images or []) + [{
                     "path": str(_derived), "role": "reference",
@@ -4071,10 +4128,11 @@ def generate_movie_windowed(
                                   "strategy": "derive",
                                   "reason": _route_reason[:160]})
             else:
-                _junction_kind = "cut"
+                _junction_kind = _derive_fallback
                 decisions.append({"stage": "junction", "label": entry.label,
-                                  "strategy": "derive→cut",
-                                  "reason": "派生失败/两拒 — 降级硬切"})
+                                  "strategy": f"derive→{_derive_fallback}",
+                                  "reason": "派生失败/两拒 — 降级"
+                                            f"{_derive_fallback}"})
         if _junction_kind == "derive":
             junction_ctx = {
                 "junction_kind": "derive",

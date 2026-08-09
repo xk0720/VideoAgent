@@ -98,6 +98,9 @@ def main() -> int:
     ap.add_argument("--no-review", action="store_true",
                     help="M2:关闭评审/修复总开关(首选候选直接收货,"
                          "不评审不修复;episode 蒸馏同时停用)")
+    ap.add_argument("--no-junction-agent", action="store_true",
+                    help="缝合师回滚开关(2026-08-09):关掉 LLM 组稿,"
+                         "派生双镜描述回确定性模板装配")
     ap.add_argument("--pin-gate-mad", type=float, default=0.0,
                     help="§G 钉帧完整性闸门(0=关闭,荐 8.0):钉了开场的"
                          "路线生成完立即测开场撕裂度(接点/帧0→1/帧1→2 "
@@ -361,6 +364,7 @@ def main() -> int:
         screenplay=_screenplay_text,
         given_characters=_given_chars,
         enable_review=(not args.no_review),
+        use_junction_agent=(not args.no_junction_agent),
         repair_mode=args.repair_mode,
         enable_bgm=args.bgm,
         enable_transitions=args.transitions,

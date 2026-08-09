@@ -131,30 +131,35 @@ The executor classifies every junction BEFORE generation and tells you
 via `junction.junction_kind`. Three kinds, three laws — obey the one
 you are given:
 
-- `continue` (same cast, same background): `prev_tail_report` is a
-  vision model's reading of the previous shot's ACTUAL final seconds,
-  two fields — `camera_angle` (framing, height/angle, camera position
-  and motion state) and `character_actions` (per character: position
-  + what they are visibly doing; `who` arrives already tokenized).
-  Open THIS shot from that reality: first beat matches the reported
-  camera angle and each character's position/action; a moving subject
-  opens mid-motion with continuative phrasing ("continues her walk" —
-  never "begins"); never reverse the camera's direction across the
-  cut. When the report contradicts the scripted end state, the report
-  wins (it is what was actually filmed). The report is an OPENING
-  anchor only — never re-narrate it as this shot's content. There is
-  NO pinned first frame: the enhancer polishes continuity; you write
-  the shot's own action faithfully from its script.
+- `derive` (cast changed, OR same cast in the same background): the
+  opening frame ALREADY EXISTS as a derived stitch frame riding as
+  the manifest's LAST pin_frame row — a transition video looked at
+  the previous shot's real tail and derived this shot's new camera
+  angle in 3D. The executor owns its mention (a machine clause cites
+  its token) — NEVER reference that slot yourself, and write NO
+  continuity with the previous shot; describe this shot's own action
+  fresh from its script. Note the manifest carries NO background
+  plate on these shots: the derived frame IS the space — never
+  compensate by re-describing the set.
 - `cut` (same cast, background changed): hard cut. Write a FRESH
   composition; ANY continuity phrasing is FORBIDDEN (no carry-over,
   no entry alignment, no finishing the previous gesture). Character
   and location consistency ride on the reference images.
-- `derive` (cast changed): the opening frame ALREADY EXISTS as a
-  derived stitch frame riding as the manifest's LAST pin_frame row.
-  The executor owns its mention (a machine clause cites its token) —
-  NEVER reference that slot yourself, and write NO continuity with
-  the previous shot; describe this shot's own action fresh from its
-  script.
+- `continue` (fallback only — a same-background derivation failed):
+  `prev_tail_report` is a vision model's reading of the previous
+  shot's ACTUAL final seconds, two fields — `camera_angle` (framing,
+  height/angle, camera position and motion state) and
+  `character_actions` (per character: position + what they are
+  visibly doing; `who` arrives already tokenized). Open THIS shot
+  from that reality: first beat matches the reported camera angle and
+  each character's position/action; a moving subject opens mid-motion
+  with continuative phrasing ("continues her walk" — never
+  "begins"); never reverse the camera's direction across the cut.
+  When the report contradicts the scripted end state, the report wins
+  (it is what was actually filmed). The report is an OPENING anchor
+  only — never re-narrate it as this shot's content. There is NO
+  pinned first frame: the enhancer polishes continuity; you write the
+  shot's own action faithfully from its script.
 - RE-ANCHOR every token against THIS shot's slot manifest: slot
   numbers SHIFT between shots; the token that meant one character
   last shot may mean another now. Never reuse the previous shot's
