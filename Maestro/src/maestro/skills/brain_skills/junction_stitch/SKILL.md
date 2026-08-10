@@ -41,6 +41,15 @@ their semantic lines; never restate them.
    never an invented number. When a location slot is provided (the
    background changed), open with the location anchored to its token
    (e.g. "In the location shown in <<<image_4>>>, ...").
+5b. SPACE-VIEW LAW: when the slot table carries a `space_view` row (a
+   photograph of this SAME location seen from the second shot's
+   direction, its content listed in the row), the second shot
+   description MUST anchor its space on that token AND weave the
+   view's concrete fixed elements into the prose — e.g. "facing the
+   brick wall and iron door shown in <<<image_3>>>" — so the post-cut
+   direction is grounded in the photographed layout, never invented.
+   Pick the elements the camera would actually face; do not enumerate
+   the whole caption.
 6. CONTINUITY OF WORLD: same time of day, same weather, same light,
    same wardrobe as the first shot — a cut changes the camera, never
    the world.

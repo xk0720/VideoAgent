@@ -168,3 +168,75 @@ def test_routing_same_cast_same_bg_derives(monkeypatch):
         else:
             kind, fb = "derive", "continue"
         assert (kind, fb) == (want, want_fb)
+
+
+def test_derive_same_bg_attaches_space_view(tmp_path):
+    """②空间圣经:同景派生挂朝向视图(末位 refer)+ 布局法语义行;
+    缝合师槽位表带 space_view 行;junction_meta 记缝合师产物。"""
+    import subprocess
+    prev_video = tmp_path / "prev.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=gray:s=160x90:d=0.3", str(prev_video)], check=True)
+    port = tmp_path / "xm.png"
+    sview = tmp_path / "bg1_reverse.png"
+    for p in (port, sview):
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+             "-i", "color=c=gray:s=160x90:d=0.1", "-frames:v", "1",
+             str(p)], check=True)
+
+    class _VG:
+        generate_audio = False
+
+        def __init__(self):
+            self.calls = []
+
+        def ref_token(self, n):
+            return f"<<<image_{n}>>>"
+
+        def generate(self, prompt, duration, out_path, fps=24, seed=0,
+                     reference_images=None, **kw):
+            self.calls.append({"prompt": prompt,
+                               "refs": [str(r) for r in
+                                        (reference_images or [])]})
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error",
+                 "-f", "lavfi", "-i", "color=c=black:s=160x90:d=1",
+                 "-f", "lavfi", "-i", "color=c=white:s=160x90:d=1",
+                 "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0",
+                 str(out_path)], check=True)
+            return out_path
+
+    seen_slots = {}
+
+    class _Stitcher:
+        def run(self, slot_table=None, **kw):
+            seen_slots["rows"] = slot_table
+            return {"first_shot_desc": "镜头停稳,<<<image_2>>>静立。",
+                    "second_shot_desc": "朝向<<<image_3>>>所示的红砖墙,"
+                                        "<<<image_2>>>的背影走向铁门。"}
+
+    vg = _VG()
+    prev = SimpleNamespace(video_path=str(prev_video),
+                           end_state="<小明>静立。", description="",
+                           opening_frame="")
+    entry = SimpleNamespace(shot_idx=2, end_state="",
+                            opening_frame="<小明>走向天台门。",
+                            description="", junction_meta={})
+    got = wl._derive_junction_frame(
+        vg, None, None, prev, prev, entry, ["小明"],
+        {"小明": "role"}, {"小明": str(port)}, None,
+        tmp_path / "shot002", "zh", stitcher=_Stitcher(),
+        tail_report=None,
+        space_view={"view": "reverse", "path": str(sview),
+                    "caption": "红砖墙,灰色铁门"})
+    assert got is not None
+    call = vg.calls[0]
+    assert call["refs"][2] == str(sview)          # 视图末位随行
+    assert "红砖墙" in call["prompt"]              # 描述织入实物
+    assert "must keep the position and look" in call["prompt"]  # 布局法
+    kinds = [r["kind"] for r in seen_slots["rows"]]
+    assert "space_view" in kinds                  # 缝合师看得见视图行
+    assert entry.junction_meta["stitcher"]["via"] == "agent"
+    assert entry.junction_meta["two_shot_video"]

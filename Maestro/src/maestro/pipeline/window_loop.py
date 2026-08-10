@@ -70,6 +70,7 @@ from ..agents.director import DirectorAgent
 from ..agents.screenwriter import ScreenwriterAgent
 from ..logging_utils import brain_log, get_logger
 from .ref_slots import validate_references
+from .space_bible import space_semantic_line
 from ..memory.episode_memory import EpisodeMemory
 from ..memory.storyboard import StoryboardMemory
 from ..models.mllm_backends import _extract_json
@@ -3277,7 +3278,8 @@ def _map_tail_report(report, name_to_slot: dict, cast,
 def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
                            open_cast, cast, portraits, bg_path,
                            shot_dir: Path, prompt_lang: str,
-                           stitcher=None, tail_report=None):
+                           stitcher=None, tail_report=None,
+                           space_view=None):
     """交界派生(2026-08-07 条件②;2026-08-09 扩展到同人同景):ViMax
     双镜切缝合。参考图 = [上镜真实末帧] + [本镜开场人物肖像…] (+ 换景
     时新背景板;同景【不挂板】—— 板会和运镜打架,切后空间由双镜的
@@ -3310,6 +3312,14 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
     if bg_path and Path(bg_path).exists():
         refs.append(Path(bg_path))
         bg_tok = _ref_tok(video_gen, len(refs))
+    # ②空间圣经(2026-08-10 用户令):同景派生挂【朝向视图】当布局法
+    # (换景派生已有新景板,不叠挂)—— 红墙案根修:切后方向有据可依。
+    sv_tok = None
+    if space_view is None or bg_tok is not None:
+        pass
+    elif Path(str(space_view.get("path") or "")).exists():
+        refs.append(Path(space_view["path"]))
+        sv_tok = _ref_tok(video_gen, len(refs))
     # 两镜描述:缝合师 agent 组稿(2026-08-09 用户令,默认启用)——
     # 第一镜以实拍片尾报告为准,第二镜提炼"切后第一眼";坏输出退化
     # 模板装配(共用清洗器,2026-08-08 连环质询的六种脏全免疫)。
@@ -3326,7 +3336,13 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
                        + ([{"slot": bg_tok, "kind": "location",
                             "content": "the second shot's location "
                                        "(empty plate)"}]
-                          if bg_tok else []))
+                          if bg_tok else [])
+                       + ([{"slot": sv_tok, "kind": "space_view",
+                            "content": ("this location seen from the "
+                                        "second shot's direction: "
+                                        + str(space_view.get("caption")
+                                              or "")[:200])}]
+                          if sv_tok else []))
         try:
             got = stitcher.run(
                 prev_end_state=_scene_text_for_prompt(_strip_markers(
@@ -3343,6 +3359,7 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
         if got:
             first_desc = got["first_shot_desc"]
             second_desc = got["second_shot_desc"]
+    _stitch_via = "agent" if (first_desc and second_desc) else "template"
     if not first_desc or not second_desc:
         # 确定性模板装配(退化路径,台账留痕由调用方 decisions 记)
         first_desc = _scene_text_for_prompt(_strip_markers(
@@ -3369,9 +3386,18 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
                         f"only, never copy its pose or framing."
                         for n, t in tokmap.items())
               + (f" {bg_tok} shows the second shot's location — same "
-                 f"space, ignore its empty framing." if bg_tok else ""))
+                 f"space, ignore its empty framing." if bg_tok else "")
+              + ((" " + space_semantic_line(space_view, zh=False)
+                  .replace("the SAME location",
+                           f"{sv_tok} is the SAME location", 1))
+                 if sv_tok else ""))
     want = _strip_markers(getattr(entry, "opening_frame", "")
                           or getattr(entry, "description", ""))
+    # ④布局比对(2026-08-10):审查意图带上视图图注 —— 图注与切后帧
+    # 的场景矛盾(红墙变白墙)即拒,仍走"只认矛盾"老法,不加新闸。
+    if space_view is not None and space_view.get("caption"):
+        want += ("\nLOCATION LAW (fixed elements must match): "
+                 + str(space_view["caption"])[:300])
     for attempt, seed in enumerate((777, 778)):
         vout = shot_dir / f"junction_two_shot_s{seed}.mp4"
         fout = shot_dir / f"junction_derived_s{seed}.png"
@@ -3394,6 +3420,17 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
                         entry.shot_idx, str(exc)[:160])
             return None
         if frame_review_ok(mllm, llm, frame, want):
+            # 交界档案(2026-08-10 用户令:落台账供分析)—— 缝合师
+            # via/两镜描述/双镜工件,由调用方并入 junction_meta
+            try:
+                entry.junction_meta = {
+                    **(getattr(entry, "junction_meta", None) or {}),
+                    "stitcher": {"via": _stitch_via,
+                                 "first": first_desc[:300],
+                                 "second": second_desc[:300]},
+                    "two_shot_video": str(vout), "seed": seed}
+            except Exception:
+                pass
             return Path(frame)
         log.warning("window: derived junction frame REJECTED (attempt "
                     "%d) — %s", attempt + 1,
@@ -3996,6 +4033,13 @@ def generate_movie_windowed(
         if _missing_assets:
             raise RuntimeError("asset guarantee failed — "
                                + "; ".join(_missing_assets))
+        # ①空间圣经(2026-08-10 用户令):每 bg 从主板派生 left/right/
+        # reverse 视图 + VLM 图注 —— 全片对空间只脑补这一次,之后按
+        # 朝向挑视图当锚;失败视图缺席留痕,master 恒在。
+        from .space_bible import build_space_views
+        decisions.extend(build_space_views(
+            storyboard, image_edit, mllm, cache_dir / "spaces",
+            bg_descs=_bg_prompts if _need_keys else None))
     if storyboard.cast:
         log.info("window: cast canon — %s",
                  "; ".join(f"{k}: {v[:60]}" for k, v in
@@ -4112,13 +4156,32 @@ def generate_movie_windowed(
                 mllm, prev, shot_dir, tail_s=window_tail_s,
                 portraits=storyboard.portraits)
             _bgrec = (storyboard.backgrounds or {}).get(_bg_cur) or {}
+            # ②空间圣经:同景派生按"切后第一眼"挑朝向视图当布局法
+            # (换景派生挂新景板,不叠视图)
+            _sview = None
+            if _bg_prev == _bg_cur:
+                from .space_bible import pick_space_view
+                _sview = pick_space_view(
+                    llm_video_brain, storyboard, _bg_cur,
+                    _strip_markers(entry.opening_frame
+                                   or entry.description))
             _derived = _derive_junction_frame(
                 video_gen, mllm, llm_video_brain, prev, prev, entry,
                 _open_cast, storyboard.cast, storyboard.portraits,
                 (_bgrec.get("path") if _bg_prev != _bg_cur else None),
                 shot_dir, prompt_lang,
                 stitcher=junction_stitcher,
-                tail_report=_parse_tail_report(junction_actual))
+                tail_report=_parse_tail_report(junction_actual),
+                space_view=_sview)
+            entry.junction_meta = {
+                **(getattr(entry, "junction_meta", None) or {}),
+                "kind": "derive", "route_reason": _route_reason[:300],
+                "space_view": ({"view": _sview["view"],
+                                "path": _sview["path"],
+                                "caption": _sview.get("caption", "")[:200]}
+                               if _sview else None),
+                "derived_frame": (str(_derived) if _derived else None),
+            }
             if _derived is not None:
                 entry.images = list(entry.images or []) + [{
                     "path": str(_derived), "role": "reference",
@@ -4129,6 +4192,7 @@ def generate_movie_windowed(
                                   "reason": _route_reason[:160]})
             else:
                 _junction_kind = _derive_fallback
+                entry.junction_meta["fallback_to"] = _derive_fallback
                 decisions.append({"stage": "junction", "label": entry.label,
                                   "strategy": f"derive→{_derive_fallback}",
                                   "reason": "派生失败/两拒 — 降级"
@@ -4163,6 +4227,9 @@ def generate_movie_windowed(
                     "consistency ride on the reference images."),
                 "required_end_state": entry.end_state or None,
             }
+            entry.junction_meta = {
+                **(getattr(entry, "junction_meta", None) or {}),
+                "kind": "cut", "route_reason": _route_reason[:300]}
             decisions.append({"stage": "junction", "label": entry.label,
                               "strategy": "cut",
                               "reason": _route_reason[:160]})
@@ -4180,6 +4247,10 @@ def generate_movie_windowed(
                                           or None) if prev else None,
                 "required_end_state": entry.end_state or None,
             }
+            entry.junction_meta = {
+                **(getattr(entry, "junction_meta", None) or {}),
+                "kind": "continue", "route_reason": _route_reason[:300],
+                "tail_report": _tail_rep}
             decisions.append({"stage": "junction", "label": entry.label,
                               "strategy": "continue",
                               "reason": _route_reason[:160]})
@@ -4936,6 +5007,32 @@ def generate_movie_windowed(
                  "verified" if res.converged else "generated_with_defects",
                  best.metric_scores.get("weighted_total", 0.0),
                  len(res.actions))
+        # ③空间圣经·实拍回流(2026-08-10 用户令):收货帧抽尾 → 清场
+        # (擦人;还有人 → 放弃,治 2026-08-04 幽灵人物之因)→ 定朝向
+        # → 顶替/追加视图(实拍 > 脑补,新实拍 > 旧实拍)。失败 =
+        # 保持现状,永不断链。
+        if best.video_path and Path(best.video_path).exists():
+            from .space_bible import washed_frame_upgrade
+            _bgk3 = (getattr(entry, "bg_id", "")
+                     or f"scene_{entry.scene_idx}")
+            _tailf = _last_frame(
+                Path(best.video_path),
+                shot_dir / "space_upgrade_tail.png")
+            if _tailf is not None:
+                _upv = washed_frame_upgrade(
+                    storyboard, _bgk3, Path(_tailf), image_edit, mllm,
+                    llm_video_brain, cache_dir / "spaces",
+                    entry.shot_idx)
+                if _upv:
+                    entry.junction_meta = {
+                        **(getattr(entry, "junction_meta", None) or {}),
+                        "frame_upgrade": {
+                            "view": _upv,
+                            "path": storyboard.spaces[_bgk3][_upv]["path"]}}
+                    decisions.append({"stage": "space_view",
+                                      "bg": _bgk3, "view": _upv,
+                                      "via": "frame_upgrade",
+                                      "label": entry.label})
 
     # ── §E 合成:时间顺序 concat ────────────────────────────────────────────
     final: Optional[Path] = None

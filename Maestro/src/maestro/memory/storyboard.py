@@ -102,6 +102,11 @@ class ShotEntry:
     transition_path: Optional[str] = None
     # 对白说话人(2026-08-04:台词张冠李戴事故 —— 口型子句必须对准真人)
     dialogue_speaker: str = ""
+    # 交界档案(2026-08-10 用户令:全链决策落台账供事后分析):
+    # {kind, fallback_from?, route_reason, stitcher(via/first/second),
+    #  space_view{view,path,caption}?, derived_frame?, two_shot_video?,
+    #  frame_upgrade{view,path}?}
+    junction_meta: dict = field(default_factory=dict)
     # 大背景 id(B 案:brain 预测;同 id = 同一物理空间,共用背景资产)
     bg_id: str = ""
     # brain 生成的 prompt 初版草稿(消融实验用:未经润色/闸门/对白追加)
@@ -165,6 +170,11 @@ class StoryboardMemory:
         # 背景资产登记表(B 案):bg_id → {"path": 图, "src": "t2i"|"frame"}
         # ——首镜验收后从实拍抽帧升级(src=frame),同 bg 各镜共用一张
         self.backgrounds: dict = {}
+        # 空间圣经(2026-08-10 用户令):{bg_id: {view: {path, caption,
+        # src(t2i|derived|frame), shot_idx}}},view ∈ master/left/right/
+        # reverse(+回流追加的 new_N)。src=frame(实拍清场帧)永不被
+        # 资产期图反向覆盖 —— 观众看过的空间就是法。
+        self.spaces: dict = {}
         self._rev = 0                    # 单调更新计数(每次写 +1,可审计)
 
     # ── 构建 ──────────────────────────────────────────────────────────────
@@ -301,6 +311,8 @@ class StoryboardMemory:
                    "scene_anchors": {str(k): v for k, v in
                                      (self.scene_anchors or {}).items()},
                    "backgrounds": dict(self.backgrounds or {}),
+                   "spaces": {k: dict(v) for k, v in
+                              (self.spaces or {}).items()},
                    "entries": [asdict(e) for e in self.entries]}
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
@@ -326,5 +338,9 @@ class StoryboardMemory:
         sb.backgrounds = {str(k): dict(v) for k, v in
                           (data.get("backgrounds") or {}).items()
                           if isinstance(v, dict) and v.get("path")}
+        sb.spaces = {str(k): {str(vk): dict(vv) for vk, vv in v.items()
+                              if isinstance(vv, dict) and vv.get("path")}
+                     for k, v in (data.get("spaces") or {}).items()
+                     if isinstance(v, dict)}
         sb.entries = [ShotEntry(**e) for e in data.get("entries", [])]
         return sb
