@@ -1793,6 +1793,8 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                 [], [], [], [], [], [], set()
             speakers, bgs = [], []
             cameras = []          # cinegraph 机位标注(缺省回退在返回处)
+            facings = []          # camera_facing(2026-08-10:选图专用
+                                  # 证据,永不进 prompt)
             for s_ in data["shots"][:max_shots]:
                 # 兼容两种形态:纯字符串,或 {description, duration_s, end_state}
                 if isinstance(s_, dict):
@@ -1841,6 +1843,9 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                             else None)
                     except Exception:
                         cameras.append(None)
+                    facings.append(str(s_.get("camera_facing", "")
+                                       or "").strip()[:160]
+                                   if isinstance(s_, dict) else "")
                     # 时长是 brain 的决定,范围写死 [4,10](2026-07-14 裁决)。
                     # brain 没输出/输出非法 → None = 不向 API 传 duration 字段,
                     # 用模型自然默认(用户裁决:绝不 feed 任何预设值)。
@@ -1903,6 +1908,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
                      "dialogue_speakers": speakers,
                      "bgs": bgs,
                      "cameras": cameras,
+                     "camera_facings": facings,
                      "music_plan": music_plan}, "llm"
     fb = list(fallback_fn())
     # 兜底层没有 brain → None = 不传 duration 字段,API 用自己的自然默认
@@ -1912,6 +1918,7 @@ def _write_outline(llm, user_prompt: str, asset_catalog: list,
          "variations": [""] * len(fb),
          "opening_frames": [""] * len(fb), "dialogues": [""] * len(fb),
          "cameras": [None] * len(fb),
+         "camera_facings": [""] * len(fb),
          "dialogue_speakers": [""] * len(fb), "bgs": [""] * len(fb),
          "music_plan": {}}, "fallback"
 
@@ -3947,6 +3954,8 @@ def generate_movie_windowed(
         entry_.dialogue_speaker = spks_[i_] if i_ < len(spks_) else ""
         entry_.bg_id = bgs_[i_] if i_ < len(bgs_) else ""
         entry_.dialogue = dlgs_[i_] if i_ < len(dlgs_) else ""
+        _fcs = script_meta.get("camera_facings") or []
+        entry_.camera_facing = _fcs[i_] if i_ < len(_fcs) else ""
     # 跨镜一致性描述符进台账(影片级,一次定稿全链照抄)。setting 必须
     # 在 §A' 之前就位 —— 2026-07-31 实锤:原顺序里肖像先生成、setting 后
     # 赋值,肖像 prompt 拿到空场景,背景全错。
@@ -4166,10 +4175,14 @@ def generate_movie_windowed(
             _sview = None
             if _bg_prev == _bg_cur:
                 from .space_bible import pick_space_view
+                # camera_facing 专用证据优先(2026-08-10 用户令);
+                # 老剧本无字段 → opening/description 兜底
                 _sview = pick_space_view(
                     llm_video_brain, storyboard, _bg_cur,
-                    _strip_markers(entry.opening_frame
-                                   or entry.description))
+                    (getattr(entry, "camera_facing", "") or
+                     _strip_markers(" ".join(
+                         t for t in (entry.opening_frame,
+                                     entry.description) if t))))
             _derived = _derive_junction_frame(
                 video_gen, mllm, llm_video_brain, prev, prev, entry,
                 _open_cast, storyboard.cast, storyboard.portraits,

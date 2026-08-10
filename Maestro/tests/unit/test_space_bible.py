@@ -93,7 +93,8 @@ def test_semantic_line_carries_caption():
     assert "brick wall" in en and "framing is free" in en
 
 
-def test_washed_upgrade_confident_replaces(tmp_path, monkeypatch):
+def test_washed_upgrade_appends_only(tmp_path, monkeypatch):
+    """2026-08-10 用户裁决:回流【纯追加】不顶替 —— master 恒不被改。"""
     import maestro.cinegraph.first_frame_factory as fff
     monkeypatch.setattr(fff, "_SPACED_WAITS_S", (0,))
     sb = _sb(tmp_path)
@@ -102,16 +103,12 @@ def test_washed_upgrade_confident_replaces(tmp_path, monkeypatch):
                                     "src": "t2i", "shot_idx": None}}
     tail = tmp_path / "tail.png"
     tail.write_bytes(b"t")
-
-    class _LLM:
-        def complete(self, prompt, **kw):
-            return '{"view": "master", "confident": true}'
     v = washed_frame_upgrade(sb, "bg_1", tail, _Edit(),
                              _MLLM(["empty rooftop, table, skyline"]),
-                             _LLM(), tmp_path / "spaces", 3)
-    assert v == "master"
-    assert sb.spaces["bg_1"]["master"]["src"] == "frame"
-    assert sb.spaces["bg_1"]["master"]["shot_idx"] == 3
+                             None, tmp_path / "spaces", 3)
+    assert v == "new_0"
+    assert sb.spaces["bg_1"]["master"]["src"] == "t2i"   # 恒不被改
+    assert sb.spaces["bg_1"]["new_0"]["src"] == "frame"
 
 
 def test_washed_upgrade_person_detected_skips(tmp_path, monkeypatch):
@@ -138,11 +135,8 @@ def test_washed_upgrade_unsure_appends(tmp_path, monkeypatch):
     tail = tmp_path / "tail.png"
     tail.write_bytes(b"t")
 
-    class _Unsure:
-        def complete(self, prompt, **kw):
-            return '{"view": null, "confident": false}'
     v = washed_frame_upgrade(sb, "bg_1", tail, _Edit(),
-                             _MLLM(["empty alley"]), _Unsure(),
+                             _MLLM(["empty alley"]), None,
                              tmp_path / "spaces", 5)
     assert v == "new_0"                       # 拿不准 → 追加不顶替
     assert sb.spaces["bg_1"]["new_0"]["src"] == "frame"
@@ -201,3 +195,97 @@ def test_build_views_pan_failure_falls_back_to_edit(tmp_path, monkeypatch):
                       video_gen=_DeadVG())
     views = sb.spaces["bg_1"]
     assert {"left", "right", "reverse"} <= set(views)     # 退老法
+
+
+def test_pan_frames_deduped_by_mad(tmp_path, monkeypatch):
+    """2026-08-10 用户裁决:环视是采样器不是量角器 —— 没转动的帧
+    (与 master/已收帧近似)丢弃留痕,宁缺勿滥。"""
+    import subprocess
+    import maestro.cinegraph.first_frame_factory as fff
+    monkeypatch.setattr(fff, "_SPACED_WAITS_S", (0,))
+    sb = _sb(tmp_path)
+    # master 用真图(纯灰),环视视频全程同色 → 三帧全部近似 master
+    master = tmp_path / "bg_1.png"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=gray:s=160x90:d=0.1", "-frames:v", "1",
+         str(master)], check=True)
+    sb.backgrounds["bg_1"] = {"path": str(master), "src": "t2i"}
+
+    class _VG:
+        generate_audio = False
+
+        def generate(self, prompt, duration, out_path, fps=24, seed=0,
+                     first_frame=None, **kw):
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                 "-i", "color=c=gray:s=160x90:d=2", str(out_path)],
+                check=True)
+            return out_path
+
+    build_space_views(sb, None, _MLLM(["m"]), tmp_path / "spaces",
+                      {"bg_1": "x"}, video_gen=_VG())
+    views = sb.spaces["bg_1"]
+    assert not any(v.startswith("pan_") for v in views)   # 全部判重丢弃
+
+
+def test_washed_frame_dup_not_appended(tmp_path, monkeypatch):
+    import subprocess
+    import maestro.cinegraph.first_frame_factory as fff
+    monkeypatch.setattr(fff, "_SPACED_WAITS_S", (0,))
+    sb = _sb(tmp_path)
+    gray = tmp_path / "gray.png"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", "color=c=gray:s=160x90:d=0.1", "-frames:v", "1",
+         str(gray)], check=True)
+    sb.spaces["bg_1"] = {"master": {"path": str(gray), "caption": "x",
+                                    "src": "t2i", "shot_idx": None}}
+
+    class _GrayEdit:
+        def edit(self, keyframe, instruction, out_path, references=None):
+            import shutil as _sh
+            _sh.copy(gray, out_path)
+            return out_path
+
+    tail = tmp_path / "tail.png"
+    tail.write_bytes(b"t")
+    v = washed_frame_upgrade(sb, "bg_1", gray, _GrayEdit(),
+                             _MLLM(["empty room"]), None,
+                             tmp_path / "spaces", 7)
+    assert v is None                          # 与 master 重复 → 不追加
+    assert "new_0" not in sb.spaces["bg_1"]
+
+
+def test_camera_facing_parsed_and_prompt_clean():
+    """camera_facing 字段(2026-08-10 用户设计):分镜解析入台账;
+    description 保持纯戏剧内容 —— 字段永不进 prompt 由结构保证
+    (它只流向 pick_space_view)。"""
+    import json as _json
+    from maestro.pipeline.window_loop import _write_outline
+
+    good = {"cast": {"魔术师": "static: x; dynamic: y"},
+            "setting": "rooftop at sunset",
+            "shots": [{"description": "Shot 1: <魔术师>走向天台门。",
+                       "duration_s": 5, "end_state": "静止。",
+                       "variation": "small", "camera": 0,
+                       "camera_facing": "反打朝天台门与红砖墙,中景",
+                       "bg": "bg_1"}],
+            "music_plan": {}}
+
+    class _LLM:
+        def complete(self, prompt, **kw):
+            return _json.dumps(good, ensure_ascii=False)
+    shots, durs, ends, meta, via = _write_outline(
+        _LLM(), "天台上魔术师走向门。", [], episode_guidance={},
+        max_shots=6, fallback_fn=lambda: ["x"], cast_canon={},
+        prompt_language="zh")
+    assert meta["camera_facings"] == ["反打朝天台门与红砖墙,中景"]
+
+
+def test_skill_carries_camera_facing_field():
+    from pathlib import Path as _P
+    sw = _P("src/maestro/skills/brain_skills/scene_write/SKILL.md"
+            ).read_text()
+    assert "camera_facing" in sw
+    assert "NEVER enters any" in sw.replace("\n   ", " ")

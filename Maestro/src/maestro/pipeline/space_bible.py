@@ -110,6 +110,7 @@ def _views_from_pan_video(bg_id, master, desc, video_gen, mllm, out_dir,
         if n < 8:
             cap.release()
             raise RuntimeError(f"pan video unreadable ({n} frames)")
+        kept_paths = [Path(master)]
         for frac, view in ((0.25, "pan_90"), (0.5, "pan_180"),
                            (0.75, "pan_270")):
             if view in views:
@@ -120,6 +121,19 @@ def _views_from_pan_video(bg_id, master, desc, video_gen, mllm, out_dir,
                 continue
             outp = Path(out_dir) / f"{bg_id}_{view}.png"
             cv2.imwrite(str(outp), fr)
+            # 验收(2026-08-10 用户裁决:环视是采样器不是量角器 ——
+            # 入池的每张必须验证过【独特】):与 master 及已收帧的
+            # MAD < 12 = 没转动/近似重复 → 丢弃留痕,宁缺勿滥。
+            mads = [_frame_mad(outp, p) for p in kept_paths]
+            if mads and all(m >= 0 for m in mads) and min(mads) < 12.0:
+                log.info("space bible: %s/%s dropped — no real rotation "
+                         "(min MAD %.1f vs kept views)", bg_id, view,
+                         min(mads))
+                outp.unlink(missing_ok=True)
+                decisions.append({"stage": "space_view", "bg": bg_id,
+                                  "view": view, "via": "dropped_dup"})
+                continue
+            kept_paths.append(outp)
             views[view] = {"path": str(outp),
                            "caption": _caption(mllm, outp),
                            "src": "derived", "shot_idx": None}
@@ -168,9 +182,26 @@ def _views_from_image_edit(bg_id, master, desc, image_edit, mllm,
                           "view": view, "via": "derived"})
 
 
+# 清单式图注指令(2026-08-10 用户质询:通用图注是"场景类型概括",
+# 同一天台的四个朝向全写成同一句 —— 图注是挑图的唯一依据,必须是
+# 【可分辨的固定物清单】。仅存台账供匹配,永不进生成 prompt。)
+_INVENTORY_INSTRUCTION = (
+    "List the DISTINCTIVE fixed elements visible in this exact frame "
+    "and where each sits (left/center/right, near/far): walls, doors, "
+    "windows, furniture, large fixtures, landmarks. Concrete inventory "
+    "only — no mood words, no scene-type summary, no people. One line.")
+
+
 def _caption(mllm, path) -> str:
     if mllm is None:
         return ""
+    fn = getattr(mllm, "caption_image_with_instruction", None)
+    if fn is not None:
+        try:
+            return str(fn(Path(path), _INVENTORY_INSTRUCTION)
+                       or "").strip()[:400]
+        except Exception:
+            pass
     fn = getattr(mllm, "caption_image", None)
     if fn is None:
         return ""
@@ -179,6 +210,21 @@ def _caption(mllm, path) -> str:
     except Exception as exc:
         log.warning("space bible: caption failed (%s)", str(exc)[:100])
         return ""
+
+
+def _frame_mad(a, b) -> float:
+    """两图 MAD(缩至 160x90;任一读不出 → -1 诚实未知)。"""
+    try:
+        import cv2
+        ia = cv2.imread(str(a))
+        ib = cv2.imread(str(b))
+        if ia is None or ib is None:
+            return -1.0
+        ia = cv2.resize(ia, (160, 90)).astype("float32")
+        ib = cv2.resize(ib, (160, 90)).astype("float32")
+        return float(abs(ia - ib).mean())
+    except Exception:
+        return -1.0
 
 
 def pick_space_view(llm, storyboard, bg_id: str,
@@ -203,7 +249,10 @@ def pick_space_view(llm, storyboard, bg_id: str,
             "A film set has several photographed VIEWS of one location "
             "(captions below). Pick the ONE view whose visible content "
             "best matches what the camera should see in this shot "
-            "opening.\nSHOT OPENING: " + str(shot_opening_desc)[:400]
+            "opening — use the shot's FACING words (shot size, camera "
+            "position, what it faces) and the subjects' movement "
+            "direction as the evidence.\nSHOT OPENING: "
+            + str(shot_opening_desc)[:500]
             + "\nVIEWS: " + json.dumps(menu, ensure_ascii=False)
             + '\nSTRICT JSON only: {"view": "<one of the view names>"}')
         got = (json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
@@ -263,49 +312,32 @@ def washed_frame_upgrade(storyboard, bg_id: str, tail_frame: Path,
                     "where it is; fill the revealed areas naturally.",
                     washed),
                 tag=f"space wash {bg_id} shot{shot_idx}")
+        # 独特性验收(与环视入池同法):与池内各视图近似重复 → 不追加
+        _mads = [_frame_mad(washed, it.get("path"))
+                 for it in views.values() if it.get("path")]
+        if _mads and all(m >= 0 for m in _mads) and min(_mads) < 12.0:
+            log.info("space bible: washed frame for %s duplicates an "
+                     "existing view (min MAD %.1f) — not appended",
+                     bg_id, min(_mads))
+            return None
         cap = _caption(mllm, washed)
         # 验收清场(2026-08-04 幽灵人物事故的根修):图注还提到人 →
-        # 放弃顶替,响亮留痕
+        # 放弃入池,响亮留痕
         if re.search(r"person|people|man|woman|figure|child|boy|girl|"
                      r"人物|男|女|人影|孩", cap, re.IGNORECASE):
             log.warning("space bible: washed frame for %s STILL shows a "
                         "person (caption) — upgrade skipped", bg_id)
             return None
-        view = _match_view(llm, views, cap)
-        if view is None:
-            view = f"new_{sum(1 for v in views if v.startswith('new_'))}"
+        # 纯追加(2026-08-10 用户裁决:不顶替,只添加 —— 池子膨胀无
+        # 关系,挑图按图注匹配,错误顶替才有毒)
+        view = f"new_{sum(1 for v in views if v.startswith('new_'))}"
         views[view] = {"path": str(washed), "caption": cap,
                        "src": "frame", "shot_idx": shot_idx}
         storyboard._save()
-        log.info("space bible: %s/%s upgraded from shot %d's real frame",
+        log.info("space bible: %s/%s appended from shot %d's real frame",
                  bg_id, view, shot_idx)
         return view
     except Exception as exc:
         log.warning("space bible: frame upgrade failed (%s) — registry "
                     "unchanged", str(exc)[:140])
         return None
-
-
-def _match_view(llm, views: dict, caption: str) -> Optional[str]:
-    """定朝向:LLM 拿清场帧图注与各视图图注匹配。自信匹配 → 该视图
-    (但 src=frame 的条目只被更新的 frame 顶替);拿不准 → None
-    (调用方追加 —— 错误追加无害,错误顶替有害)。"""
-    if llm is None or not views or not caption:
-        return None
-    menu = [{"view": v, "caption": it.get("caption", "")[:200],
-             "src": it.get("src")} for v, it in views.items()]
-    try:
-        raw = llm.complete(
-            "Match this newly photographed view of a film location "
-            "against the registered views. Answer which registered view "
-            "shows the SAME direction, or null if none clearly does.\n"
-            "NEW VIEW: " + caption[:300]
-            + "\nREGISTERED: " + json.dumps(menu, ensure_ascii=False)
-            + '\nSTRICT JSON only: {"view": "<name>"|null, '
-              '"confident": true|false}')
-        d = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
-        if d.get("confident") and d.get("view") in views:
-            return str(d["view"])
-    except Exception:
-        pass
-    return None

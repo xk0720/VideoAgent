@@ -102,6 +102,9 @@ class ShotEntry:
     transition_path: Optional[str] = None
     # 对白说话人(2026-08-04:台词张冠李戴事故 —— 口型子句必须对准真人)
     dialogue_speaker: str = ""
+    # 镜头朝向线索(2026-08-10 用户令:选图专用证据,永不进任何
+    # 生成 prompt —— description 保持纯戏剧内容)
+    camera_facing: str = ""
     # 交界档案(2026-08-10 用户令:全链决策落台账供事后分析):
     # {kind, fallback_from?, route_reason, stitcher(via/first/second),
     #  space_view{view,path,caption}?, derived_frame?, two_shot_video?,

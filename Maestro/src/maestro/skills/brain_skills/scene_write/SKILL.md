@@ -68,6 +68,18 @@ translate — whatever you drop here is lost to the film forever.
    the rainy street, later they talk in the back doorway": store
    floor bg_1, rainy street outside bg_2, back doorway bg_3; every
    interior shot (counter, aisle, close-ups) stays bg_1.
+5c. CAMERA FACING FIELD (hard requirement): every shot carries a
+   dedicated `camera_facing` field — ONE short clause stating what
+   the camera looks at: direction/angle relative to the space, the
+   fixed landmark(s) it faces, and shot size ("reverse angle toward
+   the rooftop door and brick wall, medium", "from behind the counter
+   toward the shop entrance, wide"). This field NEVER enters any
+   generation prompt — it is matching evidence only: downstream, the
+   reference view of the location is chosen by matching it against
+   photographed views of the set. An empty or action-only value gives
+   the picker nothing and the shot silently falls back to the
+   establishing view; a wrong angle anchor then warps the whole
+   space. Keep the description itself unchanged — story only.
 6. SETTLE-TO-CUT (junction law): by default every shot ENDS settled —
    camera static, subjects at a describable rest — and the next shot
    opens from that stillness; still-to-still is the most seamless cut
@@ -141,6 +153,9 @@ translate — whatever you drop here is lost to the film forever.
             "end_state": "<the cut-moment freeze frame + camera state>",
             "variation": "large|medium|small",
             "camera": <int camera id, same position/angle => same id>,
+            "camera_facing": "<what the camera looks at: direction +
+             faced landmark(s) + shot size; matching evidence only,
+             never enters prompts>",
             "opening_frame": "<first shot & scene cuts ONLY: one purely
              static opening snapshot; omit for continuing shots>",
             "dialogue": {"speaker": "<cast key>", "line": "<one line>"},

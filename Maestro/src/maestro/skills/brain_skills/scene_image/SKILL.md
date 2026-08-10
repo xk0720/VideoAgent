@@ -44,6 +44,15 @@ happens. It is a location plate, not a poster.
 6. ONE bg_id, ONE space: shots sharing a bg_id share this exact
    prompt's image. Write the space so every planned camera direction
    of those shots has something to look at (all four walls exist).
+7. LANDMARK COVERAGE (hard law): every fixed landmark the shots of
+   this bg_id USE — a door someone exits through, the counter where
+   a scene plays, the window someone looks out of, the oven, the
+   stage — MUST be named in the prompt with a position ("a gray iron
+   door in the far brick wall"). The plate seeds a 360° view bank of
+   this space: a landmark missing from the plate is missing from
+   every derived view, and the story's key wall becomes pure
+   invention exactly where consistency matters most. Read the shot
+   excerpts in the task and inventory their fixed landmarks first.
 
 ## Output (STRICT JSON, nothing else)
 

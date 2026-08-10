@@ -1117,6 +1117,17 @@ class GeminiVLM(OpenAICompatVLM):
         ])
         return (reply or "").strip()
 
+    def caption_image_with_instruction(self, image_path,
+                                       instruction: str) -> str:
+        """定制指令图注(2026-08-10 空间圣经:清单式图注 —— 通用图注
+        是场景类型概括,四个朝向写成同一句,挑图判官无从分辨)。"""
+        got = self._image_part("IMAGE", image_path)
+        if not got:
+            return ""
+        self._require_key()
+        reply = self._generate([got[1], {"text": str(instruction)}])
+        return (reply or "").strip()
+
     def caption_identity(self, image_path) -> str:
         """角色正典打标(颜色逐项、看不见省略)—— 原生 Gemini 通道。"""
         got = self._image_part("IMAGE", image_path)
