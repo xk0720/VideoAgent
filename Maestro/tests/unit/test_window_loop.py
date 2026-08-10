@@ -284,7 +284,10 @@ def test_transient_crash_retried_same_strategy_no_degrade(tmp_path,
 
         def generate(self, prompt, duration, out_path, fps=8, first_frame=None,
                      reference_images=None, seed=0, reference_video=None):
-            if first_frame is not None and not self._crashed:
+            # 崩点锚定【镜调用】(2026-08-10:空间圣经的环视视频也带
+            # first_frame,发生在所有镜之前 —— 不锚定会吃掉崩点)
+            if first_frame is not None and "shot" in str(out_path) \
+                    and not self._crashed:
                 self._crashed = True
                 raise RuntimeError("SSL EOF during download — boom")
             return super().generate(prompt, duration, out_path, fps=fps,
