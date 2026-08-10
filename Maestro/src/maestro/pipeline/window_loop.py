@@ -4043,7 +4043,8 @@ def generate_movie_windowed(
         from .space_bible import build_space_views
         decisions.extend(build_space_views(
             storyboard, image_edit, mllm, cache_dir / "spaces",
-            bg_descs=_bg_prompts if _need_keys else None))
+            bg_descs=_bg_prompts if _need_keys else None,
+            video_gen=video_gen))
     if storyboard.cast:
         log.info("window: cast canon — %s",
                  "; ".join(f"{k}: {v[:60]}" for k, v in

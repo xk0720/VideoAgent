@@ -41,17 +41,27 @@ def _edit_view_prompt(scene_desc: str, turn: str) -> str:
             "No people, empty scene.")
 
 
+_PAN_PROMPT = (
+    "Locked-off position, one continuous take, empty scene with no "
+    "people or animals. {desc} The camera rotates smoothly IN PLACE a "
+    "full 360 degrees around its own axis at constant speed, revealing "
+    "the entire surroundings of this exact location, and returns to "
+    "the starting view. Every fixed element stays consistent; nothing "
+    "appears or disappears.")
+
+
 def build_space_views(storyboard, image_edit, mllm, out_dir: Path,
-                      bg_descs: Optional[dict] = None) -> list:
-    """①资产期:每个 bg 从主板派生 left/right/reverse 三视图 + VLM
-    图注(以成品为准,不信任指令)。幂等(路径存在即跳过);编辑端
-    缺席/失败 → 该视图缺席留痕(master 恒在,绝不断链)。
-    返回 decisions 记录。"""
+                      bg_descs: Optional[dict] = None,
+                      video_gen=None) -> list:
+    """①资产期(2026-08-10 二版,用户裁决):环视视频抽帧法 —— 首帧
+    硬钉主板,可灵拍"原地 360° 环视"(视频通道的 3D 一致性保证同一
+    空间),1/4、1/2、3/4 处抽帧为 pan_90/pan_180/pan_270 三视图 +
+    VLM 图注(以成品为准 —— 转没转够不重要,图注说了算,挑图按图注
+    匹配)。视频端失败 → 退 seedream 逐视图编辑老法(图像编辑对整景
+    旋转无 3D 理解,元素会漂 —— 仅作兜底);再败 → master 恒在。"""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     decisions: list = []
-    can_edit = image_edit is not None and \
-        type(image_edit).__name__ != "MockImageEditClient"
     for bg_id, rec in (storyboard.backgrounds or {}).items():
         master = str(rec.get("path") or "")
         if not master or not Path(master).exists():
@@ -63,35 +73,99 @@ def build_space_views(storyboard, image_edit, mllm, out_dir: Path,
                                "src": rec.get("src", "t2i"),
                                "shot_idx": None}
         desc = str((bg_descs or {}).get(bg_id) or storyboard.setting or "")
-        for view in _VIEWS:
+        if all(v in views for v in ("pan_90", "pan_180", "pan_270")) \
+                or any(v in views for v in _VIEWS):
+            continue
+        got = _views_from_pan_video(bg_id, master, desc, video_gen,
+                                    mllm, out_dir, views, decisions)
+        if not got:
+            _views_from_image_edit(bg_id, master, desc, image_edit,
+                                   mllm, out_dir, views, decisions)
+    storyboard._save()
+    return decisions
+
+
+def _views_from_pan_video(bg_id, master, desc, video_gen, mllm, out_dir,
+                          views, decisions) -> bool:
+    """环视视频 → 三帧视图。失败 → False(调用方退图像编辑)。"""
+    if video_gen is None or not hasattr(video_gen, "generate"):
+        return False
+    vout = Path(out_dir) / f"{bg_id}_pan360.mp4"
+    try:
+        if not vout.exists():
+            from ..cinegraph.first_frame_factory import _spaced_retry
+            old_a = getattr(video_gen, "generate_audio", False)
+            video_gen.generate_audio = False
+            try:
+                _spaced_retry(
+                    lambda: video_gen.generate(
+                        _PAN_PROMPT.format(desc=desc), 10, vout,
+                        fps=24, seed=777, first_frame=Path(master)),
+                    tag=f"space pan video {bg_id}")
+            finally:
+                video_gen.generate_audio = old_a
+        import cv2
+        cap = cv2.VideoCapture(str(vout))
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if n < 8:
+            cap.release()
+            raise RuntimeError(f"pan video unreadable ({n} frames)")
+        for frac, view in ((0.25, "pan_90"), (0.5, "pan_180"),
+                           (0.75, "pan_270")):
             if view in views:
                 continue
-            outp = out_dir / f"{bg_id}_{view}.png"
-            if not outp.exists():
-                if not can_edit:
-                    log.warning("space bible: no image-edit client — %s "
-                                "view of %s skipped", view, bg_id)
-                    continue
-                try:
-                    from ..cinegraph.first_frame_factory import \
-                        _spaced_retry
-                    _spaced_retry(
-                        lambda: image_edit.edit(
-                            Path(master),
-                            _edit_view_prompt(desc, _VIEW_PROMPTS[view]),
-                            outp),
-                        tag=f"space view {bg_id}/{view}")
-                except Exception as exc:
-                    log.warning("space bible: %s view of %s FAILED (%s) — "
-                                "skipped", view, bg_id, str(exc)[:120])
-                    continue
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(n * frac))
+            ok, fr = cap.read()
+            if not ok:
+                continue
+            outp = Path(out_dir) / f"{bg_id}_{view}.png"
+            cv2.imwrite(str(outp), fr)
             views[view] = {"path": str(outp),
                            "caption": _caption(mllm, outp),
                            "src": "derived", "shot_idx": None}
             decisions.append({"stage": "space_view", "bg": bg_id,
-                              "view": view, "via": "derived"})
-    storyboard._save()
-    return decisions
+                              "view": view, "via": "pan_video"})
+        cap.release()
+        return any(v in views for v in ("pan_90", "pan_180", "pan_270"))
+    except Exception as exc:
+        log.warning("space bible: pan-video views for %s FAILED (%s) — "
+                    "falling back to image-edit views", bg_id,
+                    str(exc)[:140])
+        return False
+
+
+def _views_from_image_edit(bg_id, master, desc, image_edit, mllm,
+                           out_dir, views, decisions) -> None:
+    """兜底:seedream 逐视图编辑(无 3D 理解,元素会漂 —— 仅当视频
+    端不可用;缺席留痕不断链)。"""
+    can_edit = image_edit is not None and \
+        type(image_edit).__name__ != "MockImageEditClient"
+    for view in _VIEWS:
+        if view in views:
+            continue
+        outp = Path(out_dir) / f"{bg_id}_{view}.png"
+        if not outp.exists():
+            if not can_edit:
+                log.warning("space bible: no image-edit client — %s "
+                            "view of %s skipped", view, bg_id)
+                continue
+            try:
+                from ..cinegraph.first_frame_factory import _spaced_retry
+                _spaced_retry(
+                    lambda: image_edit.edit(
+                        Path(master),
+                        _edit_view_prompt(desc, _VIEW_PROMPTS[view]),
+                        outp),
+                    tag=f"space view {bg_id}/{view}")
+            except Exception as exc:
+                log.warning("space bible: %s view of %s FAILED (%s) — "
+                            "skipped", view, bg_id, str(exc)[:120])
+                continue
+        views[view] = {"path": str(outp),
+                       "caption": _caption(mllm, outp),
+                       "src": "derived", "shot_idx": None}
+        decisions.append({"stage": "space_view", "bg": bg_id,
+                          "view": view, "via": "derived"})
 
 
 def _caption(mllm, path) -> str:

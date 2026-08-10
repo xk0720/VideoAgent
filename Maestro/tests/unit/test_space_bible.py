@@ -146,3 +146,58 @@ def test_washed_upgrade_unsure_appends(tmp_path, monkeypatch):
                              tmp_path / "spaces", 5)
     assert v == "new_0"                       # 拿不准 → 追加不顶替
     assert sb.spaces["bg_1"]["new_0"]["src"] == "frame"
+
+
+def test_build_views_pan_video_frames(tmp_path, monkeypatch):
+    """2026-08-10 二版(用户裁决):环视视频抽帧 —— 首帧硬钉主板,
+    1/4、1/2、3/4 抽帧为 pan_90/180/270;视频端失败退图像编辑。"""
+    import subprocess
+    import maestro.cinegraph.first_frame_factory as fff
+    monkeypatch.setattr(fff, "_SPACED_WAITS_S", (0,))
+    sb = _sb(tmp_path)
+
+    class _VG:
+        generate_audio = False
+
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, prompt, duration, out_path, fps=24, seed=0,
+                     first_frame=None, **kw):
+            self.calls.append({"prompt": prompt,
+                               "first": str(first_frame)})
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                 "-i", "color=c=gray:s=160x90:d=2", str(out_path)],
+                check=True)
+            return out_path
+
+    vg = _VG()
+    build_space_views(sb, None, _MLLM(["m", "a", "b", "c"]),
+                      tmp_path / "spaces", {"bg_1": "a rooftop"},
+                      video_gen=vg)
+    views = sb.spaces["bg_1"]
+    assert {"pan_90", "pan_180", "pan_270"} <= set(views)
+    assert views["pan_180"]["src"] == "derived"
+    assert vg.calls[0]["first"].endswith("bg_1.png")     # 首帧硬钉主板
+    assert "360 degrees" in vg.calls[0]["prompt"]
+    assert "no people" in vg.calls[0]["prompt"]
+
+
+def test_build_views_pan_failure_falls_back_to_edit(tmp_path, monkeypatch):
+    import maestro.cinegraph.first_frame_factory as fff
+    monkeypatch.setattr(fff, "_SPACED_WAITS_S", (0,))
+    sb = _sb(tmp_path)
+
+    class _DeadVG:
+        generate_audio = False
+
+        def generate(self, *a, **k):
+            raise RuntimeError("down")
+
+    ed = _Edit()
+    build_space_views(sb, ed, _MLLM(["m", "l", "r", "v"]),
+                      tmp_path / "spaces", {"bg_1": "x"},
+                      video_gen=_DeadVG())
+    views = sb.spaces["bg_1"]
+    assert {"left", "right", "reverse"} <= set(views)     # 退老法
