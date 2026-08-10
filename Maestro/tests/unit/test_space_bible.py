@@ -160,22 +160,32 @@ def test_build_views_pan_video_frames(tmp_path, monkeypatch):
                      first_frame=None, **kw):
             self.calls.append({"prompt": prompt,
                                "first": str(first_frame)})
+            colors = ["red", "blue"] if "right" in prompt else \
+                ["green", "yellow"]
             subprocess.run(
-                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-                 "-i", "color=c=gray:s=160x90:d=2", str(out_path)],
-                check=True)
+                ["ffmpeg", "-y", "-v", "error",
+                 "-f", "lavfi", "-i", f"color=c={colors[0]}:s=160x90:d=1",
+                 "-f", "lavfi", "-i", f"color=c={colors[1]}:s=160x90:d=1",
+                 "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0",
+                 str(out_path)], check=True)
             return out_path
 
     vg = _VG()
-    build_space_views(sb, None, _MLLM(["m", "a", "b", "c"]),
+    build_space_views(sb, None, _MLLM(["m", "a", "b", "c", "d"]),
                       tmp_path / "spaces", {"bg_1": "a rooftop"},
                       video_gen=vg)
     views = sb.spaces["bg_1"]
-    assert {"pan_90", "pan_180", "pan_270"} <= set(views)
-    assert views["pan_180"]["src"] == "derived"
+    # 三修:左右各 180° 两段(合成 360°);同色合成视频会被 MAD 判重,
+    # 此处两段用不同颜色帧序 → 至少各收 1 帧
+    assert len(vg.calls) == 2                            # 两段派生
     assert vg.calls[0]["first"].endswith("bg_1.png")     # 首帧硬钉主板
-    assert "360 degrees" in vg.calls[0]["prompt"]
-    assert "no people" in vg.calls[0]["prompt"]
+    for c in vg.calls:
+        assert "about 180 degrees" in c["prompt"]
+        assert "No dolly, no orbit" in c["prompt"]
+        assert "Locked-off" not in c["prompt"]           # 矛盾行话已除
+        assert c["prompt"].startswith("The camera")      # 指令置顶
+        assert "no people" in c["prompt"]
+    assert any(v.startswith(("right_", "left_")) for v in views)
 
 
 def test_build_views_pan_failure_falls_back_to_edit(tmp_path, monkeypatch):
@@ -226,7 +236,8 @@ def test_pan_frames_deduped_by_mad(tmp_path, monkeypatch):
     build_space_views(sb, None, _MLLM(["m"]), tmp_path / "spaces",
                       {"bg_1": "x"}, video_gen=_VG())
     views = sb.spaces["bg_1"]
-    assert not any(v.startswith("pan_") for v in views)   # 全部判重丢弃
+    assert not any(v.startswith(("right_", "left_"))
+                   for v in views)                        # 全部判重丢弃
 
 
 def test_washed_frame_dup_not_appended(tmp_path, monkeypatch):

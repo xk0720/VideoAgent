@@ -41,13 +41,21 @@ def _edit_view_prompt(scene_desc: str, turn: str) -> str:
             "No people, empty scene.")
 
 
+# 环视 prompt(2026-08-10 三修,用户质询后重写):
+# ①镜头指令置顶(场景描述降为 Location: 从句 —— 指令埋在 120 词场景
+#   后面就成了尾注);②删自相矛盾的 "Locked-off"(行话=完全固定机位,
+#   与旋转指令打架 → 实拍成了绕物环绕+漂移),换"像人站定原地转身"
+#   +显式禁 dolly/orbit;③一段只转 180°(10s 转 360=36°/s 甩镜速,
+#   帧帧模糊;18°/s 才是环顾自然转速),左右各一段合覆盖 360°;
+# ④删"回到起点"(偷懒许可证:反正要回来,少转点也"像"完成)。
 _PAN_PROMPT = (
-    "Locked-off position, one continuous take, empty scene with no "
-    "people or animals. {desc} The camera rotates smoothly IN PLACE a "
-    "full 360 degrees around its own axis at constant speed, revealing "
-    "the entire surroundings of this exact location, and returns to "
-    "the starting view. Every fixed element stays consistent; nothing "
-    "appears or disappears.")
+    "The camera stands at ONE fixed point and only TURNS — a slow, "
+    "steady panning rotation to the {direction}, like a person "
+    "standing still and turning around. No dolly, no orbit, no "
+    "sideways or forward movement. Over the whole video it turns "
+    "about 180 degrees. One continuous take, empty scene, no people "
+    "or animals. Location: {desc} Every fixed element stays "
+    "consistent; nothing appears or disappears.")
 
 
 def build_space_views(storyboard, image_edit, mllm, out_dir: Path,
@@ -73,8 +81,8 @@ def build_space_views(storyboard, image_edit, mllm, out_dir: Path,
                                "src": rec.get("src", "t2i"),
                                "shot_idx": None}
         desc = str((bg_descs or {}).get(bg_id) or storyboard.setting or "")
-        if all(v in views for v in ("pan_90", "pan_180", "pan_270")) \
-                or any(v in views for v in _VIEWS):
+        if any(v.startswith(("right_", "left_", "pan_"))
+               for v in views) or any(v in views for v in _VIEWS):
             continue
         got = _views_from_pan_video(bg_id, master, desc, video_gen,
                                     mllm, out_dir, views, decisions)
@@ -87,65 +95,73 @@ def build_space_views(storyboard, image_edit, mllm, out_dir: Path,
 
 def _views_from_pan_video(bg_id, master, desc, video_gen, mllm, out_dir,
                           views, decisions) -> bool:
-    """环视视频 → 三帧视图。失败 → False(调用方退图像编辑)。"""
+    """环视视频 → 帧视图(2026-08-10 三修:左右各转 180° 两段,合
+    覆盖 360°;每段 1/2、尾部抽帧 → right_90/right_180/left_90/
+    left_180;段间互相独立 —— 一段崩不连坐)。两段全失败 → False
+    (调用方退图像编辑)。"""
     if video_gen is None or not hasattr(video_gen, "generate"):
         return False
-    vout = Path(out_dir) / f"{bg_id}_pan360.mp4"
-    try:
-        if not vout.exists():
-            from ..cinegraph.first_frame_factory import _spaced_retry
-            old_a = getattr(video_gen, "generate_audio", False)
-            video_gen.generate_audio = False
-            try:
-                _spaced_retry(
-                    lambda: video_gen.generate(
-                        _PAN_PROMPT.format(desc=desc), 10, vout,
-                        fps=24, seed=777, first_frame=Path(master)),
-                    tag=f"space pan video {bg_id}")
-            finally:
-                video_gen.generate_audio = old_a
-        import cv2
-        cap = cv2.VideoCapture(str(vout))
-        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        if n < 8:
-            cap.release()
-            raise RuntimeError(f"pan video unreadable ({n} frames)")
-        kept_paths = [Path(master)]
-        for frac, view in ((0.25, "pan_90"), (0.5, "pan_180"),
-                           (0.75, "pan_270")):
-            if view in views:
-                continue
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(n * frac))
-            ok, fr = cap.read()
-            if not ok:
-                continue
-            outp = Path(out_dir) / f"{bg_id}_{view}.png"
-            cv2.imwrite(str(outp), fr)
-            # 验收(2026-08-10 用户裁决:环视是采样器不是量角器 ——
-            # 入池的每张必须验证过【独特】):与 master 及已收帧的
-            # MAD < 12 = 没转动/近似重复 → 丢弃留痕,宁缺勿滥。
-            mads = [_frame_mad(outp, p) for p in kept_paths]
-            if mads and all(m >= 0 for m in mads) and min(mads) < 12.0:
-                log.info("space bible: %s/%s dropped — no real rotation "
-                         "(min MAD %.1f vs kept views)", bg_id, view,
-                         min(mads))
-                outp.unlink(missing_ok=True)
+    kept_paths = [Path(master)]
+    got_any = False
+    for direction in ("right", "left"):
+        vout = Path(out_dir) / f"{bg_id}_pan_{direction}180.mp4"
+        try:
+            if not vout.exists():
+                from ..cinegraph.first_frame_factory import _spaced_retry
+                old_a = getattr(video_gen, "generate_audio", False)
+                video_gen.generate_audio = False
+                try:
+                    _spaced_retry(
+                        lambda: video_gen.generate(
+                            _PAN_PROMPT.format(direction=direction,
+                                               desc=desc),
+                            10, vout, fps=24, seed=777,
+                            first_frame=Path(master)),
+                        tag=f"space pan video {bg_id}/{direction}")
+                finally:
+                    video_gen.generate_audio = old_a
+            import cv2
+            cap = cv2.VideoCapture(str(vout))
+            n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+            if n < 8:
+                cap.release()
+                raise RuntimeError(f"pan video unreadable ({n} frames)")
+            for frac, view in ((0.5, f"{direction}_90"),
+                               (0.96, f"{direction}_180")):
+                if view in views:
+                    continue
+                cap.set(cv2.CAP_PROP_POS_FRAMES,
+                        min(int(n * frac), n - 1))
+                ok, fr = cap.read()
+                if not ok:
+                    continue
+                outp = Path(out_dir) / f"{bg_id}_{view}.png"
+                cv2.imwrite(str(outp), fr)
+                # 验收(用户裁决:环视是采样器不是量角器 —— 入池的
+                # 每张必须验证过【独特】):与 master 及已收帧的
+                # MAD < 12 = 没转动/近似重复 → 丢弃留痕,宁缺勿滥。
+                mads = [_frame_mad(outp, p) for p in kept_paths]
+                if mads and all(m >= 0 for m in mads) \
+                        and min(mads) < 12.0:
+                    log.info("space bible: %s/%s dropped — no real "
+                             "rotation (min MAD %.1f vs kept views)",
+                             bg_id, view, min(mads))
+                    outp.unlink(missing_ok=True)
+                    decisions.append({"stage": "space_view", "bg": bg_id,
+                                      "view": view, "via": "dropped_dup"})
+                    continue
+                kept_paths.append(outp)
+                views[view] = {"path": str(outp),
+                               "caption": _caption(mllm, outp),
+                               "src": "derived", "shot_idx": None}
                 decisions.append({"stage": "space_view", "bg": bg_id,
-                                  "view": view, "via": "dropped_dup"})
-                continue
-            kept_paths.append(outp)
-            views[view] = {"path": str(outp),
-                           "caption": _caption(mllm, outp),
-                           "src": "derived", "shot_idx": None}
-            decisions.append({"stage": "space_view", "bg": bg_id,
-                              "view": view, "via": "pan_video"})
-        cap.release()
-        return any(v in views for v in ("pan_90", "pan_180", "pan_270"))
-    except Exception as exc:
-        log.warning("space bible: pan-video views for %s FAILED (%s) — "
-                    "falling back to image-edit views", bg_id,
-                    str(exc)[:140])
-        return False
+                                  "view": view, "via": "pan_video"})
+                got_any = True
+            cap.release()
+        except Exception as exc:
+            log.warning("space bible: pan-video (%s) for %s FAILED (%s) "
+                        "— continuing", direction, bg_id, str(exc)[:140])
+    return got_any
 
 
 def _views_from_image_edit(bg_id, master, desc, image_edit, mllm,
