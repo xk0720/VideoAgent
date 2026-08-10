@@ -3394,9 +3394,13 @@ def _derive_junction_frame(video_gen, mllm, llm, prev, prev_entry, entry,
     want = _strip_markers(getattr(entry, "opening_frame", "")
                           or getattr(entry, "description", ""))
     # ④布局比对(2026-08-10):审查意图带上视图图注 —— 图注与切后帧
-    # 的场景矛盾(红墙变白墙)即拒,仍走"只认矛盾"老法,不加新闸。
+    # 的【空间排布】矛盾(红墙变白墙)即拒;天色/光线/时辰明确豁免
+    # (首跑事故:审查把"红霞 vs 橙蓝晚霞"当矛盾,三连拒全是天色)。
     if space_view is not None and space_view.get("caption"):
-        want += ("\nLOCATION LAW (fixed elements must match): "
+        want += ("\nLAYOUT LAW — judge ONLY the spatial arrangement of "
+                 "fixed elements (walls, doors, furnishings, terrain, "
+                 "their positions); lighting, sky, weather and "
+                 "time-of-day may differ freely: "
                  + str(space_view["caption"])[:300])
     for attempt, seed in enumerate((777, 778)):
         vout = shot_dir / f"junction_two_shot_s{seed}.mp4"

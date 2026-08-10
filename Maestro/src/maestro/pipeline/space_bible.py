@@ -154,13 +154,14 @@ def space_semantic_line(view_rec: dict, zh: bool) -> str:
     if zh:
         return (f"此为同一地点朝此方向的实景"
                 + (f"({cap[:120]})" if cap else "")
-                + "——画面中所有固定元素(墙面、门窗、陈设、地貌)的"
-                  "位置与外观必须与此图一致;取景构图可自由。")
+                + "——画面中固定元素(墙面、门窗、陈设、地貌)的位置"
+                  "与外观必须与此图一致;光线、天色随剧情,取景构图"
+                  "可自由。")
     return ("the SAME location seen from this direction"
             + (f" ({cap[:160]})" if cap else "")
             + " — every fixed element (walls, doors, furnishings, "
               "terrain) must keep the position and look shown here; "
-              "framing is free.")
+              "lighting and sky follow the story; framing is free.")
 
 
 def washed_frame_upgrade(storyboard, bg_id: str, tail_frame: Path,

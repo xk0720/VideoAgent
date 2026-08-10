@@ -349,6 +349,9 @@ def main() -> int:
         board=ReviewBoard(critics=critics, metric_tool=MetricTool()),
         generator=generator, refiner=RefinerAgent(), verifier=VerifierAgent(judge=mllm_verifier),
         orchestrator=orchestrator, cache_dir=run_dir,
+        # 空间圣经(2026-08-10 事故:漏传 → 三向视图与清场回流全部
+        # 静默跳过)—— 窗口管线的图像编辑端
+        image_edit=build_image_edit({"name": "wavespeed"}),
         asset_memory=asset_memory, retrieval=retrieval,
         screenwriter=ScreenwriterAgent(llm=llm_screenwriter,
                                        config=cfg.get("plan") or {}),
