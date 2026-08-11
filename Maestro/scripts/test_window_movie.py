@@ -98,6 +98,11 @@ def main() -> int:
     ap.add_argument("--no-review", action="store_true",
                     help="M2:关闭评审/修复总开关(首选候选直接收货,"
                          "不评审不修复;episode 蒸馏同时停用)")
+    ap.add_argument("--rl-group", type=int, default=0,
+                    help="RL 组采样(semi-online GRPO):每镜同 state 采 "
+                         "K 个条件决策各生成一候选,评审择优推进主干;"
+                         "组记录落 run 目录 rl_steps.jsonl")
+    ap.add_argument("--rl-temperature", type=float, default=0.9)
     ap.add_argument("--no-junction-agent", action="store_true",
                     help="缝合师回滚开关(2026-08-09):关掉 LLM 组稿,"
                          "派生双镜描述回确定性模板装配")
@@ -192,6 +197,9 @@ def main() -> int:
     llm_scene_writer = _agent_llm("scene_writer")     # 分镜 LLM agent
     llm_video_brain = _agent_llm("video_brain")       # 视频 brain LLM agent
     llm_enhancer = _agent_llm("prompt_enhancer")      # 润色 LLM agent
+    llm_stitcher = _agent_llm("junction_stitcher")    # 缝合师 LLM agent
+                                                      # (2026-08-10 裁决a:
+                                                      # 独立槽位,RL 冻结)
     mllm_reviewer = _agent_mllm("reviewer")           # 评审 VLM agent
     mllm_verifier = _agent_mllm("verifier")           # 验收 VLM agent
     # 任务 0:每次 WaveSpeed 调用(模型名+参数)落盘可核对
@@ -345,7 +353,8 @@ def main() -> int:
         args.prompt,
         crew={"screenwriter": llm_screenwriter,
               "scene_writer": llm_scene_writer,
-              "video_brain": llm_video_brain},
+              "video_brain": llm_video_brain,
+              "junction_stitcher": llm_stitcher},
         board=ReviewBoard(critics=critics, metric_tool=MetricTool()),
         generator=generator, refiner=RefinerAgent(), verifier=VerifierAgent(judge=mllm_verifier),
         orchestrator=orchestrator, cache_dir=run_dir,
@@ -368,6 +377,8 @@ def main() -> int:
         given_characters=_given_chars,
         enable_review=(not args.no_review),
         use_junction_agent=(not args.no_junction_agent),
+        rl_group=args.rl_group,
+        rl_temperature=args.rl_temperature,
         repair_mode=args.repair_mode,
         enable_bgm=args.bgm,
         enable_transitions=args.transitions,

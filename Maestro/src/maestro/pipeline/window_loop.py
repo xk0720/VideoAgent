@@ -1128,7 +1128,8 @@ def _skill_body(kind: str) -> str:
 _SKILL_CACHE: dict = {}
 
 
-def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
+def _brain_pick(llm, kind: str, menu: list[dict], context: dict,
+                temperature=None) -> dict:
     """让 brain 用严格 JSON 从菜单选一项;失败返回 {}(调用方走兜底)。
 
     prompt = 该决策的【技能全文】(skills/brain_skills/*/SKILL.md,纯英文
@@ -1151,7 +1152,8 @@ def _brain_pick(llm, kind: str, menu: list[dict], context: dict) -> dict:
     prompt = decision_prompt(skill_text, menu, context)
     raw = ""
     try:
-        raw = llm.complete(prompt)
+        raw = (llm.complete(prompt) if temperature is None
+               else llm.complete(prompt, temperature=temperature))
         data = _extract_json(raw)
     except Exception as exc:
         brain_log(f"window/{kind}", {
@@ -1943,7 +1945,8 @@ def _skill_body_named(name: str) -> str:
 
 
 def _decide(llm, kind: str, menu: list[dict], context: dict,
-            replay_hint: Optional[str], priority: list[str]) -> dict:
+            replay_hint: Optional[str], priority: list[str],
+            temperature=None) -> dict:
     """三层决策(§M 的可执行记忆就落在这):
     1) episode replay 命中且策略仍在菜单 → 直接采纳,via="episode"
        (长期记忆的检索即执行 —— 不再消耗一次 LLM 推理);
@@ -1961,7 +1964,8 @@ def _decide(llm, kind: str, menu: list[dict], context: dict,
             "strategy": replay_hint,
             "note": "verified on a similar PAST task — weigh it as "
                     "advice; current-run conditions win"}}
-    picked = _brain_pick(llm, kind, menu, context)
+    picked = _brain_pick(llm, kind, menu, context,
+                         temperature=temperature)
     if picked:
         return {**picked, "via": "llm"}
     for name in priority:
@@ -3752,6 +3756,11 @@ def generate_movie_windowed(
     enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
     use_junction_agent: bool = True,    # 缝合师(2026-08-09 用户令,默认开;
                                         # 关 = 派生描述回模板装配,回滚开关)
+    rl_group: int = 0,                  # RL 组采样(2026-08-10):>1 = 每镜
+                                        # 同 state 采 K 个条件决策各生成一
+                                        # 候选,小循环择优推进主干,组记录
+                                        # 落 rl_steps.jsonl(semi-online GRPO)
+    rl_temperature: float = 0.9,        # 组内采样温度(首个变体用默认温度)
     character_library=None,             # 跨片角色肖像库(2026-07-31)
     screenplay: Optional[str] = None,   # M2:用户自带剧本(给了就跳过 §A0)
     enable_review: bool = True,         # M2:评审/修复总开关(关 = 首选即收)
@@ -3838,12 +3847,15 @@ def generate_movie_windowed(
     llm_screenwriter = _crew.get("screenwriter") or llm
     llm_scene_writer = _crew.get("scene_writer") or llm
     llm_video_brain = _crew.get("video_brain") or llm
-    # 缝合师(2026-08-09):video_brain 底座 + junction_stitch 技能;
-    # use_junction_agent=False 即回滚到模板装配。
+    # 缝合师(2026-08-09;2026-08-10 用户裁决 a:独立 crew 槽位 ——
+    # RL 只训 video_brain,vLLM 换脑时缝合师冻结在自己的底座上,
+    # 非训练角色不被动漂移):junction_stitch 技能;缺省沿用
+    # video_brain 底座;use_junction_agent=False 即回滚模板装配。
     junction_stitcher = None
     if use_junction_agent:
         from ..agents.junction_stitcher import JunctionStitcherAgent
-        junction_stitcher = JunctionStitcherAgent(llm=llm_video_brain)
+        junction_stitcher = JunctionStitcherAgent(
+            llm=_crew.get("junction_stitcher") or llm_video_brain)
     screenwriter = screenwriter or ScreenwriterAgent()
     director = director or DirectorAgent()
     plan_cfg = getattr(screenwriter, "config", {}) or {}
@@ -4356,20 +4368,43 @@ def generate_movie_windowed(
             if _junction_mapped.get(_k):
                 _junction_mapped[_k] = _map_markers(_junction_mapped[_k],
                                                     _ns_best)
+        _cond_context = {
+            "shot": entry.to_brain_line(),
+            "prompt_language": prompt_lang,
+            "prev_shot": prev.to_brain_line() if prev else None,
+            "junction": _junction_mapped,
+            "cast": storyboard.cast, "setting": storyboard.setting,
+            "cast_in_shot": sorted(shot_cast),
+            "slots_by_strategy": slots_by_strategy,
+            "storyboard": storyboard.to_brain_json(),
+            "episode_guidance": guidance}
         d = _decide(
-            llm_video_brain, "generation-condition", menu,
-            {"shot": entry.to_brain_line(),
-             "prompt_language": prompt_lang,
-             "prev_shot": prev.to_brain_line() if prev else None,
-             "junction": _junction_mapped,
-             "cast": storyboard.cast, "setting": storyboard.setting,
-             "cast_in_shot": sorted(shot_cast),
-             "slots_by_strategy": slots_by_strategy,
-             "storyboard": storyboard.to_brain_json(),
-             "episode_guidance": guidance},
+            llm_video_brain, "generation-condition", menu, _cond_context,
             replay_hint=replay_cond.get(entry.label),
             priority=_CONDITION_PRIORITY,
         )
+        # RL 组采样(2026-08-10 用户令,semi-online GRPO):主干+单步
+        # 分支 —— 同一 state(同上下文/同 replay_hint)带温度再采 K-1
+        # 个决策;K 个各自走完整 prompt 链并各生成一个候选,小循环评审
+        # 择优即主干推进,组记录落 rl_steps.jsonl。rl 跑法约定
+        # (rl/configs/online.yaml):review 开、enhancer 关、max_turns=1。
+        rl_variants = None
+        rl_state = None
+        if rl_group and rl_group > 1 and llm_video_brain is not None:
+            rl_variants = [d]
+            for _rlk in range(rl_group - 1):
+                rl_variants.append(_decide(
+                    llm_video_brain, "generation-condition", menu,
+                    _cond_context,
+                    replay_hint=replay_cond.get(entry.label),
+                    priority=_CONDITION_PRIORITY,
+                    temperature=rl_temperature))
+            # 组记录自包含(2026-08-10:state=context+menu、action=
+            # completion 全落记录 —— 收集器/训练器不依赖旁路文件;
+            # completion = 决策语义字段的规范 JSON,与 STRICT JSON
+            # 输出契约同形,训练目标即"产出可解析决策")
+            rl_state = {"menu": [dict(m) for m in menu],
+                        "context": _cond_context}
         decisions.append({"stage": "condition", "label": entry.label, **d})
         # 草稿留档(消融实验前提):brain 的 video_prompt 原文,在一切
         # 清洗/润色/闸门/对白追加之前,逐字入台账。
@@ -4388,191 +4423,207 @@ def generate_movie_windowed(
         cand_keyframes = ([Path(entry.keyframe_path)]
                           if entry.keyframe_path
                           and Path(entry.keyframe_path).exists() else [])
-        # brain 的上下文里 shot 描述带 <标记>、cast 带契约标签,它写
-        # prompt 时可能照抄 —— 出口一律剥标记+清洗标签(enhanced 同理)。
-        brain_prompt = _scrub_setting_sentence(
-            _scrub_cast_labels(_strip_markers(d.get("video_prompt", "")),
-                               storyboard.cast),
-            storyboard.setting, d["strategy"])
-        use_tail = bool(d.get("use_prev_tail_video", False))
-        slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
-                               source_videos=source_videos,
-                               portraits=shot_portraits,
-                               video_gen=video_gen)
-        # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
-        # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
-        if prompt_enhancer is not None:
-            enhanced = prompt_enhancer.run(
-                _strip_markers(entry.description), strategy=d["strategy"],
-                conditions=_conditions_for_prompt(d["strategy"], entry, prev,
-                                                  use_tail,
-                                                  junction=json.dumps(
-                                                      _junction_mapped,
-                                                      ensure_ascii=False),
-                                                  source_videos=source_videos,
-                                                  cast=shot_cast,
-                                                  setting=storyboard.setting,
-                                                  portraits=shot_portraits,
-                                                  video_gen=video_gen,
-                                                  prompt_language=prompt_lang),
-                base_prompt=brain_prompt or spec.prompt,
-                label=entry.label)
-            if enhanced and prompt_lang == "zh" \
-                    and not _is_mostly_chinese(enhanced):
-                # 语言拒收闸(2026-08-05 run12 shot4:enhancer 漂回英文)
-                # —— zh 项目润色产物非中文 → 整个弃用,保留中文原稿。
-                log.warning("window: %s enhancer output is NOT Chinese on "
-                            "a zh project — enhancement DISCARDED, keeping "
-                            "the draft", entry.label)
-                enhanced = None
-            if enhanced:
-                brain_prompt = _scrub_setting_sentence(
-                    _scrub_cast_labels(_strip_markers(enhanced),
-                                       storyboard.cast),
-                    storyboard.setting, d["strategy"])
-                decisions.append({"stage": "prompt_enhance",
-                                  "label": entry.label,
-                                  "strategy": d["strategy"], "via": "llm"})
-        # 承接句机器化(2026-08-06 用户令:不打补丁——写手从技能层就不写
-        # 声明,机器按【清单里有无 pin_frame 行】直接加一句短承接;长
-        # 声明删除闸保留为写手惯性的兜底)。钉帧与派生缝合同法:凡挂了
-        # pin 行(i2v_first 的上镜末帧 / derive 的派生帧),机器句指着
-        # 记号说"从它继续"。
-        _pin_row = next((r_ for r_ in (slots or [])
-                         if r_.get("source") == "pin_frame"), None)
-        if _pin_row and brain_prompt:
-            brain_prompt = re.sub(
-                r"[^。]*(?:从首帧精确开始|从第一帧开始|从第一帧精确开始|"
-                r"首帧即上一镜|第一帧与上一镜|上一镜的最后一帧|"
-                r"starts? EXACTLY on the given first)[^。]*。\s*",
-                "", brain_prompt).strip()
-            if _pin_row["slot"] not in brain_prompt:
-                _tok = _pin_row["slot"]
-                brain_prompt = (
-                    f"画面从{_tok}所示的首帧继续。" if prompt_lang == "zh"
-                    else f"The video continues from the first frame shown "
-                         f"in {_tok}. ") + brain_prompt
-        # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
-        # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
-        # 追加正典 = 稀释钉帧,豁免。
-        if d["strategy"] not in _ANCHORED_STRATEGIES:
-            brain_prompt, canon_notes = _enforce_cast_canon(
-                brain_prompt, shot_cast, storyboard.cast)
-        else:
-            canon_notes = []
-        for cn in canon_notes:
-            decisions.append({**cn, "label": entry.label})
-        # ── 音频线(2026-07-29,enable_audio 门控):对白镜临时开
-        # generate_audio;口型子句在引用闸门【之后】追加(审查修正:
-        # 闸门丢弃 prompt 时子句不能陪葬,顺序与全修闭包一致)。
-        want_audio = bool(enable_audio and entry.dialogue)
-        # 哑镜保险(2026-08-05 run12 shot5:对答两句全写在描述里,
-        # dialogue 字段空 → 音频参数没开,台词无声):出门 prompt 含
-        # 言说句 → 照样开原生音频;压制句缺失则补。
-        if enable_audio and not want_audio and brain_prompt \
-                and re.search("(?:说道?|says?|喊道?|大喊|高喊|怒吼|低语|回应|"
-                              "问道?|轻声问?)[^\"\u201c]{0,6}?"
-                              "[:\uff1a]?\\s*[\"\u201c]",
-                              brain_prompt):
-            want_audio = True
-            log.warning("window: %s prompt carries spoken lines but the "
-                        "dialogue field is EMPTY (multi-line exchange?) — "
-                        "enabling native audio anyway; scene_write should "
-                        "have split the exchange into one shot per line",
-                        entry.label)
-            if "无背景音乐" not in brain_prompt \
-                    and "no background music" not in brain_prompt:
-                _snd_i = _scripted_sounds(entry.description,
-                                          entry.end_state)
-                if re.search(r"[一-鿿]", brain_prompt):
-                    brain_prompt += (
-                        f"音频:角色对白的人声与剧本写明的环境声"
-                        f"({'、'.join(_snd_i)})——无背景音乐、无其他"
-                        f"音效。" if _snd_i else
-                        "音频:只有角色对白的人声——无背景音乐、无音效。")
-                else:
-                    brain_prompt += (
-                        " Audio: the characters' voices plus the scripted "
-                        f"ambient sound ({', '.join(_snd_i)}) — no "
-                        "background music, no other effects."
-                        if _snd_i else
-                        " Audio: only the characters' voices — no "
-                        "background music, no sound effects.")
-        # 剧本音效镜(2026-08-06 rainnight 治本:纯音效短片无一句对白,
-        # 旧规则 want_audio 只认 dialogue → 全片哑掉,剧本明写的雨声/
-        # 枪声全丢):无对白但剧本载明声音 → 照样开原生音频,压制句用
-        # 环境声版(无背景音乐、无人声旁白)。
-        if enable_audio and not want_audio and brain_prompt:
-            _snd_shot = _scripted_sounds(entry.description, entry.end_state)
-            if _snd_shot:
-                want_audio = True
-                log.info("window: %s no dialogue but scripted sounds %s — "
-                         "native audio ON (sfx shot)", entry.label,
-                         _snd_shot)
-                if "无背景音乐" not in brain_prompt                         and "no background music" not in brain_prompt:
-                    brain_prompt += (
-                        f"音频:只有剧本写明的环境声"
-                        f"({'、'.join(_snd_shot)})——无背景音乐、无人声。"
-                        if re.search(r"[一-鿿]", brain_prompt) else
-                        " Audio: only the scripted ambient sound "
-                        f"({', '.join(_snd_shot)}) — no background music, "
-                        "no voices.")
-
-        # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
-        # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错
-        # 编号永远到不了 API;可引用槽位漏提 → 自动补一句(素材不白传)。
-        if brain_prompt:
-            fixed, audit = validate_references(brain_prompt, slots)
-            if not audit["ok"]:
-                log.warning("window: %s prompt references unknown slots %s "
-                            "(allowed: %s) — dropping it for the "
-                            "content-aware fallback template", entry.label,
-                            audit["unknown"], audit["allowed"])
-                decisions.append({"stage": "ref_validate",
-                                  "label": entry.label,
-                                  "strategy": d["strategy"], "via": "gate",
-                                  "reason": f"unknown refs {audit['unknown']}"
-                                            " — fell back to template"})
-                brain_prompt = ""
+        def _prompt_chain(d):
+            """决策 → 出门 prompt 全链(2026-08-10 RL 组采样提取:
+            enhancer/承接句/正典/音频/引用闸/旁白/名字终换 —— 单决策
+            路径与 K 分支复用同一条链,训练分布=生产分布)。
+            返回 (brain_prompt, slots, use_tail, want_audio)。"""
+            # brain 的上下文里 shot 描述带 <标记>、cast 带契约标签,它写
+            # prompt 时可能照抄 —— 出口一律剥标记+清洗标签(enhanced 同理)。
+            brain_prompt = _scrub_setting_sentence(
+                _scrub_cast_labels(_strip_markers(d.get("video_prompt", "")),
+                                   storyboard.cast),
+                storyboard.setting, d["strategy"])
+            use_tail = bool(d.get("use_prev_tail_video", False))
+            slots = _slot_manifest(d["strategy"], entry, prev, use_tail,
+                                   source_videos=source_videos,
+                                   portraits=shot_portraits,
+                                   video_gen=video_gen)
+            # ── 需求 2:可选 prompt 润色(条件事实 + 官方 prompt 技巧技能)。
+            # 失败返回 None → 保留原 prompt,增强层永远不破坏正流程。
+            if prompt_enhancer is not None:
+                enhanced = prompt_enhancer.run(
+                    _strip_markers(entry.description), strategy=d["strategy"],
+                    conditions=_conditions_for_prompt(d["strategy"], entry, prev,
+                                                      use_tail,
+                                                      junction=json.dumps(
+                                                          _junction_mapped,
+                                                          ensure_ascii=False),
+                                                      source_videos=source_videos,
+                                                      cast=shot_cast,
+                                                      setting=storyboard.setting,
+                                                      portraits=shot_portraits,
+                                                      video_gen=video_gen,
+                                                      prompt_language=prompt_lang),
+                    base_prompt=brain_prompt or spec.prompt,
+                    label=entry.label)
+                if enhanced and prompt_lang == "zh" \
+                        and not _is_mostly_chinese(enhanced):
+                    # 语言拒收闸(2026-08-05 run12 shot4:enhancer 漂回英文)
+                    # —— zh 项目润色产物非中文 → 整个弃用,保留中文原稿。
+                    log.warning("window: %s enhancer output is NOT Chinese on "
+                                "a zh project — enhancement DISCARDED, keeping "
+                                "the draft", entry.label)
+                    enhanced = None
+                if enhanced:
+                    brain_prompt = _scrub_setting_sentence(
+                        _scrub_cast_labels(_strip_markers(enhanced),
+                                           storyboard.cast),
+                        storyboard.setting, d["strategy"])
+                    decisions.append({"stage": "prompt_enhance",
+                                      "label": entry.label,
+                                      "strategy": d["strategy"], "via": "llm"})
+            # 承接句机器化(2026-08-06 用户令:不打补丁——写手从技能层就不写
+            # 声明,机器按【清单里有无 pin_frame 行】直接加一句短承接;长
+            # 声明删除闸保留为写手惯性的兜底)。钉帧与派生缝合同法:凡挂了
+            # pin 行(i2v_first 的上镜末帧 / derive 的派生帧),机器句指着
+            # 记号说"从它继续"。
+            _pin_row = next((r_ for r_ in (slots or [])
+                             if r_.get("source") == "pin_frame"), None)
+            if _pin_row and brain_prompt:
+                brain_prompt = re.sub(
+                    r"[^。]*(?:从首帧精确开始|从第一帧开始|从第一帧精确开始|"
+                    r"首帧即上一镜|第一帧与上一镜|上一镜的最后一帧|"
+                    r"starts? EXACTLY on the given first)[^。]*。\s*",
+                    "", brain_prompt).strip()
+                if _pin_row["slot"] not in brain_prompt:
+                    _tok = _pin_row["slot"]
+                    brain_prompt = (
+                        f"画面从{_tok}所示的首帧继续。" if prompt_lang == "zh"
+                        else f"The video continues from the first frame shown "
+                             f"in {_tok}. ") + brain_prompt
+            # ── E 案:正典描述符逐字契约 —— 只管【无锚】路线(文本是唯一
+            # 身份载体);硬锚路线(首帧/肖像携带身份,prompt 只写运动)强行
+            # 追加正典 = 稀释钉帧,豁免。
+            if d["strategy"] not in _ANCHORED_STRATEGIES:
+                brain_prompt, canon_notes = _enforce_cast_canon(
+                    brain_prompt, shot_cast, storyboard.cast)
             else:
-                if audit["appended"]:
-                    log.info("window: %s prompt was missing %s — mention(s) "
-                             "appended", entry.label, audit["appended"])
+                canon_notes = []
+            for cn in canon_notes:
+                decisions.append({**cn, "label": entry.label})
+            # ── 音频线(2026-07-29,enable_audio 门控):对白镜临时开
+            # generate_audio;口型子句在引用闸门【之后】追加(审查修正:
+            # 闸门丢弃 prompt 时子句不能陪葬,顺序与全修闭包一致)。
+            want_audio = bool(enable_audio and entry.dialogue)
+            # 哑镜保险(2026-08-05 run12 shot5:对答两句全写在描述里,
+            # dialogue 字段空 → 音频参数没开,台词无声):出门 prompt 含
+            # 言说句 → 照样开原生音频;压制句缺失则补。
+            if enable_audio and not want_audio and brain_prompt \
+                    and re.search("(?:说道?|says?|喊道?|大喊|高喊|怒吼|低语|回应|"
+                                  "问道?|轻声问?)[^\"\u201c]{0,6}?"
+                                  "[:\uff1a]?\\s*[\"\u201c]",
+                                  brain_prompt):
+                want_audio = True
+                log.warning("window: %s prompt carries spoken lines but the "
+                            "dialogue field is EMPTY (multi-line exchange?) — "
+                            "enabling native audio anyway; scene_write should "
+                            "have split the exchange into one shot per line",
+                            entry.label)
+                if "无背景音乐" not in brain_prompt \
+                        and "no background music" not in brain_prompt:
+                    _snd_i = _scripted_sounds(entry.description,
+                                              entry.end_state)
+                    if re.search(r"[一-鿿]", brain_prompt):
+                        brain_prompt += (
+                            f"音频:角色对白的人声与剧本写明的环境声"
+                            f"({'、'.join(_snd_i)})——无背景音乐、无其他"
+                            f"音效。" if _snd_i else
+                            "音频:只有角色对白的人声——无背景音乐、无音效。")
+                    else:
+                        brain_prompt += (
+                            " Audio: the characters' voices plus the scripted "
+                            f"ambient sound ({', '.join(_snd_i)}) — no "
+                            "background music, no other effects."
+                            if _snd_i else
+                            " Audio: only the characters' voices — no "
+                            "background music, no sound effects.")
+            # 剧本音效镜(2026-08-06 rainnight 治本:纯音效短片无一句对白,
+            # 旧规则 want_audio 只认 dialogue → 全片哑掉,剧本明写的雨声/
+            # 枪声全丢):无对白但剧本载明声音 → 照样开原生音频,压制句用
+            # 环境声版(无背景音乐、无人声旁白)。
+            if enable_audio and not want_audio and brain_prompt:
+                _snd_shot = _scripted_sounds(entry.description, entry.end_state)
+                if _snd_shot:
+                    want_audio = True
+                    log.info("window: %s no dialogue but scripted sounds %s — "
+                             "native audio ON (sfx shot)", entry.label,
+                             _snd_shot)
+                    if "无背景音乐" not in brain_prompt                         and "no background music" not in brain_prompt:
+                        brain_prompt += (
+                            f"音频:只有剧本写明的环境声"
+                            f"({'、'.join(_snd_shot)})——无背景音乐、无人声。"
+                            if re.search(r"[一-鿿]", brain_prompt) else
+                            " Audio: only the scripted ambient sound "
+                            f"({', '.join(_snd_shot)}) — no background music, "
+                            "no voices.")
+
+            # ── 方案 A 出口闸:prompt 里的引用必须 ⊆ 所选策略的槽位清单。
+            # 引用不存在的编号 → 弃用这条 prompt(落内容感知兜底模板),错
+            # 编号永远到不了 API;可引用槽位漏提 → 自动补一句(素材不白传)。
+            if brain_prompt:
+                fixed, audit = validate_references(brain_prompt, slots)
+                if not audit["ok"]:
+                    log.warning("window: %s prompt references unknown slots %s "
+                                "(allowed: %s) — dropping it for the "
+                                "content-aware fallback template", entry.label,
+                                audit["unknown"], audit["allowed"])
                     decisions.append({"stage": "ref_validate",
                                       "label": entry.label,
-                                      "strategy": d["strategy"],
-                                      "via": "gate",
-                                      "reason": "appended mentions: "
-                                                f"{audit['appended']}"})
-                brain_prompt = fixed
-        if want_audio:
-            brain_prompt = _with_dialogue(brain_prompt or spec.prompt,
-                                          entry, storyboard.cast,
-                                          name_to_slot=_name_slot_map(slots))
-        # 名字终换闸(2026-08-05 用户令:"保证所有名称都用引用"):
-        # 引号外的角色名,有槽位的【确定性替换】成记号;换不了的才告警
-        # (无槽者本该被 enhancer 删/改视觉把手)。台词引号内永不动。
-        if brain_prompt:
-            # 旁白剥除闸(2026-08-06 rainnight run4:旁白文本进了视频
-            # prompt,与"无人声"子句自相矛盾,还可能诱导烧字幕 ——
-            # 视频模型没有旁白通道;旁白是后期音轨,不进画面指令)。
-            brain_prompt = re.sub(
-                r"(?:画外)?旁白[:：]?\s*[\"\u201c][^\"\u201c\u201d]*"
-                r"[\"\u201d]。?\s*|(?:voice-?over|narration)\s*[:：]"
-                r"[^.\"]*[.\"]?\s*",
-                "", brain_prompt, flags=re.IGNORECASE).strip()
-            brain_prompt = _names_to_tokens(brain_prompt,
-                                            _name_slot_map(slots))
-            _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
-            _leak = [n for n in (storyboard.cast or {}) if n in _noq]
-            if _leak:
-                log.warning("window: %s outgoing prompt still carries "
-                            "SLOTLESS cast name(s) %s outside quotes — "
-                            "enhancer should have deleted or handled "
-                            "them", entry.label, _leak)
-                decisions.append({"stage": "name_leak", "label": entry.label,
-                                  "names": _leak})
-        for s in range(max(1, n_candidates)):
+                                      "strategy": d["strategy"], "via": "gate",
+                                      "reason": f"unknown refs {audit['unknown']}"
+                                                " — fell back to template"})
+                    brain_prompt = ""
+                else:
+                    if audit["appended"]:
+                        log.info("window: %s prompt was missing %s — mention(s) "
+                                 "appended", entry.label, audit["appended"])
+                        decisions.append({"stage": "ref_validate",
+                                          "label": entry.label,
+                                          "strategy": d["strategy"],
+                                          "via": "gate",
+                                          "reason": "appended mentions: "
+                                                    f"{audit['appended']}"})
+                    brain_prompt = fixed
+            if want_audio:
+                brain_prompt = _with_dialogue(brain_prompt or spec.prompt,
+                                              entry, storyboard.cast,
+                                              name_to_slot=_name_slot_map(slots))
+            # 名字终换闸(2026-08-05 用户令:"保证所有名称都用引用"):
+            # 引号外的角色名,有槽位的【确定性替换】成记号;换不了的才告警
+            # (无槽者本该被 enhancer 删/改视觉把手)。台词引号内永不动。
+            if brain_prompt:
+                # 旁白剥除闸(2026-08-06 rainnight run4:旁白文本进了视频
+                # prompt,与"无人声"子句自相矛盾,还可能诱导烧字幕 ——
+                # 视频模型没有旁白通道;旁白是后期音轨,不进画面指令)。
+                brain_prompt = re.sub(
+                    r"(?:画外)?旁白[:：]?\s*[\"\u201c][^\"\u201c\u201d]*"
+                    r"[\"\u201d]。?\s*|(?:voice-?over|narration)\s*[:：]"
+                    r"[^.\"]*[.\"]?\s*",
+                    "", brain_prompt, flags=re.IGNORECASE).strip()
+                brain_prompt = _names_to_tokens(brain_prompt,
+                                                _name_slot_map(slots))
+                _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
+                _leak = [n for n in (storyboard.cast or {}) if n in _noq]
+                if _leak:
+                    log.warning("window: %s outgoing prompt still carries "
+                                "SLOTLESS cast name(s) %s outside quotes — "
+                                "enhancer should have deleted or handled "
+                                "them", entry.label, _leak)
+                    decisions.append({"stage": "name_leak", "label": entry.label,
+                                      "names": _leak})
+            return brain_prompt, slots, use_tail, want_audio
+
+        brain_prompt, slots, use_tail, want_audio = _prompt_chain(d)
+        _gen_plan = ([(k, v) for k, v in enumerate(rl_variants)]
+                     if rl_variants else
+                     [(s, None) for s in range(max(1, n_candidates))])
+        for s, _rl_d in _gen_plan:
+            if _rl_d is not None:
+                # RL 分支:本变体自己的决策走同一条 prompt 链
+                d = _rl_d
+                brain_prompt, slots, use_tail, want_audio = \
+                    _prompt_chain(d)
             _old_ga = getattr(video_gen, "generate_audio", False)
             if want_audio:
                 video_gen.generate_audio = True
@@ -4622,6 +4673,11 @@ def generate_movie_windowed(
                 # 不带该参数,见 video_gen_backends._is_range_family)。
                 cond["generate_audio"] = True
             cond["seed"] = s
+            if _rl_d is not None:
+                cond["rl"] = {"k": s,
+                              "decision_id": _rl_d.get("decision_id"),
+                              "via": _rl_d.get("via"),
+                              "strategy": _rl_d.get("strategy")}
             # §G 钉帧完整性闸门(2026-08-02 用户批准,默认关:阈值 ≤0)。
             # 只看钉了开场的路线(按 cond 里的【实际】路线,降级后不误判):
             # 开场撕裂度(接点/帧0→1/帧1→2 取最大)爆表 = 模型抛开钉帧
@@ -5020,6 +5076,53 @@ def generate_movie_windowed(
         storyboard.set_result(entry.shot_idx, best.video_path,
                               converged=res.converged,
                               repair_actions=res.actions)
+        if rl_variants:
+            # RL 组记录(semi-online GRPO 的训练原料):每变体的决策 id
+            # + 它那支候选的评审分;胜者 = 主干。上下文/raw 不重复存 ——
+            # 收集器按 decision_id 回 brain_calls.jsonl 取(单源)。
+            import os as _os
+            _scores = {}
+            for _clip, _cond in zip(initial, seed_conds):
+                _r = (_cond or {}).get("rl") or {}
+                if _r:
+                    _v = (rl_variants[_r["k"]]
+                          if _r.get("k") is not None
+                          and _r["k"] < len(rl_variants) else {})
+                    _scores[_r.get("k")] = {
+                        "decision_id": _r.get("decision_id"),
+                        "via": _r.get("via"),
+                        "completion": json.dumps(
+                            {k2: v2 for k2, v2 in (_v or {}).items()
+                             if k2 not in ("via", "decision_id")},
+                            ensure_ascii=False),
+                        "strategy": _r.get("strategy"),
+                        "degraded_from": (_cond or {}).get("degraded_from"),
+                        "weighted_total": float(
+                            (_clip.metric_scores or {}).get(
+                                "weighted_total", 0.0)),
+                        "video": str(_clip.video_path),
+                        "chosen": str(_clip.video_path) ==
+                                  str(best.video_path)}
+            try:
+                with open(cache_dir / "rl_steps.jsonl", "a") as _f:
+                    _f.write(json.dumps({
+                        "kind": "condition_group",
+                        "run": cache_dir.name,
+                        "shot_idx": entry.shot_idx,
+                        "label": entry.label,
+                        "junction_kind": (entry.junction_meta or {}
+                                          ).get("kind"),
+                        "policy_version": _os.environ.get(
+                            "MAESTRO_POLICY_VERSION", "0"),
+                        "group_size": len(rl_variants),
+                        "menu": (rl_state or {}).get("menu"),
+                        "context": (rl_state or {}).get("context"),
+                        "samples": [_scores[k]
+                                    for k in sorted(_scores)],
+                    }, ensure_ascii=False, default=str) + "\n")
+            except Exception as _exc:
+                log.warning("rl group record failed (%s)",
+                            str(_exc)[:120])
         log.info("window: %s done — %s (score=%.4f, %d repair turns)",
                  entry.label,
                  "verified" if res.converged else "generated_with_defects",

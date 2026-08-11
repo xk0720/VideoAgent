@@ -33,3 +33,19 @@ S1 冷启动:build_step_dataset 扫全部 outputs/movie_* → SFT 蒸馏
    (gpt-5.6-sol 轨迹,usable 且高分为正样本)
 S2 离线 RL 试跑:existing 数据 + reward_fn → GRPO 干跑(梯度管道验证)
 S3 在线:vllm 换脑 + rollout 农场 + 异步 join + 热载
+
+
+## v2 增补(2026-08-10 深夜,用户连环裁决)
+- 只训 generation-condition;junction_stitcher 独立 crew 槽位(裁决 a:
+  RL 换脑时非训练角色冻结在 models.llm)。
+- semi-online GRPO:组必须 on-policy —— 主干+单步分支(rollout 内每镜
+  同 state 采 K 个决策各生成一候选,评审择优推进主干;分支永不活过
+  一镜 → 组内 state 逐字节相同,资产天然共享)。历史数据伪组仅用于
+  梯度管道自检,不作正式训练(诚实定位:那是 off-policy 加权 BC)。
+- 组记录自包含:state(context+menu)+action(completion 规范 JSON)
+  +reward 原料全在 rl_steps.jsonl,收集/训练不依赖旁路文件。
+- 一键命令:`zsh rl/run_grpo.sh`(GPU 机)/ `--smoke`(本机全链自检:
+  mock rollout → 收集 → 分组 → advantage)。
+- trainer 诚实定位:组相对优势 policy gradient(LoRA),陈旧度 ≤K 版
+  过滤,无 ratio clip;vLLM --enable-lora 热载 adapter,policy_version
+  经 MAESTRO_POLICY_VERSION 注入 rollout 记录。
