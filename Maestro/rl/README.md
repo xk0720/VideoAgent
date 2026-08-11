@@ -30,3 +30,8 @@ zsh rl/run_grpo.sh --smoke  # 本机自检:mock rollout→收集→分组→adva
   一致,有回归测试锁死)。
 - 服务器部署:git clone 本分支 → pip install vllm torch transformers
   peft → 写 .env(两把 key)→ `zsh rl/run_grpo.sh`。
+- 本地策略权重:`BASE_MODEL=/data/models/Qwen3-8B zsh rl/run_grpo.sh`
+  —— 一个旋钮同时喂 vLLM 与 trainer;本地路径自动 HF 离线+完整性预检。
+  LoRA adapter 产出在 rl/ckpt/adapter_vN(热载给 vLLM,幅面几十 MB)。
+- 评审 VLM = qwen3.5-omni-plus(百炼最新 Omni;现走抽帧路零代码改动,
+  原生 video_url 通道待后续在 RL 链内扩展)。

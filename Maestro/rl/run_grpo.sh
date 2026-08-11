@@ -17,6 +17,9 @@ cd "$(dirname "$0")/.."
 REPO=$(pwd)
 RL=$REPO/rl
 LOGS=$RL/logs; mkdir -p $LOGS $RL/state $RL/data
+# 本地策略权重(2026-08-11 用户问):BASE_MODEL 一个旋钮双向供给 ——
+# vLLM 服务与 trainer 都吃它。可写 HF hub id(联网机)或【本地目录】
+# (服务器,如 /data/models/Qwen3-8B);本地路径时自动进离线模式。
 BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-8B}
 VLLM_PORT=${VLLM_PORT:-8000}
 RL_GROUP=${RL_GROUP:-4}
@@ -80,6 +83,17 @@ python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null \
 [[ -n "${WAVESPEED_API_KEY:-}" ]] \
   || fail "WAVESPEED_API_KEY 缺失(t2i/图像编辑代理)"
 [[ -f "$RL_BASE_CONFIG" ]] || fail "RL 基配置缺失:$RL_BASE_CONFIG"
+# 权重路径预检:BASE_MODEL 含 "/" 开头或 "./" = 本地目录 → 必须存在,
+# 且切 HF 离线(服务器拉不到 hub;权重不齐当场报,不半夜才崩)
+case "$BASE_MODEL" in
+  /*|./*)
+    [[ -d "$BASE_MODEL" ]] || fail "本地权重目录不存在:$BASE_MODEL"
+    [[ -f "$BASE_MODEL/config.json" ]] \
+      || fail "$BASE_MODEL 缺 config.json(不是完整 HF 权重目录)"
+    export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+    echo "== 本地权重:$BASE_MODEL(HF 离线模式)"
+    ;;
+esac
 
 # ── ① vLLM 策略服务 ──────────────────────────────────────────────────
 if ! curl -s "http://localhost:$VLLM_PORT/v1/models" >/dev/null; then
