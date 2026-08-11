@@ -20,6 +20,9 @@ LOGS=$RL/logs; mkdir -p $LOGS $RL/state $RL/data
 BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-8B}
 VLLM_PORT=${VLLM_PORT:-8000}
 RL_GROUP=${RL_GROUP:-4}
+# RL 专属基配置(2026-08-11 用户令:训练服务器 GPT/Google 全不可达,
+# 全体冻结 agent 走百炼 Qwen;与 configs/ 完全隔离,不碰既有跑法)
+RL_BASE_CONFIG=${RL_BASE_CONFIG:-rl/configs/server_bailian_qwen.yaml}
 PIDS=()
 cleanup() { for p in ${PIDS[@]:-}; do kill $p 2>/dev/null; done }
 trap cleanup EXIT INT TERM
@@ -64,10 +67,19 @@ python -c "import torch, peft, transformers" 2>/dev/null \
   || fail "训练依赖缺失:pip install torch transformers peft"
 python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null \
   || fail "无 CUDA GPU(vLLM+LoRA 训练需要;Mac 请在 GPU 机上跑)"
-[[ -n "${GEMINI_API_KEY:-}" ]] || fail "GEMINI_API_KEY 缺失(评审=reward 来源)"
-[[ -n "${DASHSCOPE_API_KEY:-}${WAVESPEED_API_KEY:-}" ]] \
-  || fail "视频后端 key 缺失(DASHSCOPE/WAVESPEED)"
-[[ -n "${OPENAI_API_KEY:-}" ]] || fail "OPENAI_API_KEY 缺失(冻结 agent 用)"
+# 服务器网络约束(2026-08-11):GPT/Google 不可达 —— 不检查也不使用
+# OPENAI/GEMINI key;全体 API 角色走百炼($QWEN_API_KEY 与
+# $DASHSCOPE_API_KEY 同源,缺一自动补齐)
+[[ -z "${QWEN_API_KEY:-}" && -n "${DASHSCOPE_API_KEY:-}" ]] \
+  && export QWEN_API_KEY=$DASHSCOPE_API_KEY
+[[ -z "${DASHSCOPE_API_KEY:-}" && -n "${QWEN_API_KEY:-}" ]] \
+  && export DASHSCOPE_API_KEY=$QWEN_API_KEY
+[[ -n "${DASHSCOPE_API_KEY:-}" ]] \
+  || fail "DASHSCOPE_API_KEY/QWEN_API_KEY 缺失(可灵+Qwen 冻结 agent+"\
+"qwen-vl 评审 = 全链百炼)"
+[[ -n "${WAVESPEED_API_KEY:-}" ]] \
+  || fail "WAVESPEED_API_KEY 缺失(t2i/图像编辑代理)"
+[[ -f "$RL_BASE_CONFIG" ]] || fail "RL 基配置缺失:$RL_BASE_CONFIG"
 
 # ── ① vLLM 策略服务 ──────────────────────────────────────────────────
 if ! curl -s "http://localhost:$VLLM_PORT/v1/models" >/dev/null; then
@@ -108,10 +120,10 @@ while true; do
                                   2>/dev/null || echo 0)
   # 动态生成本轮配置:video_brain → vLLM 当前 adapter;其余 agent
   # 无 crew 条目 = 冻结在 models.llm(gpt-5.6-sol)—— 裁决 a。
-  python - "$MODEL_NAME" <<'PY'
+  python - "$MODEL_NAME" "$RL_BASE_CONFIG" <<'PY'
 import sys, yaml, pathlib
 name = sys.argv[1]
-cfg = yaml.safe_load(open("configs/bailian.yaml"))
+cfg = yaml.safe_load(open(sys.argv[2]))
 cfg.setdefault("models", {}).setdefault("crew", {})["video_brain"] = {
     "name": "vllm", "base_url": "http://localhost:8000/v1",
     "model": name, "max_tokens": 4096, "api_key": "dummy"}

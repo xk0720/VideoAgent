@@ -1,0 +1,98 @@
+# RL 训练服务器专用配置(2026-08-11 用户令)—— 与主配置完全隔离,
+# 只被 rl/run_grpo.sh 引用,不污染 configs/ 与既有跑法。
+#
+# 服务器网络约束:GPT(OpenAI)/Google(Gemini)全部不可达 ——
+#   • 一切 LLM 角色 → 百炼 Qwen(DashScope OpenAI-compat,$QWEN_API_KEY;
+#     缺省时也接受 $DASHSCOPE_API_KEY 同源)
+#   • 评审/验收 VLM → qwen-vl-max(同 key;抽帧路评审)
+#   • 视频生成 → 百炼可灵(不变,$DASHSCOPE_API_KEY)
+#   • t2i / 图像编辑 → WaveSpeed(内网代理可达,$WAVESPEED_API_KEY)
+#   • video_brain(被训策略)→ 本机 vLLM(rl/run_grpo.sh 动态覆写
+#     crew.video_brain,指向 localhost:8000 的 Qwen3+LoRA)
+# 冻结纪律(裁决 a):除 video_brain 外的全部 agent 冻结在 models.llm
+# (qwen-max)—— 无 crew 条目 = 沿用 models.llm 另建实例。
+
+models:
+  llm:
+    name: "qwen"                       # DashScope OpenAI 兼容端点
+    model: "qwen-max"                  # 冻结 agent 的底座(编剧/分镜/
+                                       # 缝合师/enhancer/抽取等)
+    max_tokens: 8192
+
+  mllm:
+    name: "qwen-vl"
+    model: "qwen-vl-max"
+    n_frames: 4                        # 抽帧评审(qwen-vl 无原生视频流)
+    video_fps: 5
+
+  video_gen:
+    name: "bailian_kling"
+    kling_model: "kling/kling-v3-video-generation"
+    kling_omni_model: "kling/kling-v3-omni-video-generation"
+    mode: "std"
+    aspect_ratio: "16:9"
+    generate_audio: false
+    api_key: ""                        # → $DASHSCOPE_API_KEY
+    poll_interval: 15.0
+    timeout: 900
+    wavespeed:
+      api_key: ""                      # → $WAVESPEED_API_KEY
+      model_id: "bytedance/seedance-2.0/text-to-video"
+      resolution: "480p"               # RL rollout 走最省档(reward 只看
+                                       # 语义/物理评分,分辨率不进 reward)
+      generate_audio: false
+      poll_interval: 2.0
+      timeout: 600
+
+  # crew.video_brain 由 rl/run_grpo.sh 每轮动态覆写(vLLM adapter 名 +
+  # 版本);此处不写死,保持文件可读性。其余角色留空 = 冻结在 llm。
+
+  track_extractor:
+    name: "mock-track"
+  image_edit:
+    name: "mock-image-edit"
+  audio_gen:
+    name: "mock-audio-gen"
+
+plan:
+  n_shots: 3
+  max_shots: 12
+  shot_duration: 3.0
+  max_plan_iters: 3
+
+review:
+  physics_vlm: true
+  physics_measure: true
+
+window:
+  tail_seconds: 2.0
+
+compose:
+  fps: 8
+  n_candidates: 1                      # RL 组采样自带多候选,这里恒 1
+  max_revisions: 5
+  k_retries: 2
+  patience: 2
+  quality_bar: null
+
+metrics:
+  weights:
+    m1_semantic: 0.22
+    m2_temporal: 0.13
+    p1_physics: 0.22
+    p2_law_consistency: 0.10
+    id1_identity: 0.13
+    m5_rhythm: 0.10
+    aesthetic: 0.10
+
+physics:
+  violation_threshold: 0.40
+
+memory:
+  user_id: "rl_server"
+  enable_skills: true
+  enable_entities: true
+  enable_preferences: true
+  enable_episodes: false               # RL rollout 不蒸馏 episode(实验
+                                       # 隔离:训练数据不回流长期记忆)
+  enable_skill_admission: false
