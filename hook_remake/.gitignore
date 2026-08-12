@@ -1,0 +1,6 @@
+outputs/
+.env
+__pycache__/
+# 本地素材与本机配置不入库(爆款原片属第三方内容; hooks.json 含绝对路径)
+_examples/
+hooks.json

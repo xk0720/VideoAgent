@@ -1,0 +1,8 @@
+# 测试链路依赖(另需系统安装 ffmpeg/ffprobe)
+pydantic>=2.0
+pyyaml
+requests
+# 切镜(可选: 未安装时自动退化为等间隔切分)
+# 注: scenedetect 0.7 起不再提供 [opencv] extra, opencv 需单独装
+scenedetect>=0.6
+opencv-python

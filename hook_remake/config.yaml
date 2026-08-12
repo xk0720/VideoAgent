@@ -1,0 +1,26 @@
+# hook_remake 测试链路配置(CLI 可覆盖 limit/assign/mode/workers)
+
+# ── 模型 ────────────────────────────────────────────────────
+# animate-move: 人物和背景都来自参考图, 原片只提供动作(需求: 背景与 hook 图一致)
+model: wan2.2-animate-move
+mode: wan-std              # wan-std 快/省; wan-pro 画质优(建议先 std 跑通)
+check_image: true
+watermark: false
+# 国内公共端点(与仓库 M0 实测一致); 国际站账号改用 https://dashscope-intl.aliyuncs.com/api/v1
+base_url: https://dashscope.aliyuncs.com/api/v1
+poll_interval_s: 15
+timeout_s: 900
+
+# ── 切镜 ────────────────────────────────────────────────────
+split:
+  threshold: 27.0            # PySceneDetect ContentDetector 阈值(切不出来就调低)
+  min_scene_len_frames: 10   # 短于此帧数的闪切不单独成镜
+  fallback_interval_s: 4.0   # 未装 scenedetect / 检不出切点时的等间隔兜底
+  min_clip_s: 2.1            # API 下限 2s + 余量; 更短的镜头回文补齐
+  max_clip_s: 28.0           # API 上限 30s - 余量; 更长的镜头等分切块
+
+# ── 分配与执行 ──────────────────────────────────────────────
+assign: sequential           # sequential=连续均分(分段换人) | round_robin=逐镜轮转
+workers: 2                   # 并行生成数(注意账号 RPS)
+limit: 3                     # 默认只生成前 3 镜控费; 0 = 全量
+audio: original              # original=铺回原片音轨(BGM 卡点感) | none

@@ -1,0 +1,6 @@
+{
+  "person_hook_1": "https://example.com/girl_pink_tshirt_fullbody.jpg",
+  "object_hook_1": "https://example.com/pink_tshirt_product.jpg",
+  "person_hook_2": "/path/to/local/person2_fullbody.png",
+  "object_hook_2": "https://example.com/product2.jpg"
+}
