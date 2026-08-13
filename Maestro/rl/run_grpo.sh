@@ -17,15 +17,29 @@ cd "$(dirname "$0")/.."
 REPO=$(pwd)
 RL=$REPO/rl
 LOGS=$RL/logs; mkdir -p $LOGS $RL/state $RL/data
-# 本地策略权重(2026-08-11 用户问):BASE_MODEL 一个旋钮双向供给 ——
-# vLLM 服务与 trainer 都吃它。可写 HF hub id(联网机)或【本地目录】
-# (服务器,如 /data/models/Qwen3-8B);本地路径时自动进离线模式。
+
+# ══ 必要变量(2026-08-12 用户令:直接写在这里,按服务器实况改)══════
+# 先载 .env(有则覆盖下面的默认;两处都写以 .env 为准)
+set -a; source .env 2>/dev/null; set +a
+
+# ①密钥 —— 百炼一把通(可灵 + qwen-max 冻结 agent + omni 评审);
+#   QWEN_API_KEY 与 DASHSCOPE_API_KEY 同源,只填一个即可,脚本互补
+DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-""}   # ← 在此填 sk-xxx,或写进 .env
+WAVESPEED_API_KEY=${WAVESPEED_API_KEY:-""}   # ← 在此填,或写进 .env
+
+# ②本地策略权重 —— vLLM 与 trainer 共用一个值;服务器写本地目录
+#   (如 /data/models/Qwen3-8B,自动 HF 离线+完整性预检),联网机可写
+#   HF hub id
 BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-8B}
-VLLM_PORT=${VLLM_PORT:-8000}
-RL_GROUP=${RL_GROUP:-4}
-# RL 专属基配置(2026-08-11 用户令:训练服务器 GPT/Google 全不可达,
-# 全体冻结 agent 走百炼 Qwen;与 configs/ 完全隔离,不碰既有跑法)
+
+# ③运行旋钮
+VLLM_PORT=${VLLM_PORT:-8000}          # 策略服务端口
+RL_GROUP=${RL_GROUP:-4}               # 每镜组采样数 K(GRPO 组大小)
 RL_BASE_CONFIG=${RL_BASE_CONFIG:-rl/configs/server_bailian_qwen.yaml}
+                                      # RL 专属基配置(全百炼,与
+                                      # configs/ 隔离,勿指回主配置)
+export DASHSCOPE_API_KEY WAVESPEED_API_KEY BASE_MODEL
+# ═══════════════════════════════════════════════════════════════════
 PIDS=()
 cleanup() { for p in ${PIDS[@]:-}; do kill $p 2>/dev/null; done }
 trap cleanup EXIT INT TERM
