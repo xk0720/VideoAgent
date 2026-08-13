@@ -1,10 +1,11 @@
-#!/bin/zsh
+#!/usr/bin/env bash
+# (bash 兼容;zsh 也能跑 —— 服务器常无 zsh,2026-08-12 实报修复)
 # ══════════════════════════════════════════════════════════════════════
 #  Maestro brain GRPO 一键训练(semi-online;2026-08-10 用户令)
 #
-#    zsh rl/run_grpo.sh            # 全链:vLLM 策略 + rollout 农场 +
+#    bash rl/run_grpo.sh            # 全链:vLLM 策略 + rollout 农场 +
 #                                  # 收集器 + trainer(需 GPU 机)
-#    zsh rl/run_grpo.sh --smoke    # 无 GPU 自检:数据流/分组/advantage
+#    bash rl/run_grpo.sh --smoke    # 无 GPU 自检:数据流/分组/advantage
 #
 #  四进程:①vLLM 服 Qwen3(--enable-lora,adapter 热载)
 #          ②rollout 农场(现有管线,--rl-group K,review 开、enhancer
@@ -41,7 +42,8 @@ RL_BASE_CONFIG=${RL_BASE_CONFIG:-rl/configs/server_bailian_qwen.yaml}
 export DASHSCOPE_API_KEY WAVESPEED_API_KEY BASE_MODEL
 # ═══════════════════════════════════════════════════════════════════
 PIDS=()
-cleanup() { for p in ${PIDS[@]:-}; do kill $p 2>/dev/null; done }
+# ${arr[@]+...} = set -u 下的空数组安全展开(bash 全版本;绝不 kill 0)
+cleanup() { for p in ${PIDS[@]+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT INT TERM
 
 # ── smoke:无 GPU 自检 ────────────────────────────────────────────────
@@ -68,7 +70,7 @@ print(f"[smoke] mock rollout OK: {n} groups in {run}")
 PY
   python rl/collect/watch_online.py --once --outputs "$SBX"     --out "$SBX/groups.jsonl" --state "$SBX/state.json" || exit 1
   python rl/train/train_online.py --dry-run --data "$SBX/groups.jsonl"     | tee /tmp/rl_smoke_trainer.txt || exit 1
-  grep -qE "usable groups=[1-9]" /tmp/rl_smoke_trainer.txt || { echo "❌ trainer 分组为 0"; exit 1 }
+  grep -qE "usable groups=[1-9]" /tmp/rl_smoke_trainer.txt || { echo "❌ trainer 分组为 0"; exit 1; }
   python -m pytest tests/unit/test_rl_group.py -q || exit 1
   rm -rf "$SBX"
   echo "== SMOKE OK(采样→落盘→收集→分组→advantage 全链通;"
@@ -78,7 +80,7 @@ fi
 
 # ── 预检(缺什么直说什么)──────────────────────────────────────────
 set -a; source .env 2>/dev/null; set +a
-fail() { echo "❌ $1"; exit 2 }
+fail() { echo "❌ $1"; exit 2; }
 command -v vllm >/dev/null || fail "vllm 未安装:pip install vllm"
 python -c "import torch, peft, transformers" 2>/dev/null \
   || fail "训练依赖缺失:pip install torch transformers peft"
@@ -141,7 +143,7 @@ SCRIPTS=(scripts/sim_scripts/s3_bakery.json
 PROMPTS=("晨光面包店" "天台魔术师" "雨停之前")
 i=0
 while true; do
-  idx=$(( i % ${#SCRIPTS[@]} + 1 ))
+  idx=$(( i % ${#SCRIPTS[@]} ))
   ADAPTER=$(cat $RL/state/active_adapter.txt 2>/dev/null || true)
   MODEL_NAME=${ADAPTER:-brain}
   export MAESTRO_POLICY_VERSION=$(cat $RL/state/policy_version.txt \
