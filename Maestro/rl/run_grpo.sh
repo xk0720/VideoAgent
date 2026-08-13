@@ -36,6 +36,12 @@ BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-8B}
 # ③运行旋钮
 VLLM_PORT=${VLLM_PORT:-8000}          # 策略服务端口
 RL_GROUP=${RL_GROUP:-4}               # 每镜组采样数 K(GRPO 组大小)
+# GPU 划分(2026-08-12,单机八卡):推理/训练物理隔离 —— vLLM 会
+# 预占它可见卡约 90% 显存,不隔离必撞 trainer。8B 底座默认 1+1 卡
+# (瓶颈在可灵 API 不在 GPU);换大底座改这两个变量,vLLM 张量并行
+# 数自动 = 卡数。
+VLLM_GPUS=${VLLM_GPUS:-0}             # 推理卡:0 或 0,1
+TRAIN_GPUS=${TRAIN_GPUS:-1}           # 训练卡:1 或 1,2,3
 RL_BASE_CONFIG=${RL_BASE_CONFIG:-rl/configs/server_bailian_qwen.yaml}
                                       # RL 专属基配置(全百炼,与
                                       # configs/ 隔离,勿指回主配置)
@@ -114,8 +120,11 @@ esac
 # ── ① vLLM 策略服务 ──────────────────────────────────────────────────
 if ! curl -s "http://localhost:$VLLM_PORT/v1/models" >/dev/null; then
   echo "== 启动 vLLM($BASE_MODEL)"
+  VLLM_TP=$(( $(echo "$VLLM_GPUS" | tr -cd "," | wc -c) + 1 ))
+  CUDA_VISIBLE_DEVICES=$VLLM_GPUS \
   vllm serve "$BASE_MODEL" --served-model-name brain \
     --enable-lora --max-loras 4 --port $VLLM_PORT \
+    --tensor-parallel-size $VLLM_TP \
     > $LOGS/vllm.log 2>&1 &
   PIDS+=($!)
   for i in $(seq 1 120); do
@@ -130,6 +139,7 @@ echo "== vLLM 就绪"
 # ── ③ 收集器 & ④ trainer ────────────────────────────────────────────
 python rl/collect/watch_online.py > $LOGS/collector.log 2>&1 &
 PIDS+=($!)
+CUDA_VISIBLE_DEVICES=$TRAIN_GPUS \
 python rl/train/train_online.py --model "$BASE_MODEL" \
   --vllm-url "http://localhost:$VLLM_PORT" \
   > $LOGS/trainer.log 2>&1 &
