@@ -1,0 +1,21 @@
+asset_id: v02_mirror_phoneface
+kind: motion_asset          # 负例卡(代表v02中s10/s12/s14/s15四镜同款死因)
+source: {video_id: v02, t0: 25.87, t1: 31.00, clip: assets/media/v02_mirror_phoneface.mp4,
+         bgm: assets/media/v02_mirror_phoneface.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 镜前自拍——手机全程遮挡面部, 蕾丝上衣+牛仔裤展示
+  motion_desc_en: "mirror selfie with the phone covering the face the whole
+    time, showing lace top and jeans, slight body sway"
+  persons: 1_face_occluded
+  audio: {bpm: 123, beat_aligned: false, speech: true}
+compat:
+  animate_preflight: fail_full_face
+  api_verdict: {model: wan2.2-animate-move, status: FAILED, code: InvalidVideo.FullFace,
+                date: 2026-08-13, note: pro/std两轮同判——需要完整人脸}
+usage:
+  product_categories: []
+  scene_tags: [mirror_selfie, phone_over_face, negative_example]
+  mood: []
+  when_to_use: 不要作为animate驱动源(挡脸=必拒)。此类镜头是时尚haul高频画面,
+    剧本需要时走自创生成; merge加长翻案假说未定论(test_hard_shots.py)
+rights: {source: user_upload, note: 内部实验用}

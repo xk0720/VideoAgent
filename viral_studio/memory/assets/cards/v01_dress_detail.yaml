@@ -1,0 +1,21 @@
+asset_id: v01_dress_detail
+kind: structure_ref         # b-roll范本: 细节特写连切
+source: {video_id: v01, t0: 4.30, t1: 7.27, clip: assets/media/v01_dress_detail.mp4,
+         bgm: assets/media/v01_dress_detail.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 白裙细节特写——无头构图(颈部以下), 面料垂坠与腰线特写, 缓慢移动, CIDER水印+烧字'Stop scrolling right now'
+  motion_desc_en: "headless close-up of a white dress, camera drifting slowly
+    over fabric texture and waistline, soft indoor light"
+  persons: 1_headless_crop
+  audio: {bpm: 112, beat_aligned: false, speech: false}
+compat:
+  animate_preflight: fail_no_human
+  api_verdict: {model: wan2.2-animate-move, status: FAILED, code: InvalidVideo.NoHuman,
+                date: 2026-08-11, note: v01 shot2/shot4 同款构图同判}
+usage:
+  product_categories: [服装(质感向), 面料类]
+  scene_tags: [product_detail, b_roll, headless]
+  mood: [soft, premium]
+  when_to_use: 需要"商品质感特写"段落时作结构参考——不能换人(没人脸),
+    应走首帧改绘+i2v(商品图为参考)自创生成
+rights: {source: user_upload, note: 内部实验用}

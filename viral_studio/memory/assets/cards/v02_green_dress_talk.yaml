@@ -1,0 +1,21 @@
+asset_id: v02_green_dress_talk
+kind: vo_ref               # 口播参考: 动作+口型皆可作animate驱动, 结构上是"真人讲解段"范本
+source: {video_id: v02, t0: 5.00, t1: 10.97, clip: assets/media/v02_green_dress_talk.mp4,
+         bgm: assets/media/v02_green_dress_talk.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 绿色缎面裙真人出镜讲解——单人全身偏近, 正脸, 边说边小幅手势与身体摆动, 烧字'Stop scrolling right now'
+  motion_desc_en: "single woman facing camera, full face visible, talking with
+    small hand gestures and gentle body sway, slight handheld feel"
+  persons: 1_full_face
+  audio: {bpm: 123, beat_aligned: false, speech: true, transcript: 待omni出文稿}
+compat:
+  animate_preflight: pass_verified
+  api_verdict: {model: wan2.2-animate-move, status: succeeded, mode: [wan-std, wan-pro],
+                date: 2026-08-13, note: 表情口型随驱动视频迁移, 配原声后口型基本可对}
+usage:
+  product_categories: [任何需要口播种草的商品]
+  scene_tags: [talking_head, presenter, indoor]
+  mood: [warm, persuasive]
+  when_to_use: 口播段的动作/口型驱动源——换上hook人物后保留讲解的自然身体语言;
+    新台词场景则改走自创口播(seedance音画同出, 台词写进prompt)
+rights: {source: user_upload, note: 内部实验用}

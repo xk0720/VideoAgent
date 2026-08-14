@@ -1,0 +1,18 @@
+video_id: v03
+title: 贴纸弹出hook · 同景换装 · 快切CTA收尾
+source_file: sources/v03_transition_cta_haul.mp4
+specs: {duration_s: 35.9, res: 720x1280, fps: 30, bpm: 112}
+product_sold: 女装多品类(蕾丝上衣/粉色裙/黑色蕾丝/黄色吊带裙), 烧字含CIDER品牌词
+structure:
+  - {t: "0.0-1.4",   role: hook,   desc: "镜前自拍+人物描边贴纸弹出特效(抠图高亮), 1.4s一击"}
+  - {t: "1.4-4.8",   role: swap,   desc: "同景同人卡点换装x3: 同一房间同一镜位, 每约1.1s切一套穿搭(白裤装→粉裙→酒红上衣)"}
+  - {t: "4.8-11.9",  role: detail, desc: "白色套装细节特写+彩虹光晕, 烧字'Everyone looks good in these'"}
+  - {t: "11.9-31.4", role: tour,   desc: "多套穿搭巡展: 室内摆拍/衣帽间自拍/门廊摆拍, 4-6s一镜"}
+  - {t: "31.4-35.9", role: outro,  desc: "黄裙快切CTA蒙太奇: 5连切(0.7-1.1s/镜)换姿势换配饰, 烧字'click the link to shop'"}
+audio: {type: BGM+烧字(是否VO待omni复核), bpm: 112, notes: 换装切点与拍点对齐}
+strategy_takeaways:
+  - 同景同人换装 = patterns/same_scene_outfit_swap, 强种草感且单人全脸(利好animate/自创双路线)
+  - 快切CTA收尾 = patterns/beat_pose_swap 的收尾变体(同人换姿势+配饰)
+  - 贴纸弹出hook属后期特效, 生成模型难复刻 → 标记为剪辑期能力(v2+)
+api_history: 未跑过生成(仅切镜与理解, 2026-08-14)
+rights: {source: user_upload, note: 内部实验用}

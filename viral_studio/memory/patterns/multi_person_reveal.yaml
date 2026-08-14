@@ -1,0 +1,41 @@
+pattern_id: multi_person_reveal
+name: 多人物依次亮相
+evidence: [v01_opening_reveal]
+what_it_does: 开场hook——N个人物按拍点一个接一个出场展示, 制造"还有下一个"的期待感;
+  天然消化"多张hook人物参考"的场景
+when_to_use: 输入包含≥2张人物hook、需要强开场、商品是合集/多SKU时优先考虑
+execution:
+  preferred_mode: self_create      # 原素材是拼贴(NoHuman), 无法animate, 只能自创
+  model: seedance_t2v              # reference_images=[hook1..N] 顺序即@ImageN编号
+  duration_hint: 每人2s(整数铁律——生成时长与窗口时间戳只能整数秒, 最小窗口1s), 总时长=N*每人时长
+  timing_note: 若seedance时间控制实测不达标, 降级为逐人一段生成后按拍点硬切拼接
+prompt_templates:
+  # 模板A · 轮流亮相(每时刻单人, 串脸风险最低, 首选)
+  serial_reveal: |
+    A vertical 9:16 fashion intro, {total_s} seconds, {n} shots, hard cut
+    between shots, locked-off static camera, same plain studio background
+    throughout.
+    Shot 1 ({per_s}s): full-body shot of the woman from @Image1. She walks in
+    from the left edge, stops center, faces the camera in a relaxed pose.
+    Shot 2 ({per_s}s): hard cut. The woman from @Image2 walks in the same way,
+    stops center, same framing.
+    Shot 3 ({per_s}s): hard cut. The woman from @Image3 walks in the same way,
+    stops center, same framing.
+    Exactly one person on screen per shot. No text, no camera movement, no zoom.
+  # 模板B · 叠加式弹入(忠实还原v01: 前面的人留在画面里; 多人同框串脸风险高, 测试通过后再用)
+  stacking_reveal: |
+    A vertical 9:16 fashion intro, {total_s} seconds, one continuous locked-off
+    static shot, plain pastel studio background.
+    0.0-{t1}s: the woman from @Image1 pops into the center, standing still in a
+    confident pose.
+    {t1}-{t2}s: the woman from @Image2 pops in and stands to her left; both
+    remain on screen, holding their poses.
+    {t2}-{total_s}s: the woman from @Image3 pops in and stands to the right;
+    all three stand in a row facing the camera.
+    Each woman keeps her own face and outfit from her reference image. No
+    morphing between people, no text, no camera movement.
+notes:
+  - 动作词遵循安全转身准则: 禁用360/spin/rotate quickly; 摆身/走入/定点亮相为安全动作
+  - "整数铁律——prompt里所有时长/时间戳写整数秒(1s/2s/0-2s), 不写0.9s这类小数;
+    原片0.9s的弹入节奏在自创路线下取整为1s"
+  - 判卷: 抽各时段中点帧, 核对人物-参考图对应与切点时刻

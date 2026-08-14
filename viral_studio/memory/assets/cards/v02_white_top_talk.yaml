@@ -1,0 +1,19 @@
+asset_id: v02_white_top_talk
+kind: vo_ref
+source: {video_id: v02, t0: 39.87, t1: 45.17, clip: assets/media/v02_white_top_talk.mp4,
+         bgm: assets/media/v02_white_top_talk.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 白色上衣讲解段——单人正面半身, 正脸清晰, 双手配合讲解节奏, 烧字'This is your sign to grab them'
+  motion_desc_en: "single woman facing camera waist-up, full face visible,
+    talking directly to camera with expressive hand gestures"
+  persons: 1_full_face
+  audio: {bpm: 123, beat_aligned: false, speech: true, transcript: 待omni出文稿}
+compat:
+  animate_preflight: pass_verified
+  api_verdict: {model: wan2.2-animate-move, status: succeeded, mode: [wan-std, wan-pro], date: 2026-08-13}
+usage:
+  product_categories: [任何需要口播CTA的商品]
+  scene_tags: [talking_head, cta, indoor]
+  mood: [urgent, friendly]
+  when_to_use: 收尾前的"行动号召"口播动作源, 手势节奏感强
+rights: {source: user_upload, note: 内部实验用}

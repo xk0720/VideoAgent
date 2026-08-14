@@ -1,0 +1,28 @@
+pattern_id: same_scene_outfit_swap
+name: 同景同人换装
+evidence: [v03_same_scene_outfit_swap]
+what_it_does: 同一场景同一机位同一人物, 每个拍点整套穿搭变化——"一秒换装"的爽感,
+  单条视频展示多个SKU的最高效结构
+when_to_use: 一个人物hook + 多个商品(或一件商品多配色)时的首选种草结构
+execution:
+  preferred_mode: self_create        # 需要"衣服变人不变", animate做不到(它换人不换衣序)
+  model: seedance_t2v                # @Image1=人物, @Image2..N=各套商品图
+  duration_hint: 每套1s(整数铁律下的最小窗口), 3-4套 → 总长3-4s
+  timing_note: 依赖时段-参考绑定能力(同multi_person_reveal, 等时间控制实测)
+prompt_templates:
+  outfit_swap: |
+    A vertical 9:16 fashion video, {total_s} seconds, {n} shots, hard cut
+    between shots, locked-off static camera, the same bright bedroom with a
+    full-length mirror in every shot.
+    Shot 1 ({per_s}s): the woman from @Image1 stands center in the outfit from
+    @Image2, relaxed standing pose facing the camera.
+    Shot 2 ({per_s}s): hard cut. Same woman, same spot, same pose, now wearing
+    the outfit from @Image3.
+    Shot 3 ({per_s}s): hard cut. Same woman, same spot, same pose, now wearing
+    the outfit from @Image4.
+    Identical framing and pose across shots; only the outfit changes. No text,
+    no camera movement.
+notes:
+  - 人物一致性是此pattern的生命线——prompt里重复"same woman, same spot, same pose"
+  - 商品图作@ImageN参考挂入(输入含商品图时的主战场)
+  - 若时段绑定不达标: 逐套单独生成(同一seed/同prompt骨架)再硬切拼接

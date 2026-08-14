@@ -1,0 +1,16 @@
+video_id: v01
+title: 三人拼贴依次亮相 · 白色系穿搭合集
+source_file: sources/v01_collage_reveal_haul.mp4
+specs: {duration_s: 54.4, res: 720x1280, fps: 30, bpm: 112}
+product_sold: CIDER 白色系女装合集(蕾丝上衣/连体裤/短裙/长裙), 视频内有品牌水印与烧字
+structure:  # 段落节拍谱 — 策划agent选结构模板时读这里
+  - {t: "0.0-4.3",  role: hook,   desc: "手机边框拼贴: 三个抠图人物每约0.9s依次弹入, 2.1s标题'SUMMER FASHION HAUL!'弹入, 贴纸星光特效"}
+  - {t: "4.3-13.8", role: detail, desc: "裙装细节特写连切(无头构图/近景), 烧字口播文案"}
+  - {t: "13.8-45",  role: tour,   desc: "多套穿搭巡展: 讲解近景+镜前自拍交替, 3-7s一镜, 烧字持续"}
+  - {t: "45-54.4",  role: outro,  desc: "镜前自拍收尾, 'CIDER'品牌词烧字点题"}
+audio: {type: BGM+烧字文案(疑似无人声VO, 待omni复核), bpm: 112, notes: 开场弹入与拍点大致对齐}
+strategy_takeaways:
+  - 多人物依次亮相是"多hook参考"的天然模板 → 见 patterns/multi_person_reveal
+  - 无头/拼贴画面对 animate 路线不可用(实测NoHuman), 只能自创生成或改绘
+api_history: 12镜animate-move实测 8成/4拒(2026-08-11, hook_remake run_20260811_054540)
+rights: {source: user_upload, note: 内部实验用}

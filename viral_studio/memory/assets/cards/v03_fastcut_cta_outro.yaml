@@ -1,0 +1,20 @@
+asset_id: v03_fastcut_cta_outro
+kind: motion_asset
+source: {video_id: v03, t0: 31.37, t1: 35.87, clip: assets/media/v03_fastcut_cta_outro.mp4,
+         bgm: assets/media/v03_fastcut_cta_outro.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 快切CTA收尾——同人黄裙5连切(0.7-1.1s/镜), 每切换姿势/墨镜/手袋, 烧字'click the link to shop your new favorites!'
+  motion_desc_en: "five hard cuts 0.7-1.1s apart of the same woman in the same
+    outfit, changing pose and accessories (sunglasses, handbag) on every cut,
+    waist-up framing"
+  persons: 1_waist_up
+  audio: {bpm: 112, beat_aligned: true, speech: false}
+compat:
+  animate_preflight: untested
+  risk_note: 人物戴墨镜——FullFace检测对墨镜的判定未知; 需实测或本地预检
+usage:
+  product_categories: [服装, 配饰(墨镜/包袋天然融入)]
+  scene_tags: [fast_cut, cta_outro, beat_sync]
+  mood: [hype, urgent]
+  when_to_use: 片尾促转化段; 合并成一条长片段作animate驱动(参照v02_poster_beat_reel成功经验), 或自创
+rights: {source: user_upload, note: 内部实验用}

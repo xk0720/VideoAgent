@@ -1,0 +1,21 @@
+asset_id: v03_same_scene_outfit_swap
+kind: motion_asset
+source: {video_id: v03, t0: 1.43, t1: 4.83, clip: assets/media/v03_same_scene_outfit_swap.mp4,
+         bgm: assets/media/v03_same_scene_outfit_swap.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 同景同人卡点换装x3——同一房间同一镜位, 每约1.1s硬切一次, 人物姿势近似但整套穿搭变化(白裤装→粉裙→酒红上衣)
+  motion_desc_en: "same room, same locked framing across three hard cuts about
+    1.1s apart; the same woman holds a near-identical standing pose while her
+    entire outfit changes on each cut"
+  persons: 1_mid_shot_in_mirror
+  audio: {bpm: 112, beat_aligned: true, speech: false}
+compat:
+  animate_preflight: untested
+  risk_note: 镜中人物占比中等偏小, 参照v02_mirror_smallperson(NoHuman)有被拒风险; 建议先本地预检
+usage:
+  product_categories: [服装(多SKU同场景), 配饰]
+  scene_tags: [mirror_selfie, outfit_transition, beat_sync]
+  mood: [chill, satisfying]
+  when_to_use: 一个人物hook要展示多套商品时的最强种草结构; 若animate被拒,
+    可自创复刻(同景同姿势换装prompt, 或逐段生成后硬切拼接)
+rights: {source: user_upload, note: 内部实验用}

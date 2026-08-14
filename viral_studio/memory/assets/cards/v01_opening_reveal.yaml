@@ -1,0 +1,22 @@
+asset_id: v01_opening_reveal
+kind: structure_ref        # 结构参考: 动作无法直接迁移(拼贴), 但"依次亮相"编排可自创复刻
+source: {video_id: v01, t0: 0.00, t1: 4.30, clip: assets/media/v01_opening_reveal.mp4,
+         bgm: assets/media/v01_opening_reveal.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 手机边框内三个抠图人物依次弹入(约0s/0.9s/1.9s各一人), 2.1s标题弹入, 星光贴纸特效, 4.3s切出
+  motion_desc_en: "phone-frame collage; cutout model #1 pops in, ~0.9s later
+    model #2 pops in beside her, ~0.9s later model #3 pops in, title text pops
+    at ~2.1s; sticker sparkle FX; all static poses"
+  persons: 3_cutouts_stacked
+  audio: {bpm: 112, beat_aligned: true, speech: false}
+compat:
+  animate_preflight: fail_no_human
+  api_verdict: {model: wan2.2-animate-move, status: FAILED, code: InvalidVideo.NoHuman,
+                date: 2026-08-11, note: 拼贴多人+图形特效, 检测不出单人; 重试同判}
+usage:
+  product_categories: [服装合集, 多SKU商品]
+  scene_tags: [collage, multi_person_reveal, phone_frame]
+  mood: [playful, energetic]
+  when_to_use: 手头有多张hook人物参考需要开场集体亮相时——不能走animate, 用
+    patterns/multi_person_reveal 的自创prompt复刻此编排
+rights: {source: user_upload, note: 内部实验用}

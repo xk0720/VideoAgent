@@ -1,0 +1,17 @@
+video_id: v02
+title: 海报卡点开场 · 讲解型穿搭合集
+source_file: sources/v02_cider_talk_haul.mp4
+specs: {duration_s: 50.2, res: 720x1280, fps: 30, bpm: 123}
+product_sold: CIDER 女装(绿色缎面裙/黑白蕾丝上衣/白色系列), 烧字含品牌词
+structure:
+  - {t: "0.0-5.0",   role: hook,  desc: "海报卡点6连闪切: 每约0.8s换一张穿搭海报姿势, 静止构图, 视觉冲击强"}
+  - {t: "5.0-16.4",  role: talk,  desc: "真人出镜讲解(绿裙), 口播+烧字'Stop scrolling right now'"}
+  - {t: "16.4-45.2", role: tour,  desc: "多套穿搭: 讲解与镜前自拍交替, 3-8s一镜"}
+  - {t: "45.2-50.2", role: outro, desc: "镜前自拍+烧字CTA'to shop my favorite CIDER white looks'"}
+audio: {type: BGM+真人口播(画面口型明显, 待omni出文稿), bpm: 123, notes: 开场闪切严格卡拍}
+strategy_takeaways:
+  - 海报卡点开场 = patterns/beat_pose_swap 的实证来源
+  - 讲解段(单人全脸)是 animate 换人的优质素材, 口型可随原声
+  - 镜前自拍(手机挡脸/镜中人小)是 animate 重灾区 → 自创路线或避开
+api_history: 11单元animate-move实测 6成/5拒, pro与std判决完全一致(2026-08-12/13, example1_pro/std)
+rights: {source: user_upload, note: 内部实验用}

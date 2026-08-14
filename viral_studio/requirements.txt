@@ -1,0 +1,4 @@
+# P2 依赖(P3 接执行层时再加: opencv/scenedetect/librosa 等; 系统需 ffmpeg)
+pydantic>=2.0
+pyyaml
+requests

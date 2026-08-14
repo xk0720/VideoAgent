@@ -1,0 +1,19 @@
+asset_id: v03_sticker_pop_hook
+kind: fx_insert             # 后期特效类: 生成模型难直接复刻, 属剪辑期能力
+source: {video_id: v03, t0: 0.00, t1: 1.43, clip: assets/media/v03_sticker_pop_hook.mp4,
+         bgm: assets/media/v03_sticker_pop_hook.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 开场1.4s贴纸弹出hook——镜前自拍画面上, 人物被抠图描边成贴纸并弹出高亮, 点赞/分享图标可见
+  motion_desc_en: "mirror selfie frame; the woman is cutout-highlighted with a
+    white sticker outline that pops/scales in, UI icons visible"
+  persons: 1_cutout_highlight
+  audio: {bpm: 112, beat_aligned: true, speech: false}
+compat:
+  animate_preflight: untested
+  risk_note: 抠图描边特效大概率触发NoHuman(参照v01拼贴); 本卡定位是剪辑期特效参考, 不是生成素材
+usage:
+  product_categories: [任何]
+  scene_tags: [hook, sticker_fx, ui_deco]
+  mood: [playful]
+  when_to_use: 复刻此效果的正确姿势=先生成干净镜前画面, 再由剪辑工具做描边弹出(execute agent v2+的剪辑能力); v1可用"首帧静帧+2.5D缩放"近似
+rights: {source: user_upload, note: 内部实验用}

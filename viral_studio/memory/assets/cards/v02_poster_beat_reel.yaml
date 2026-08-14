@@ -1,0 +1,20 @@
+asset_id: v02_poster_beat_reel
+kind: motion_asset
+source: {video_id: v02, t0: 0.00, t1: 5.00, clip: assets/media/v02_poster_beat_reel.mp4,
+         bgm: assets/media/v02_poster_beat_reel.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 海报卡点开场——6个约0.8s的硬切, 每切换一张"穿搭海报"构图, 人物换姿势, 静止机位, 卡拍强烈
+  motion_desc_en: "static camera; on every beat a hard cut to a new poster-style
+    pose of the same model, one full-body pose per beat, six poses total"
+  persons: 1_dominant_per_frame
+  audio: {bpm: 123, beat_aligned: true, speech: false}
+compat:
+  animate_preflight: pass_verified
+  api_verdict: {model: wan2.2-animate-move, status: succeeded, mode: [wan-std, wan-pro],
+                date: 2026-08-13, note: 合并成5s长片段后一次通过并生成(单碎片曾被拒)}
+usage:
+  product_categories: [服装, 美妆, 任何可做海报视觉的商品]
+  scene_tags: [poster_studio, fast_cut_opening, beat_sync]
+  mood: [energetic, hype]
+  when_to_use: 需要强卡点开场hook、hook人物图可当海报主视觉时——把此片段作animate驱动, 人物即随拍点换姿势
+rights: {source: user_upload, note: 内部实验用}

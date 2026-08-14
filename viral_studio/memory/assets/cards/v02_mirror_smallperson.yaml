@@ -1,0 +1,21 @@
+asset_id: v02_mirror_smallperson
+kind: motion_asset          # 负例卡: 保留是为了教学——这类画面别喂animate
+source: {video_id: v02, t0: 18.83, t1: 25.87, clip: assets/media/v02_mirror_smallperson.mp4,
+         bgm: assets/media/v02_mirror_smallperson.m4a, fps: 30, res: 720x1280}
+content:
+  summary: 浴室镜前自拍——镜中人全身但占画面比例小, 慢推近
+  motion_desc_en: "bathroom mirror selfie, full body reflected but small in
+    frame, slow push-in toward the mirror"
+  persons: 1_small_in_mirror
+  audio: {bpm: 123, beat_aligned: false, speech: true}
+compat:
+  animate_preflight: fail_no_human
+  api_verdict: {model: wan2.2-animate-move, status: FAILED, code: InvalidVideo.NoHuman,
+                date: 2026-08-13, note: pro/std两轮同判——镜中人占比过小}
+usage:
+  product_categories: []
+  scene_tags: [mirror_selfie, negative_example]
+  mood: []
+  when_to_use: 不要作为animate驱动源(实测两连拒)。若剧本需要此类画面则自创生成,
+    或试裁剪放大翻案(crop变体实验, 未定论)
+rights: {source: user_upload, note: 内部实验用}

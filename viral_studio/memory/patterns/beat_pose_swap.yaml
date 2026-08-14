@@ -1,0 +1,25 @@
+pattern_id: beat_pose_swap
+name: 卡点换姿势
+evidence: [v02_poster_beat_reel, v03_fastcut_cta_outro]
+what_it_does: 同一人物在拍点上连续硬切换姿势(可同时换配饰/构图), 视觉冲击强;
+  开场版=海报感(v02), 收尾版=CTA促转化(v03)
+when_to_use: 需要强节奏段落(开场hook或收尾CTA)、单人hook、BGM节拍明确时
+execution:
+  preferred_mode: reuse_motion       # 有实测成功的驱动素材, 优先借用
+  model: wan2.2-animate-move         # 驱动=v02_poster_beat_reel.mp4(整段5s, 已验证)
+  refs: [person_hook全身变体]
+  fallback_mode: self_create         # seedance分镜式prompt逐拍写姿势(每拍一个shot)
+  duration_hint: 4-6s; 借用驱动时保留原片0.7-1.1s的碎切, 自创时每拍最短1s(整数铁律)
+prompt_templates:
+  self_create_fallback: |
+    A vertical 9:16 fashion video, {total_s} seconds, {n} shots, hard cut on
+    every beat (about {beat_s}s per shot), locked-off static camera, plain
+    studio background.
+    Each shot: the woman from @Image1 in a different confident full-body pose
+    (hands on hips / arms crossed / looking over shoulder / hand raised),
+    holding still within the shot.
+    Same person, same outfit in every shot. No text, no camera movement.
+notes:
+  - 借用v02驱动时BGM必须带走对应切片(assets/media/v02_poster_beat_reel.m4a, 123BPM)
+  - "关键取舍——亚秒级碎切(<1s)只能靠 reuse_motion 借真实驱动素材实现;
+    自创路线受整数时间戳限制, 最快只能1s一切, 要极致快切就必须借素材"
