@@ -19,21 +19,23 @@ REPO=$(pwd)
 RL=$REPO/rl
 LOGS=$RL/logs; mkdir -p $LOGS $RL/state $RL/data
 
-# ══ 必要变量(2026-08-12 用户令:直接写在这里,按服务器实况改)══════
-# 先载 .env(有则覆盖下面的默认;两处都写以 .env 为准)
+# ══ 密钥纪律(2026-08-13 用户令 + 排障实锤)═══════════════════════
+# key 【只】从仓库根 Maestro/.env 读取 —— 不在脚本里写默认、不 export
+# 补齐、不互补。先清掉壳里的残留(bashrc 里 export 过的旧 key 曾顶掉
+# .env,可灵报"未开通"排查半天),再载 .env,来源唯一、可审计。
+# .env 需含三行(同一把百炼 key 写两遍也行):
+#   DASHSCOPE_API_KEY=sk-xxx     # 可灵视频
+#   QWEN_API_KEY=sk-xxx          # qwen-max 冻结 agent + omni 评审
+#   WAVESPEED_API_KEY=ws-xxx     # t2i/图像编辑
+unset DASHSCOPE_API_KEY QWEN_API_KEY WAVESPEED_API_KEY
 set -a; source .env 2>/dev/null; set +a
 
-# ①密钥 —— 百炼一把通(可灵 + qwen-max 冻结 agent + omni 评审);
-#   QWEN_API_KEY 与 DASHSCOPE_API_KEY 同源,只填一个即可,脚本互补
-DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-""}   # ← 在此填 sk-xxx,或写进 .env
-WAVESPEED_API_KEY=${WAVESPEED_API_KEY:-""}   # ← 在此填,或写进 .env
-
-# ②本地策略权重 —— vLLM 与 trainer 共用一个值;服务器写本地目录
+# 本地策略权重 —— vLLM 与 trainer 共用一个值;服务器写本地目录
 #   (如 /data/models/Qwen3-8B,自动 HF 离线+完整性预检),联网机可写
 #   HF hub id
 BASE_MODEL=${BASE_MODEL:-Qwen/Qwen3-8B}
 
-# ③运行旋钮
+# 运行旋钮
 VLLM_PORT=${VLLM_PORT:-8000}          # 策略服务端口
 RL_GROUP=${RL_GROUP:-4}               # 每镜组采样数 K(GRPO 组大小)
 # GPU 划分(2026-08-12,单机八卡):推理/训练物理隔离 —— vLLM 会
@@ -45,7 +47,6 @@ TRAIN_GPUS=${TRAIN_GPUS:-1}           # 训练卡:1 或 1,2,3
 RL_BASE_CONFIG=${RL_BASE_CONFIG:-rl/configs/server_bailian_qwen.yaml}
                                       # RL 专属基配置(全百炼,与
                                       # configs/ 隔离,勿指回主配置)
-export DASHSCOPE_API_KEY WAVESPEED_API_KEY BASE_MODEL
 # ═══════════════════════════════════════════════════════════════════
 PIDS=()
 # ${arr[@]+...} = set -u 下的空数组安全展开(bash 全版本;绝不 kill 0)
@@ -85,25 +86,20 @@ PY
 fi
 
 # ── 预检(缺什么直说什么)──────────────────────────────────────────
-set -a; source .env 2>/dev/null; set +a
 fail() { echo "❌ $1"; exit 2; }
 command -v vllm >/dev/null || fail "vllm 未安装:pip install vllm"
 python -c "import torch, peft, transformers" 2>/dev/null \
   || fail "训练依赖缺失:pip install torch transformers peft"
 python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null \
   || fail "无 CUDA GPU(vLLM+LoRA 训练需要;Mac 请在 GPU 机上跑)"
-# 服务器网络约束(2026-08-11):GPT/Google 不可达 —— 不检查也不使用
-# OPENAI/GEMINI key;全体 API 角色走百炼($QWEN_API_KEY 与
-# $DASHSCOPE_API_KEY 同源,缺一自动补齐)
-[[ -z "${QWEN_API_KEY:-}" && -n "${DASHSCOPE_API_KEY:-}" ]] \
-  && export QWEN_API_KEY=$DASHSCOPE_API_KEY
-[[ -z "${DASHSCOPE_API_KEY:-}" && -n "${QWEN_API_KEY:-}" ]] \
-  && export DASHSCOPE_API_KEY=$QWEN_API_KEY
+# key 只认 .env(顶部已 unset 壳残留后 source):三把各自点名检查,
+# 不做任何互补/export —— 少哪行就去 Maestro/.env 补哪行
 [[ -n "${DASHSCOPE_API_KEY:-}" ]] \
-  || fail "DASHSCOPE_API_KEY/QWEN_API_KEY 缺失(可灵+Qwen 冻结 agent+"\
-"qwen-vl 评审 = 全链百炼)"
+  || fail "DASHSCOPE_API_KEY 缺失 —— 写进 Maestro/.env(可灵视频)"
+[[ -n "${QWEN_API_KEY:-}" ]] \
+  || fail "QWEN_API_KEY 缺失 —— 写进 Maestro/.env(qwen 冻结 agent+omni 评审;与 DASHSCOPE 同一把 key 也要写这一行)"
 [[ -n "${WAVESPEED_API_KEY:-}" ]] \
-  || fail "WAVESPEED_API_KEY 缺失(t2i/图像编辑代理)"
+  || fail "WAVESPEED_API_KEY 缺失 —— 写进 Maestro/.env(t2i/图像编辑)"
 [[ -f "$RL_BASE_CONFIG" ]] || fail "RL 基配置缺失:$RL_BASE_CONFIG"
 # 权重路径预检:BASE_MODEL 含 "/" 开头或 "./" = 本地目录 → 必须存在,
 # 且切 HF 离线(服务器拉不到 hub;权重不齐当场报,不半夜才崩)
