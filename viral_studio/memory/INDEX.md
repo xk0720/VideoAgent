@@ -26,8 +26,16 @@
 
 ## 策略卡 (patterns/)
 - [multi_person_reveal](patterns/multi_person_reveal.yaml) 多人依次亮相 — 多hook开场首选; 模板A轮流(稳)/模板B叠加(还原v01, 风险高)
-- [beat_pose_swap](patterns/beat_pose_swap.yaml) 卡点换姿势 — 开场/收尾强节奏段; 优先借v02驱动(已验证)
+- [beat_pose_swap](patterns/beat_pose_swap.yaml) 卡点换姿势 — 开场/收尾强节奏段; ⚠️实测两条路线都做不出硬切, 只得"平滑换姿势"
 - [same_scene_outfit_swap](patterns/same_scene_outfit_swap.yaml) 同景同人换装 — 一人多SKU最高效结构; 商品图作@ImageN
+- [talking_head_multishot](patterns/talking_head_multishot.yaml) **10s三动作口播** — ✅实测台词9/9准确、中文口型可用、身份稳定; 多hook可一人一段分色叙述
+
+## 全局实测结论(跨 pattern, 规划时必须知道)
+- **硬切做不到**: animate 抹平驱动视频的硬切(Δ108→Δ19); seedance 无视 hard cut 指令,
+  改用推拉/景别变化。要卡点硬切 → 生成多段后期 ffmpeg 拼。
+- **中文口播可用**: seedance `generate_audio` 出中文人声+口型, 台词逐字准确;
+  长度按 3秒≈10-13字 配, 太短会留静默, 相邻句语义太近会被连读。
+- **单图锁身份足够**: 一张 @Image1 即可稳住人物身份与服装配色, 跨段一致。
 
 ## 待办
 - [ ] 音频理解补全: 口播文稿(ASR/omni)、BGM情绪标签 — 卡内标"待omni"处

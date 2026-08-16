@@ -1,0 +1,39 @@
+pattern_id: talking_head_multishot
+name: 单人多动作口播段(10s三动作)
+evidence: [demo_20260816_012407 三段实测]
+what_it_does: 一次调用生成 10s 口播——人物按 3+3+4 秒做三个动作, 边做边说三句台词,
+  seedance 音画同出直接给出中文人声与口型
+when_to_use: 需要口播种草段, 且有人物参考图时; 多个 hook 人物可一人一段做"分色/分卖点"叙述
+execution:
+  preferred_mode: self_create_multiwindow
+  model: seedance_t2v
+  refs: 单张人物图作 @Image1(实测单图足以锁住身份与配色)
+  duration_hint: 10s(整数); 三动作切分 3+3+4
+  generate_audio: true
+prompt_templates:
+  three_shot_talk: |
+    Locked-off static camera, vertical 9:16 full-body shot, {scene}. A
+    10-second video in three shots, hard cut between shots. The same young
+    woman from @Image1, wearing the {color} {garment}, appears in every shot.
+    Shot 1 (0-3s): she {action1}, speaking to the camera in Mandarin Chinese,
+    and says: "{line1}"
+    Shot 2 (3-6s): she {action2}, speaking to the camera in Mandarin Chinese,
+    and says: "{line2}"
+    Shot 3 (6-10s): she {action3}, speaking to the camera in Mandarin Chinese,
+    and says: "{line3}"
+    Same woman, same outfit, same room and same framing in all three shots. She
+    speaks continuously with natural, accurate lip sync in Mandarin Chinese;
+    clear female voice, upbeat and friendly. No subtitles, no text overlays, no
+    extra people, no camera movement.
+measured_results:            # 2026-08-16 三段真调用(wavespeed seedance-2.0, 720p, 10s)
+  台词准确率: 9/9 句逐字正确(ASR 复核), 中文口播可用
+  时段对齐: B1 极准(0/2.76/5.56 vs 目标 0/3/6); B2 语速偏快 7.2s 说完余 2.8s 静默;
+    B3 前两句连读成 0-5s, 第三句 7.4s
+  身份一致性: 三段同一人, 发型脸型稳定; 三个配色与参考图逐一对应
+  硬切: 未执行 —— 帧差最大仅 6-18(真硬切 Δ>40), 模型用推拉/景别变化代替硬切
+  构图: 声明 locked-off static camera 仍出现推近(B1 全身→中景)
+notes:
+  - "台词长度按中文语速配: 3秒≈10-13字, 4秒≈15-17字; 写太短会提前说完留静默(B2)"
+  - "每个 shot 的台词要语义独立, 否则模型会把相邻两句连读成一段(B3)"
+  - "想要真硬切必须后期剪辑拼接, 生成层做不到(见 patterns/beat_pose_swap 的实测结论)"
+rights: {source: internal_experiment}

@@ -16,5 +16,7 @@ usage:
   product_categories: [服装, 美妆, 任何可做海报视觉的商品]
   scene_tags: [poster_studio, fast_cut_opening, beat_sync]
   mood: [energetic, hype]
-  when_to_use: 需要强卡点开场hook、hook人物图可当海报主视觉时——把此片段作animate驱动, 人物即随拍点换姿势
+  when_to_use: 需要强卡点开场hook、hook人物图可当海报主视觉时——把此片段作animate驱动,
+    人物即随拍点换姿势。注意(2026-08-16 实测)：animate 会抹平原片硬切(驱动 Δ108 → 生成
+    Δ19), 输出是"平滑换姿势"而非"卡点硬切"; 要硬切感需后期按拍点重新剪
 rights: {source: user_upload, note: 内部实验用}
