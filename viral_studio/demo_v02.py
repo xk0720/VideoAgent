@@ -110,7 +110,11 @@ def build_prompt(talk: dict) -> str:
             "AUDIO: her speaking voice ONLY — a clean dry studio voice "
             "recording. No background music, no soundtrack, no instrumental, "
             "no ambient noise, no sound effects. "
-            "No subtitles, no text overlays, no extra people.")
+            "SUBTITLES: burn in her spoken Chinese line as a caption at the "
+            "bottom of the frame, white bold sans-serif text with a thin dark "
+            "outline, one line at a time, changing with each shot, matching "
+            "exactly what she is saying. No other text or graphics, no extra "
+            "people.")
     return " ".join([head, *body, tail])
 
 
