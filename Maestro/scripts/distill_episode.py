@@ -45,8 +45,8 @@ def main() -> int:
                               final_video=str(final if final.exists()
                                               else ""))
     print(f"episode {rec.episode_id}: outcome={rec.outcome} "
-          f"shots={rec.n_shots} replay={len(rec.replay)} "
-          f"avoid={len(rec.avoid)} plans={len(rec.shot_plans)}")
+          f"shots={rec.n_shots} steps={len(rec.trajectory)} "
+          f"registry={len(rec.header.get('reference_registry', {}))}")
     if args.out:
         outp = Path(args.out)
         outp.parent.mkdir(parents=True, exist_ok=True)

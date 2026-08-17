@@ -298,468 +298,416 @@
   "outcome": "ungraded",
   "n_shots": 8,
   "final_video": "outputs/movie_20260811_022309/movie.mp4",
-  "replay": [
-    {
-      "label": "scene 1 shot 1",
-      "description": "镜头1：清晨六点，空旷老街转角的面包店临街立面沉在蓝灰晨色中，玻璃窗后的暖黄灯次第亮起，照亮木架与柜台。",
-      "image_plan": "single_reference",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 2",
-      "description": "镜头2：室内侧面中景，<面包师>面向木架，把刚出炉的面包逐个摆上木架。音效:烤箱开门声、面包纸袋窸窣声。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 3",
-      "description": "镜头3：从柜台后望向入口，玻璃门被推开，<小女孩>走到柜台前踮着脚趴住边沿，低头数着手心里的硬币；<面包师>在右后方转身看她。音效:门铃声、硬币碰撞声。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 4",
-      "description": "镜头4：柜台前紧贴面部的近景，<小女孩>仍踮着脚，双手捧着五块钱硬币，抬眼望向画面右侧的<面包师>，小声询问。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 5",
-      "description": "镜头5：反打中近景，<面包师>朝画面左侧的<小女孩>温柔地笑，把一整个菠萝包装进纸袋，又多放了一个牛角包，递向柜台前方。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 6",
-      "description": "镜头6：柜台侧面双人中景，<小女孩>接过<面包师>递来的纸袋，眼睛亮起来，随即把纸袋抱在胸前，认真地鞠了一躬。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 7",
-      "description": "镜头7：从柜台后望向入口，<小女孩>从鞠躬中直起身，抱紧纸袋转身跑出玻璃门；<面包师>留在柜台旁目送，门铃又是一声叮响。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    },
-    {
-      "label": "scene 1 shot 8",
-      "description": "镜头8：<面包师>望着窗外晨光里奔跑的<小女孩>小小背影，随后转回木架继续摆面包；晨光透过玻璃，烤炉的热气袅袅上升。音效:街道晨间鸟鸣声。",
-      "image_plan": "none",
-      "keyframe_strategy": "none",
-      "condition_strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "converged": null,
-      "final_score": null
-    }
-  ],
-  "avoid": [],
-  "repair_tool_stats": {},
-  "screenplay_digest": {
-    "user_prompt": "晨光面包店",
+  "header": {
+    "task": "晨光面包店",
     "cast": {
       "面包师": "static: young woman, slim build, warm oval face, light skin, dark brown eyes, black hair in a low bun, beige apron over a rust-red long-sleeved shirt and dark brown trousers; dynamic: gentle smile, arranging bread, holding a paper bag",
       "小女孩": "static: petite schoolgirl, round face, light skin, dark brown eyes, straight black bob with blunt bangs, navy school uniform with a white collar, red neck ribbon, and yellow backpack; dynamic: tiptoeing, counting coins, holding a paper bag, bright-eyed expression, bowing, running"
     },
     "setting": "老街转角的面包店内设木质柜台、玻璃门窗、陈列面包的木架与烤炉，暖黄灯光和清晨阳光交融，烤炉热气轻轻升腾。",
-    "n_scenes": 1,
-    "bgs": {
-      "bg_1": [
-        0
-      ],
-      "bg_2": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-      ]
-    },
-    "music_scenes": [
-      1
-    ]
-  },
-  "asset_build": {
-    "portraits": {
-      "面包师": "given_or_t2i",
-      "小女孩": "given_or_t2i"
-    },
-    "backgrounds": {
-      "bg_1": "t2i",
-      "bg_2": "t2i"
-    },
-    "spaces": {
-      "bg_1": {
-        "views": [
-          {
-            "view": "master",
-            "src": "t2i"
-          },
-          {
-            "view": "right_90",
-            "src": "derived"
-          },
-          {
-            "view": "left_90",
-            "src": "derived"
-          },
-          {
-            "view": "new_0",
-            "src": "frame"
-          }
+    "scene_layout": {
+      "n_scenes": 1,
+      "bgs": {
+        "bg_1": [
+          0
         ],
-        "n_frame_views": 1
+        "bg_2": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      }
+    },
+    "reference_registry": {
+      "portrait:面包师": {
+        "kind": "portrait",
+        "desc": "static: young woman, slim build, warm oval face, light skin, dark brown eyes, black hair in a low bun, beige apron over a rust-red long-sleeved shirt and dark brown trousers; dynamic: gentle smile, arranging bread, holding a paper bag"
       },
-      "bg_2": {
-        "views": [
-          {
-            "view": "master",
-            "src": "t2i"
-          },
-          {
-            "view": "right_90",
-            "src": "derived"
-          },
-          {
-            "view": "left_90",
-            "src": "derived"
-          },
-          {
-            "view": "new_0",
-            "src": "frame"
-          },
-          {
-            "view": "new_1",
-            "src": "frame"
-          },
-          {
-            "view": "new_2",
-            "src": "frame"
-          },
-          {
-            "view": "new_3",
-            "src": "frame"
-          },
-          {
-            "view": "new_4",
-            "src": "frame"
-          },
-          {
-            "view": "new_5",
-            "src": "frame"
-          },
-          {
-            "view": "new_6",
-            "src": "frame"
-          }
-        ],
-        "n_frame_views": 7
+      "portrait:小女孩": {
+        "kind": "portrait",
+        "desc": "static: petite schoolgirl, round face, light skin, dark brown eyes, straight black bob with blunt bangs, navy school uniform with a white collar, red neck ribbon, and yellow backpack; dynamic: tiptoeing, counting coins, holding a paper bag, bright-eyed expression, bowing, running"
+      },
+      "bg_plate:bg_1": {
+        "kind": "bg_plate",
+        "src": "t2i"
+      },
+      "bg_plate:bg_2": {
+        "kind": "bg_plate",
+        "src": "t2i"
+      },
+      "space_view:bg_1/master": {
+        "kind": "space_view",
+        "src": "t2i",
+        "caption": "Weathered concrete corner building facade (center/far), double wooden glass-paned entrance door (center/near), two large glass display windows with yellow grid transoms (left-center and right-center/near), interior wooden display counters and shelves (left-center and right-center/near), glowing yellow spherical pendant lamps (left-center, center, and right-center/near), two black wall-mounted lant"
+      },
+      "space_view:bg_1/right_90": {
+        "kind": "space_view",
+        "src": "derived",
+        "caption": "Weathered corner building facade (center to right, far), double wooden glass door (center, near), two large illuminated display windows with interior shelving (left-center and right-center, near), vertical illuminated street sign (left, far), two wall-mounted lanterns (center, near), upper-floor windows with metal grates (center and right, far), white utility box on the sidewalk (right, near), and"
+      },
+      "space_view:bg_1/left_90": {
+        "kind": "space_view",
+        "src": "derived",
+        "caption": "Vertical glowing sign (left, mid-ground), utility pole with signs (left, far), distant white building (left, far), weathered stone building walls (center to right, near), barred side windows (center-left, mid-ground), large bakery display windows with interior shelves (center and right, near), double wooden glass doors (center-right, near), and upper-floor windows with metal grates (top-right, mid"
+      },
+      "space_view:bg_1/new_0": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "Weathered building corner (center, near), double glass-paneled wooden door (center, near), two large glowing display windows with grid transoms (left-center and right-center, near), interior wooden display counters and shelves (left-center and right-center, near), hanging spherical pendant lights (left-center and right-center, near), two vertical wall-mounted lantern fixtures (center, near), upper"
+      },
+      "space_view:bg_2/master": {
+        "kind": "space_view",
+        "src": "t2i",
+        "caption": "Exposed wooden beam ceiling (top, near to far), plaster walls (left/center/right, far), a double glass-paned wooden door (left, near), a multi-pane wooden window (left, midground), a long wooden counter with cabinets (center, midground stretching left to right), wooden wall shelves (center and right, far), and a large stainless steel oven with exhaust hood (right, midground)."
+      },
+      "space_view:bg_2/right_90": {
+        "kind": "space_view",
+        "src": "derived",
+        "caption": "An arched window sits on the far left; a long wooden counter with cabinets and wall-mounted bread shelves spans the far center-left; wooden ceiling beams and hanging pendant lights are overhead from center to left; a large stainless steel range hood and oven unit are on the mid-right; a stainless steel prep table is on the near right; and a brass bell is mounted on the wall on the far right."
+      },
+      "space_view:bg_2/left_90": {
+        "kind": "space_view",
+        "src": "derived",
+        "caption": "Wooden beamed ceiling (left to center, near to far), plaster walls (left and center, near to far), large multi-pane window (bottom-left, near), smaller multi-pane window (center, far), wooden counter (right, near to far), wooden shelving unit (center-right, far), pendant light fixtures (center, near to far), and tiled floor (bottom-right, near to far)."
+      },
+      "space_view:bg_2/new_0": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "A long wooden counter runs across the foreground (near, left to right), backed by wooden shelving units lining the wall (far, left to right), multiple hanging pendant lights suspended from the ceiling (midground, left to right), and an oven appliance positioned on the counter (near right)."
+      },
+      "space_view:bg_2/new_1": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "Foreground wooden counter (near, left-to-right), left wall with double glass door (far left), back wall with window (far left-center), long wooden service counter with cabinets (far center), wooden wall shelves (far center-left and far center-right), central doorway (far center), large metal oven with exhaust hood (far right), and beamed wooden ceiling with pendant lights (far top, left-to-right)."
+      },
+      "space_view:bg_2/new_2": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "Window (left, far), wooden counter (foreground, near), wall-mounted wooden shelves (left, center, and right, far), black base cabinets with countertops (left, center, and right, far), and a framed doorway opening (center, far)."
+      },
+      "space_view:bg_2/new_3": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "Wooden shelving unit (far left to center), wooden counter (near center to right), oven (near right), multi-pane window (far right), and pendant lights (top left to top center)."
+      },
+      "space_view:bg_2/new_4": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "Wooden counter (near, left-to-right), wooden ceiling beams (top, near-to-far), glass-paned doors and windows (far left), central wooden island counter (far center), wall-mounted wooden shelves (far center), hanging pendant lights (far center-right), stainless steel oven with hood (far right), and kitchen counter cabinets (far right)."
+      },
+      "space_view:bg_2/new_5": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "A wooden counter spans the foreground (near, left to right); an open doorway and windows line the left wall (far left); a wooden island counter sits in the center (far center) beneath five hanging pendant lights (mid-ground, center); wooden shelves and a back counter line the rear wall (far background, center); and a large metal oven with a hood stands on the right (far right)."
+      },
+      "space_view:bg_2/new_6": {
+        "kind": "space_view",
+        "src": "frame",
+        "caption": "A wooden counter spans the foreground (left to right, near), backed by large multi-pane windows (center to right, far), a row of hanging pendant lights (top left to center, near), a microwave oven on the counter (center, midground), a wooden shelving unit (far left, far), and a wooden stool (bottom left, near)."
+      },
+      "derived_junction_frame": {
+        "kind": "derived_frame",
+        "desc": "过渡视频切点后的首帧(由上镜末帧+肖像+空间视图派生);机器承接句把它钉为本镜开场画面"
+      },
+      "prev_shot_tail_frame": {
+        "kind": "tail_frame",
+        "desc": "上一镜真实视频的最后一帧"
+      }
+    },
+    "asset_recipe": {
+      "spaces": {
+        "bg_1": {
+          "t2i": 1,
+          "derived": 2,
+          "frame": 1
+        },
+        "bg_2": {
+          "t2i": 1,
+          "derived": 2,
+          "frame": 7
+        }
       }
     }
   },
-  "shot_plans": [
+  "trajectory": [
     {
+      "step": 1,
       "label": "scene 1 shot 1",
-      "bg_id": "bg_1",
-      "camera_facing": "从老街转角正对面包店玻璃门窗与招牌，宽景",
-      "image_plan": "single_reference",
-      "junction": {
-        "kind": null,
-        "fallback_to": null,
-        "space_view": null,
-        "stitcher_via": null
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 4,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "space_view:bg_1/master"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "other:shot000_kf1_t2i.png"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_4>>>",
-          "role": "portrait:面包师"
+      "context": {
+        "shot": "镜头1：清晨六点，空旷老街转角的面包店临街立面沉在蓝灰晨色中，玻璃窗后的暖黄灯次第亮起，照亮木架与柜台。",
+        "camera_facing": "从老街转角正对面包店玻璃门窗与招牌，宽景",
+        "bg_id": "bg_1",
+        "prev_end_state": "",
+        "junction": {
+          "kind": null,
+          "fallback_to": null,
+          "space_view": null,
+          "stitcher_via": null
         }
-      ],
-      "prompt_draft": "远景，固定摄影机：在<<<image_1>>>内，采用<<<image_2>>>的固定构图；清晨六点，空旷老街转角的面包店临街立面沉在蓝灰晨色中，门窗昏暗，老街空无一人，<<<image_3>>>与<<<image_4>>>均不入画。远景，固定摄影机：随后玻璃窗后的暖黄灯次第亮起，逐渐照亮木架与柜台；最后暖黄灯全部亮起，临街玻璃窗稳定发光，老街仍空静，摄影机保持静止。",
-      "prompt_final": "固定远景：以<<<image_1>>>为同一场景，采用<<<image_2>>>的构图，保留既定环境与光线。清晨六点，空旷老街转角的面包店立面沉在蓝灰晨色中，<<<image_3>>>与<<<image_4>>>始终不入画。玻璃窗后的暖黄灯次第亮起，照亮木架与柜台；最终灯光全部稳定亮起，老街仍空静，摄影机静止。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "single_reference",
+        "prompt": "固定远景：以<<<image_1>>>为同一场景，采用<<<image_2>>>的构图，保留既定环境与光线。清晨六点，空旷老街转角的面包店立面沉在蓝灰晨色中，<<<image_3>>>与<<<image_4>>>始终不入画。玻璃窗后的暖黄灯次第亮起，照亮木架与柜台；最终灯光全部稳定亮起，老街仍空静，摄影机静止。",
+        "prompt_draft": "远景，固定摄影机：在<<<image_1>>>内，采用<<<image_2>>>的固定构图；清晨六点，空旷老街转角的面包店临街立面沉在蓝灰晨色中，门窗昏暗，老街空无一人，<<<image_3>>>与<<<image_4>>>均不入画。远景，固定摄影机：随后玻璃窗后的暖黄灯次第亮起，逐渐照亮木架与柜台；最后暖黄灯全部亮起，临街玻璃窗稳定发光，老街仍空静，摄影机保持静止。",
+        "refs": {
+          "image_1": "space_view:bg_1/master",
+          "image_2": "other:shot000_kf1_t2i.png",
+          "image_3": "portrait:小女孩",
+          "image_4": "portrait:面包师"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 2,
       "label": "scene 1 shot 2",
-      "bg_id": "bg_2",
-      "camera_facing": "从柜台侧面朝向木质面包架与后方烤炉，中景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "derive",
-        "fallback_to": null,
-        "space_view": null,
-        "stitcher_via": "agent"
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 2,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "portrait:面包师"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "derived_junction_frame(切后首帧,机器承接句指它)"
+      "context": {
+        "shot": "镜头2：室内侧面中景，<面包师>面向木架，把刚出炉的面包逐个摆上木架。音效:烤箱开门声、面包纸袋窸窣声。",
+        "camera_facing": "从柜台侧面朝向木质面包架与后方烤炉，中景",
+        "bg_id": "bg_2",
+        "prev_end_state": "面包店暖黄灯全部亮起，临街玻璃窗稳定发光，老街仍空静，摄影机静止。",
+        "junction": {
+          "kind": "derive",
+          "fallback_to": null,
+          "space_view": null,
+          "stitcher_via": "agent"
         }
-      ],
-      "prompt_draft": "室内侧面中景，摄影机静止：起初<<<image_1>>>面向木架，把刚出炉的面包逐个摆上木架。烤箱开门声响起，伴随面包纸袋窸窣声；周围环境保持稳定。室内侧面中景，摄影机静止：随后<<<image_1>>>停在木架右侧，双手刚放稳最后一个面包，面向整齐陈列并静止。音效渐止，摄影机始终静止。",
-      "prompt_final": "画面从<<<image_2>>>所示的首帧继续。室内侧面中景，摄影机静止。<<<image_1>>>面向木架，将刚出炉的面包逐个摆上木架；烤箱开门声响起，面包纸袋窸窣作响。保持既有场景与光线稳定。最后停在木架右侧，双手刚放稳最后一个面包，面向整齐陈列静止，摄影机保持静止。音频:只有剧本写明的环境声(烤箱开门声、面包纸袋窸窣声)——无背景音乐、无人声。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "画面从<<<image_2>>>所示的首帧继续。室内侧面中景，摄影机静止。<<<image_1>>>面向木架，将刚出炉的面包逐个摆上木架；烤箱开门声响起，面包纸袋窸窣作响。保持既有场景与光线稳定。最后停在木架右侧，双手刚放稳最后一个面包，面向整齐陈列静止，摄影机保持静止。音频:只有剧本写明的环境声(烤箱开门声、面包纸袋窸窣声)——无背景音乐、无人声。",
+        "prompt_draft": "室内侧面中景，摄影机静止：起初<<<image_1>>>面向木架，把刚出炉的面包逐个摆上木架。烤箱开门声响起，伴随面包纸袋窸窣声；周围环境保持稳定。室内侧面中景，摄影机静止：随后<<<image_1>>>停在木架右侧，双手刚放稳最后一个面包，面向整齐陈列并静止。音效渐止，摄影机始终静止。",
+        "refs": {
+          "image_1": "portrait:面包师",
+          "image_2": "derived_junction_frame"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 3,
       "label": "scene 1 shot 3",
-      "bg_id": "bg_2",
-      "camera_facing": "从柜台后朝向玻璃入口、门铃和临街窗户，宽景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "cut",
-        "fallback_to": "cut",
-        "space_view": "master",
-        "stitcher_via": null
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 3,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "space_view:bg_2/master"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "portrait:面包师"
+      "context": {
+        "shot": "镜头3：从柜台后望向入口，玻璃门被推开，<小女孩>走到柜台前踮着脚趴住边沿，低头数着手心里的硬币；<面包师>在右后方转身看她。音效:门铃声、硬币碰撞声。",
+        "camera_facing": "从柜台后朝向玻璃入口、门铃和临街窗户，宽景",
+        "bg_id": "bg_2",
+        "prev_end_state": "<面包师>停在木架右侧，双手刚放稳最后一个面包，面向整齐陈列，摄影机静止。",
+        "junction": {
+          "kind": "cut",
+          "fallback_to": "cut",
+          "space_view": "space_view:bg_2/master",
+          "stitcher_via": null
         }
-      ],
-      "prompt_draft": "全景，固定摄影机，从柜台后望向入口：在<<<image_1>>>内，起初玻璃门被推开，门铃声响起。<<<image_2>>>从入口走到柜台前。摄影机保持静止。全景，固定摄影机：随后<<<image_2>>>踮着脚趴住柜台边沿，低头数着手心里的硬币。硬币相互碰撞发出声响。摄影机保持静止。全景，固定摄影机：<<<image_3>>>在右后方转身看向<<<image_2>>>。玻璃门停稳，摄影机保持静止。最后，全景，固定摄影机：<<<image_2>>>踮脚停在柜台左前方，硬币摊在手心；<<<image_3>>>静立右后方望着<<<image_2>>>。所有动作停稳，摄影机静止。",
-      "prompt_final": "全景，固定摄影机从柜台后望向入口，保持<<<image_1>>>的既定空间与光线。玻璃门被推开，门铃响起；<<<image_2>>>从入口走到柜台左前方，踮脚趴住边沿，低头数着摊在手心的硬币，硬币碰撞作响。随后，右后方的<<<image_3>>>转身望向柜台前并静立。结尾动作停稳，摄影机静止。音频:只有剧本写明的环境声(门铃声、硬币碰撞声)——无背景音乐、无人声。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "全景，固定摄影机从柜台后望向入口，保持<<<image_1>>>的既定空间与光线。玻璃门被推开，门铃响起；<<<image_2>>>从入口走到柜台左前方，踮脚趴住边沿，低头数着摊在手心的硬币，硬币碰撞作响。随后，右后方的<<<image_3>>>转身望向柜台前并静立。结尾动作停稳，摄影机静止。音频:只有剧本写明的环境声(门铃声、硬币碰撞声)——无背景音乐、无人声。",
+        "prompt_draft": "全景，固定摄影机，从柜台后望向入口：在<<<image_1>>>内，起初玻璃门被推开，门铃声响起。<<<image_2>>>从入口走到柜台前。摄影机保持静止。全景，固定摄影机：随后<<<image_2>>>踮着脚趴住柜台边沿，低头数着手心里的硬币。硬币相互碰撞发出声响。摄影机保持静止。全景，固定摄影机：<<<image_3>>>在右后方转身看向<<<image_2>>>。玻璃门停稳，摄影机保持静止。最后，全景，固定摄影机：<<<image_2>>>踮脚停在柜台左前方，硬币摊在手心；<<<image_3>>>静立右后方望着<<<image_2>>>。所有动作停稳，摄影机静止。",
+        "refs": {
+          "image_1": "space_view:bg_2/master",
+          "image_2": "portrait:小女孩",
+          "image_3": "portrait:面包师"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 4,
       "label": "scene 1 shot 4",
-      "bg_id": "bg_2",
-      "camera_facing": "从柜台内侧正对小女孩与柜台边沿，面部近景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "cut",
-        "fallback_to": "cut",
-        "space_view": "new_1",
-        "stitcher_via": null
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 3,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "space_view:bg_2/master"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "portrait:面包师"
+      "context": {
+        "shot": "镜头4：柜台前紧贴面部的近景，<小女孩>仍踮着脚，双手捧着五块钱硬币，抬眼望向画面右侧的<面包师>，小声询问。",
+        "camera_facing": "从柜台内侧正对小女孩与柜台边沿，面部近景",
+        "bg_id": "bg_2",
+        "prev_end_state": "<小女孩>踮脚停在柜台左前方，硬币摊在手心；<面包师>静立右后方望着她，摄影机静止。",
+        "junction": {
+          "kind": "cut",
+          "fallback_to": "cut",
+          "space_view": "space_view:bg_2/new_1",
+          "stitcher_via": null
         }
-      ],
-      "prompt_draft": "紧贴面部的近景，静止摄影机：在<<<image_1>>>内，起初<<<image_2>>>在柜台前踮着脚，双手捧着五块钱硬币，抬眼望向画面右侧的<<<image_3>>>。店内背景无显著运动。摄影机保持静止。紧贴面部的近景，静止摄影机：随后<<<image_2>>>面部清晰可见，小声询问：“姐姐,我只有五块钱,可以买半个菠萝包吗?”最后<<<image_2>>>仍在柜台前踮脚，硬币合在掌心，期待地望向画面右侧的<<<image_3>>>。店内背景保持安静。摄影机保持静止。",
-      "prompt_final": "<<<image_1>>>中保留既定店内空间与暖光。紧贴面部的近景，摄影机静止；柜台前，<<<image_2>>>踮着脚，双手捧着五块钱硬币，面部清晰入镜，抬眼望向静立在画面右侧的<<<image_3>>>，小声询问：“姐姐,我只有五块钱,可以买半个菠萝包吗?”结尾硬币合在掌心，目光期待，摄影机保持静止。 音频:角色说这句台词的人声与剧本写明的环境声(小声)——无背景音乐、无其他音效。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "<<<image_1>>>中保留既定店内空间与暖光。紧贴面部的近景，摄影机静止；柜台前，<<<image_2>>>踮着脚，双手捧着五块钱硬币，面部清晰入镜，抬眼望向静立在画面右侧的<<<image_3>>>，小声询问：“姐姐,我只有五块钱,可以买半个菠萝包吗?”结尾硬币合在掌心，目光期待，摄影机保持静止。 音频:角色说这句台词的人声与剧本写明的环境声(小声)——无背景音乐、无其他音效。",
+        "prompt_draft": "紧贴面部的近景，静止摄影机：在<<<image_1>>>内，起初<<<image_2>>>在柜台前踮着脚，双手捧着五块钱硬币，抬眼望向画面右侧的<<<image_3>>>。店内背景无显著运动。摄影机保持静止。紧贴面部的近景，静止摄影机：随后<<<image_2>>>面部清晰可见，小声询问：“姐姐,我只有五块钱,可以买半个菠萝包吗?”最后<<<image_2>>>仍在柜台前踮脚，硬币合在掌心，期待地望向画面右侧的<<<image_3>>>。店内背景保持安静。摄影机保持静止。",
+        "refs": {
+          "image_1": "space_view:bg_2/master",
+          "image_2": "portrait:小女孩",
+          "image_3": "portrait:面包师"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 5,
       "label": "scene 1 shot 5",
-      "bg_id": "bg_2",
-      "camera_facing": "从入口一侧反向朝柜台、木架和烤炉，中近景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "derive",
-        "fallback_to": null,
-        "space_view": "new_0",
-        "stitcher_via": "agent"
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 3,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "portrait:面包师"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "derived_junction_frame(切后首帧,机器承接句指它)"
+      "context": {
+        "shot": "镜头5：反打中近景，<面包师>朝画面左侧的<小女孩>温柔地笑，把一整个菠萝包装进纸袋，又多放了一个牛角包，递向柜台前方。",
+        "camera_facing": "从入口一侧反向朝柜台、木架和烤炉，中近景",
+        "bg_id": "bg_2",
+        "prev_end_state": "<小女孩>仍在柜台前踮脚，硬币合在掌心，期待地望向画面右侧的<面包师>，摄影机静止。",
+        "junction": {
+          "kind": "derive",
+          "fallback_to": null,
+          "space_view": "space_view:bg_2/new_0",
+          "stitcher_via": "agent"
         }
-      ],
-      "prompt_draft": "反打中近景，摄影机静止：首先，<<<image_2>>>朝画面左侧、在左前景等待的<<<image_1>>>温柔地笑，面部清晰可见；<<<image_2>>>说：“今天开业酬宾,买一送一。”环境保持安静稳定，摄影机保持静止。中近景，摄影机静止：然后，<<<image_2>>>把一整个菠萝包装进纸袋，又多放了一个牛角包。周围没有其他动作干扰，摄影机保持静止。中近景，摄影机静止：最后，<<<image_2>>>微笑着把装有菠萝包和牛角包的纸袋递向柜台前方，伸到柜台中央；<<<image_1>>>在左前景等待。环境保持稳定，摄影机静止，双方停在这一状态。",
-      "prompt_final": "画面从<<<image_3>>>所示的首帧继续。反打中近景，摄影机静止。<<<image_2>>>朝画面左侧左前景等待的<<<image_1>>>温柔微笑，面部清晰入镜后，<<<image_2>>>说道：“今天开业酬宾,买一送一。”随后把一整个菠萝包装进纸袋，又多放一个牛角包，最后微笑着将纸袋伸至柜台中央。保持既有场景与光线，画面安静稳定。 音频:只有角色说这句台词的人声——无背景音乐、无音效。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "画面从<<<image_3>>>所示的首帧继续。反打中近景，摄影机静止。<<<image_2>>>朝画面左侧左前景等待的<<<image_1>>>温柔微笑，面部清晰入镜后，<<<image_2>>>说道：“今天开业酬宾,买一送一。”随后把一整个菠萝包装进纸袋，又多放一个牛角包，最后微笑着将纸袋伸至柜台中央。保持既有场景与光线，画面安静稳定。 音频:只有角色说这句台词的人声——无背景音乐、无音效。",
+        "prompt_draft": "反打中近景，摄影机静止：首先，<<<image_2>>>朝画面左侧、在左前景等待的<<<image_1>>>温柔地笑，面部清晰可见；<<<image_2>>>说：“今天开业酬宾,买一送一。”环境保持安静稳定，摄影机保持静止。中近景，摄影机静止：然后，<<<image_2>>>把一整个菠萝包装进纸袋，又多放了一个牛角包。周围没有其他动作干扰，摄影机保持静止。中近景，摄影机静止：最后，<<<image_2>>>微笑着把装有菠萝包和牛角包的纸袋递向柜台前方，伸到柜台中央；<<<image_1>>>在左前景等待。环境保持稳定，摄影机静止，双方停在这一状态。",
+        "refs": {
+          "image_1": "portrait:小女孩",
+          "image_2": "portrait:面包师",
+          "image_3": "derived_junction_frame"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 6,
       "label": "scene 1 shot 6",
-      "bg_id": "bg_2",
-      "camera_facing": "从柜台侧面朝向两人、面包陈列架与玻璃门，中景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "derive",
-        "fallback_to": null,
-        "space_view": "new_1",
-        "stitcher_via": "agent"
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 3,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "portrait:面包师"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "derived_junction_frame(切后首帧,机器承接句指它)"
+      "context": {
+        "shot": "镜头6：柜台侧面双人中景，<小女孩>接过<面包师>递来的纸袋，眼睛亮起来，随即把纸袋抱在胸前，认真地鞠了一躬。",
+        "camera_facing": "从柜台侧面朝向两人、面包陈列架与玻璃门，中景",
+        "bg_id": "bg_2",
+        "prev_end_state": "<面包师>微笑着把装有菠萝包和牛角包的纸袋伸到柜台中央，<小女孩>在左前景等待，摄影机静止。",
+        "junction": {
+          "kind": "derive",
+          "fallback_to": null,
+          "space_view": "space_view:bg_2/new_1",
+          "stitcher_via": "agent"
         }
-      ],
-      "prompt_draft": "柜台侧面双人中景，静止摄影机：起初，柜台左侧的<<<image_1>>>接过柜台右侧的<<<image_2>>>递来的纸袋，眼睛亮起来。环境保持稳定，没有其他显著运动；摄影机保持静止。柜台侧面双人中景，静止摄影机：随即，<<<image_1>>>把纸袋抱在胸前，认真地鞠了一躬；<<<image_2>>>收回双手微笑。最后，<<<image_1>>>抱着纸袋在柜台左侧鞠躬后静止，<<<image_2>>>在右侧保持微笑；环境没有显著运动，摄影机静止。",
-      "prompt_final": "画面从<<<image_3>>>所示的首帧继续。保持既有场景与光线。柜台侧面双人中景，摄影机静止：<<<image_2>>>在右侧递出纸袋，待纸袋被接过后收回双手，微笑静止；<<<image_1>>>在左侧接过纸袋，眼睛亮起来，随即把纸袋抱在胸前，认真地鞠躬并保持静止。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "画面从<<<image_3>>>所示的首帧继续。保持既有场景与光线。柜台侧面双人中景，摄影机静止：<<<image_2>>>在右侧递出纸袋，待纸袋被接过后收回双手，微笑静止；<<<image_1>>>在左侧接过纸袋，眼睛亮起来，随即把纸袋抱在胸前，认真地鞠躬并保持静止。",
+        "prompt_draft": "柜台侧面双人中景，静止摄影机：起初，柜台左侧的<<<image_1>>>接过柜台右侧的<<<image_2>>>递来的纸袋，眼睛亮起来。环境保持稳定，没有其他显著运动；摄影机保持静止。柜台侧面双人中景，静止摄影机：随即，<<<image_1>>>把纸袋抱在胸前，认真地鞠了一躬；<<<image_2>>>收回双手微笑。最后，<<<image_1>>>抱着纸袋在柜台左侧鞠躬后静止，<<<image_2>>>在右侧保持微笑；环境没有显著运动，摄影机静止。",
+        "refs": {
+          "image_1": "portrait:小女孩",
+          "image_2": "portrait:面包师",
+          "image_3": "derived_junction_frame"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 7,
       "label": "scene 1 shot 7",
-      "bg_id": "bg_2",
-      "camera_facing": "从柜台后朝向玻璃入口、门铃和外侧街道，宽景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "derive",
-        "fallback_to": null,
-        "space_view": "new_4",
-        "stitcher_via": "agent"
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 3,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "portrait:面包师"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "derived_junction_frame(切后首帧,机器承接句指它)"
+      "context": {
+        "shot": "镜头7：从柜台后望向入口，<小女孩>从鞠躬中直起身，抱紧纸袋转身跑出玻璃门；<面包师>留在柜台旁目送，门铃又是一声叮响。",
+        "camera_facing": "从柜台后朝向玻璃入口、门铃和外侧街道，宽景",
+        "bg_id": "bg_2",
+        "prev_end_state": "<小女孩>抱着纸袋在柜台左侧鞠躬后静止，<面包师>在右侧收回双手微笑，摄影机静止。",
+        "junction": {
+          "kind": "derive",
+          "fallback_to": null,
+          "space_view": "space_view:bg_2/new_4",
+          "stitcher_via": "agent"
         }
-      ],
-      "prompt_draft": "全景，摄影机静止，从柜台后望向入口：起初<<<image_1>>>从鞠躬中直起身，抱紧纸袋；<<<image_2>>>留在柜台旁目送。背景物件保持静止。摄影机保持静止。全景，摄影机静止：随后<<<image_1>>>抱紧纸袋转身跑向入口，跑出玻璃门。门铃又是一声叮响，其他背景动作保持微弱。摄影机保持静止。大全景，摄影机静止：最后<<<image_1>>>已跑到门外晨光中并向街道右侧远去；<<<image_2>>>静立柜台右侧望向门外。门外晨光保持稳定。摄影机静止直至镜头结束。",
-      "prompt_final": "画面从<<<image_3>>>所示的首帧继续。全景，摄影机静止，从柜台后望向入口，保留既定场景与光线。<<<image_1>>>从鞠躬中直起身，抱紧纸袋，随即转身跑向入口、穿过玻璃门，门铃又叮响一声，最后进入门外晨光并向街道右侧远去；<<<image_2>>>始终留在柜台右侧目送门外，最终静立不动。摄影机保持静止直至切镜。音频:只有剧本写明的环境声(门铃又是一声)——无背景音乐、无人声。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "画面从<<<image_3>>>所示的首帧继续。全景，摄影机静止，从柜台后望向入口，保留既定场景与光线。<<<image_1>>>从鞠躬中直起身，抱紧纸袋，随即转身跑向入口、穿过玻璃门，门铃又叮响一声，最后进入门外晨光并向街道右侧远去；<<<image_2>>>始终留在柜台右侧目送门外，最终静立不动。摄影机保持静止直至切镜。音频:只有剧本写明的环境声(门铃又是一声)——无背景音乐、无人声。",
+        "prompt_draft": "全景，摄影机静止，从柜台后望向入口：起初<<<image_1>>>从鞠躬中直起身，抱紧纸袋；<<<image_2>>>留在柜台旁目送。背景物件保持静止。摄影机保持静止。全景，摄影机静止：随后<<<image_1>>>抱紧纸袋转身跑向入口，跑出玻璃门。门铃又是一声叮响，其他背景动作保持微弱。摄影机保持静止。大全景，摄影机静止：最后<<<image_1>>>已跑到门外晨光中并向街道右侧远去；<<<image_2>>>静立柜台右侧望向门外。门外晨光保持稳定。摄影机静止直至镜头结束。",
+        "refs": {
+          "image_1": "portrait:小女孩",
+          "image_2": "portrait:面包师",
+          "image_3": "derived_junction_frame"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     },
     {
+      "step": 8,
       "label": "scene 1 shot 8",
-      "bg_id": "bg_2",
-      "camera_facing": "从柜台侧面朝向木质面包架、烤炉及临街玻璃窗，中景",
-      "image_plan": "none",
-      "junction": {
-        "kind": "derive",
-        "fallback_to": null,
-        "space_view": "new_3",
-        "stitcher_via": "agent"
-      },
-      "strategy": "ref2v",
-      "decided_strategy": "ref2v",
-      "degraded_from": null,
-      "n_references": 3,
-      "references": [
-        {
-          "slot": "<<<image_1>>>",
-          "role": "portrait:小女孩"
-        },
-        {
-          "slot": "<<<image_2>>>",
-          "role": "portrait:面包师"
-        },
-        {
-          "slot": "<<<image_3>>>",
-          "role": "derived_junction_frame(切后首帧,机器承接句指它)"
+      "context": {
+        "shot": "镜头8：<面包师>望着窗外晨光里奔跑的<小女孩>小小背影，随后转回木架继续摆面包；晨光透过玻璃，烤炉的热气袅袅上升。音效:街道晨间鸟鸣声。",
+        "camera_facing": "从柜台侧面朝向木质面包架、烤炉及临街玻璃窗，中景",
+        "bg_id": "bg_2",
+        "prev_end_state": "<小女孩>已跑到门外晨光中并向街道右侧远去，<面包师>静立柜台右侧望向门外，摄影机静止。",
+        "junction": {
+          "kind": "derive",
+          "fallback_to": null,
+          "space_view": "space_view:bg_2/new_3",
+          "stitcher_via": "agent"
         }
-      ],
-      "prompt_draft": "中景，固定机位：起初<<<image_2>>>望着窗外晨光里奔跑的<<<image_1>>>小小背影，<<<image_1>>>沿街道跑远，消失在街道尽头。晨光透过玻璃，烤炉的热气轻轻袅袅上升。摄影机保持静止。中景，固定机位：随后<<<image_2>>>转回木架继续摆面包，最终在木架前放稳一个面包并停下。晨光与烤炉热气环绕着她，街道上传来晨间鸟鸣声。摄影机始终静止。",
-      "prompt_final": "画面从<<<image_3>>>所示的首帧继续。保留既有场景与光线。中景固定机位，<<<image_2>>>望着窗外晨光中沿街跑远的<<<image_1>>>小小背影，直至消失在街道尽头，随后转回木架继续摆放面包，最终放稳一个面包并停下。晨光透过玻璃，烤炉热气袅袅上升，街道传来晨间鸟鸣。摄影机始终静止。音频:只有剧本写明的环境声(街道晨间鸟鸣声)——无背景音乐、无人声。",
-      "score": null
+      },
+      "action": {
+        "strategy": "ref2v",
+        "decided_strategy": "ref2v",
+        "degraded_from": null,
+        "image_plan": "none",
+        "prompt": "画面从<<<image_3>>>所示的首帧继续。保留既有场景与光线。中景固定机位，<<<image_2>>>望着窗外晨光中沿街跑远的<<<image_1>>>小小背影，直至消失在街道尽头，随后转回木架继续摆放面包，最终放稳一个面包并停下。晨光透过玻璃，烤炉热气袅袅上升，街道传来晨间鸟鸣。摄影机始终静止。音频:只有剧本写明的环境声(街道晨间鸟鸣声)——无背景音乐、无人声。",
+        "prompt_draft": "中景，固定机位：起初<<<image_2>>>望着窗外晨光里奔跑的<<<image_1>>>小小背影，<<<image_1>>>沿街道跑远，消失在街道尽头。晨光透过玻璃，烤炉的热气轻轻袅袅上升。摄影机保持静止。中景，固定机位：随后<<<image_2>>>转回木架继续摆面包，最终在木架前放稳一个面包并停下。晨光与烤炉热气环绕着她，街道上传来晨间鸟鸣声。摄影机始终静止。",
+        "refs": {
+          "image_1": "portrait:小女孩",
+          "image_2": "portrait:面包师",
+          "image_3": "derived_junction_frame"
+        }
+      },
+      "feedback": {
+        "vlm_headline": null,
+        "score": null,
+        "converged": null
+      }
     }
   ],
-  "created_at": 1786966154.671904,
+  "repair_tool_stats": {},
+  "created_at": 1786968077.436491,
   "uses": 0
 }

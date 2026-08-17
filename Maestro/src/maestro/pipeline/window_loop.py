@@ -5226,9 +5226,10 @@ def generate_movie_windowed(
         rec = episode_memory.distill_episode(
             user_prompt, storyboard, final_video=str(final or ""))
         episode_id = rec.episode_id
-        log.info("window: episode distilled — %s (%s, %d replay rows, "
-                 "%d avoid rows)", rec.episode_id, rec.outcome,
-                 len(rec.replay), len(rec.avoid))
+        log.info("window: episode distilled — %s (%s, %d trajectory "
+                 "steps, %d registry refs)", rec.episode_id, rec.outcome,
+                 len(rec.trajectory),
+                 len(rec.header.get("reference_registry", {})))
 
     return MovieResult(final_video=final, storyboard=storyboard,
                        shot_results=shot_results, episode_id=episode_id,

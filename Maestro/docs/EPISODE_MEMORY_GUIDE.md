@@ -1,194 +1,109 @@
-# EpisodeMemory 剧本级情景记忆 · 讲解文档
+# EpisodeMemory · 技能轨迹版讲解(2026-08-13 定稿)
 
-> 配套示例:`docs/EPISODE_EXAMPLE.json`(从成功例 晨光面包店
-> `outputs/movie_20260811_022309` 离线蒸馏,8 镜 54s 成片)。
+> 配套示例:`docs/EPISODE_EXAMPLE.json`(晨光面包店
+> `outputs/movie_20260811_022309` 蒸馏,8 镜 54s 成片)。
 > 代码:`src/maestro/memory/episode_memory.py`;
-> 回填工具:`scripts/distill_episode.py`。
-
----
+> 回填工具:`scripts/distill_episode.py --run <目录> --prompt <片名>`。
 
 ## 0. 一句话定位
 
-情景记忆 = **"这类片子当年怎么排产的"的完整案卷**。一部片收工时蒸馏
-一条记录;下部相似片开工时按相似度检索,以"参谋建议"身份注入决策
-上下文 —— 参谋提供先验,现场条件永远拥有否决权。
+一部片收工 → 台账蒸馏成一条**技能轨迹**:轨迹头(全片共享上下文)
++ 步序列(一镜一步,每步 = 上下文 → 动作 → 评价)。检索时当范文、
+训练时当语料、复盘时当卷宗 —— 一份格式三个用途。
 
-## 1. 记录结构总览(七大块)
+## 1. 蒸馏取舍(存的时候就加工,用户裁决)
 
-```
-EpisodeRecord
-├── 检索头     episode_id / user_prompt / keywords / outcome
-├── replay 表  可执行摘要:每镜验收过的 (image_plan, 条件策略)
-├── avoid 表   失败模式:什么策略在什么镜砸了、评审怎么说
-├── repair_tool_stats  修复工具接受/拒绝台账
-├── screenplay_digest  剧本形状(2026-08-13 新增)
-├── asset_build        参考库构建档案(新增)
-└── shot_plans         逐镜蓝图(新增)
-```
+**留**:决策与结局 —— 每镜真正看到的上下文、选的策略、**完整 prompt
+(草稿+终稿,不截断)**、引用图例、VLM 评语与分数。
+**丢**:过程与文件 —— 路径、种子、重试流水、评审逐条、修复回合。
+**新增**(台账里没有的):检索关键词、成败判词、**引用解读表**。
 
-前四块是旧版就有的**镜级可执行层**;后三块是本次新增的**剧本级
-档案层**。两层分工:replay/avoid 给 brain 直接抄作业,档案层给
-brain(和人)看"整部片的打法"。
-
-## 2. 逐块讲解(对照示例文件)
-
-### 2.1 检索头
+## 2. 轨迹头 header(全片共享上下文)
 
 ```json
-"user_prompt": "晨光面包店",
-"keywords": ["晨光", "面包", "包店", "小女", "女孩", …],
-"outcome": "ungraded"
+"task": "晨光面包店",
+"cast": {"面包师": "static: young woman, …beige apron…; dynamic: …"},
+"setting": "老街转角的面包店内设木质柜台…",
+"scene_layout": {"n_scenes": 1, "bgs": {"bg_1": [0], "bg_2": [1,…,7]}},
+"reference_registry": { … 见 §3 … },
+"asset_recipe": {"spaces": {"bg_2": {"t2i": 1, "derived": 2, "frame": 7}}}
 ```
 
-- `keywords`:检索键。英文按词、**中文按字二元组**切分(2026-08-13
-  修:原正则把整段汉字当一个词,检索退化成全句精确匹配 ——
-  "晨光面包店"检索不到"小女孩清晨到面包店买面包的故事")。取材
-  不止片名 —— 全部分镜描述一起进键,所以"雨夜""柜台""收银台"
-  这类场景词都能召回。
-- `outcome` 三态(全部由客观信号推导,无 LLM 自评):
-  - **good**:全镜通过 Verifier 收敛;
-  - **bad**:开了评审但有镜没修好;
-  - **ungraded**(新增):`--no-review` 跑法,占位评审行不算实证
-    —— 完成的片子是"最佳可得蓝图"而非失败案例(修复前它被误判
-    bad、8 镜全进 avoid 当负面教材)。
+- `cast`:人物外观描述原文(= 肖像引用的语义,写同类角色的范本);
+- `scene_layout`:空间怎么切、每个空间管哪几镜(排产结构);
+- `asset_recipe`:参考库怎么建的 —— 只记方式与数量(bg_2:一张
+  文生图主板 + 两张环视派生 + **七张实拍回流**),不记文件。
 
-### 2.2 replay 表(可执行摘要)
+## 3. 引用解读表 reference_registry(轨迹内一切引用在此闭环)
+
+用户令:轨迹里出现的每个引用必须能查到"它是什么、图注是什么",
+不需要回台账。示例(节选):
 
 ```json
-{"label": "scene 1 shot 1",
- "image_plan": "single_reference",
- "condition_strategy": "ref2v", "decided_strategy": "ref2v",
- "degraded_from": null, "converged": null, "final_score": null}
+"portrait:小女孩":        {"kind": "portrait", "desc": "static: petite schoolgirl…"},
+"bg_plate:bg_2":          {"kind": "bg_plate", "src": "t2i"},
+"space_view:bg_2/new_0":  {"kind": "space_view", "src": "frame",
+   "caption": "A long wooden counter runs across the foreground…(全文图注)"},
+"derived_junction_frame": {"kind": "derived_frame",
+   "desc": "过渡视频切点后的首帧(由上镜末帧+肖像+空间视图派生);机器承接句把它钉为本镜开场画面"}
 ```
 
-每行 = 一镜的**图计划 + 条件策略**及其下场。`decided_strategy` 与
-`condition_strategy` 分开记:分得清"brain 本来选的"和"实际执行的"
-(降级会在 `degraded_from` 留痕)。ungraded 片的 `converged: null`、
-`final_score: null` 是诚实标注 —— 没评审就没有分,0.0 占位分绝不
-入账。
+步里凡是引用 —— action.refs 的值、junction.space_view —— 都是
+这张表的键。所以 "`new_0` 是什么" 的答案就在记录内:
+`space_view:bg_2/new_0` = 实拍回流帧,图注全文照录。
 
-### 2.3 avoid 表与 repair_tool_stats
-
-失败面:哪镜什么策略没修好、最后一条评审的头条意见;修复工具的
-接受/拒绝计数。**只收实证**:必须真的评审过才有资格进 avoid。
-(示例文件里两者为空 —— 该片未开评审。)
-
-### 2.4 screenplay_digest(剧本形状)
+## 4. 步 step(一镜一条,三格)
 
 ```json
-"cast": {"面包师": "static: young woman, …beige apron…;
-          dynamic: gentle smile, arranging bread…"},
-"setting": "老街转角的面包店内设木质柜台、玻璃门窗…",
-"n_scenes": 1,
-"bgs": {"bg_1": [0], "bg_2": [1,2,3,4,5,6,7]},
-"music_scenes": [1]
+{"step": 5, "label": "scene 1 shot 5",
+ "context": {
+   "shot": "镜头5:老板娘把纸袋递给小女孩…(分镜描述原文)",
+   "camera_facing": "从入口一侧反向朝柜台、木架和烤炉,中近景",
+   "bg_id": "bg_2",
+   "prev_end_state": "小女孩趴在柜台边沿等待,老板娘在木架右侧",
+   "junction": {"kind": "derive", "fallback_to": null,
+                "space_view": "space_view:bg_2/new_0",
+                "stitcher_via": "agent"}},
+ "action": {
+   "strategy": "ref2v", "decided_strategy": "ref2v",
+   "degraded_from": null, "image_plan": "none",
+   "prompt": "<终稿全文,一字不截>",
+   "prompt_draft": "<草稿全文>",
+   "refs": {"image_1": "portrait:小女孩",
+            "image_2": "portrait:面包师",
+            "image_3": "derived_junction_frame"}},
+ "feedback": {"vlm_headline": null, "score": null, "converged": null}}
 ```
 
-留的是**排产结构**:人物正典描述符全文(未来同类角色的措辞范本)、
-空间怎么切(街景一镜、店内七镜 —— 视区法分配的实绩)、场数与
-配乐位。playwriting 的 brain 决定"这类题材拆几镜"时,读的就是
-这里(经 guidance 的 past_task_shapes 通道)。
+- **context**:字段取舍标准唯一 —— 当时真喂给 brain 的才有资格留
+  (本镜描述/朝向/交界判定/上镜末态);
+- **action**:策略 +(草稿/终稿)prompt 全文 + 图例;`decided` 与
+  实际执行分开记,降级在 `degraded_from` 留痕;
+- **feedback**:VLM 评语头条 + 加权分 + 是否收敛;**未评审的片
+  诚实全 null**(示例即此),绝不用 0 分占位。
 
-### 2.5 asset_build(参考库构建档案)
+## 5. outcome 三态(客观信号推导,无 LLM 自评)
 
-```json
-"spaces": {"bg_2": {"views": [
-    {"view": "master",   "src": "t2i"},      ← 文生图主板
-    {"view": "right_90", "src": "derived"},  ← 环视视频派生
-    {"view": "left_90",  "src": "derived"},
-    {"view": "new_0",    "src": "frame"}, …],← 实拍清场帧回流
-  "n_frame_views": 7}}
-```
+good = 全镜 Verifier 收敛;bad = 开了评审有镜没过;ungraded =
+全程无实证评审(--no-review 的占位评审行不算数)—— 完成的片是
+"最佳可得蓝图",不是失败案例。
 
-回答"这部片的参考库是怎么建起来的":每个空间的视图清单**连来源
-通道一起记**。三种 src 就是空间圣经的三条供给线:t2i 主板一次定稿、
-环视视频派生多视角、实拍帧持续回流。`n_frame_views: 7` 一眼看出
-这部片后期挑图的主力已经换成实拍回流(实拍 > 生成的设计意图在
-数据上兑现)。
+## 6. 检索与利用
 
-### 2.6 shot_plans(逐镜蓝图 —— 信息量最大的一块)
+- **检索**:关键词 Jaccard(中文按字二元组切分,跨表述可召回);
+  确定性算法,分数可复现;
+- **guidance**(开工简报,从轨迹现场推导):good/ungraded 片的步
+  → `replay_hints`(策略先验);实证失败的步 → `avoid`(策略+VLM
+  评语);各片 (镜数,结局) → `past_task_shapes`(供拆镜决策);
+- **注入纪律**:参谋不当司令 —— 检索结果附"以本次现场条件为准"
+  注记,拍板权归当次实况(2026-07-31 事故裁决);
+- **与 RL 同构**:步的 (context, action, feedback) 与 GRPO 训练样本
+  同形状 —— 高分步可直接进训练语料,记忆库与训练集同源。
 
-```json
-{"label": "scene 1 shot 5",
- "bg_id": "bg_2",
- "camera_facing": "从入口一侧反向朝柜台、木架和烤炉,中近景",
- "image_plan": "none",
- "junction": {"kind": "derive", "fallback_to": null,
-              "space_view": "new_0", "stitcher_via": "agent"},
- "strategy": "ref2v", "decided_strategy": "ref2v",
- "degraded_from": null,
- "n_references": 3,
- "prompt_draft": "反打中近景,摄影机静止:首先,<<<image_2>>>…",
- "prompt_final": "…<<<image_2>>>说:"今天开业酬宾,买一送一。"…",
- "score": null}
-```
-
-一镜一条,完整回答"这镜当时怎么拍的":
-- **junction**:交界走了哪条路(派生/硬切/顺延)、挑中空间库哪张
-  视图当锚、两镜描述是缝合师 agent 组的稿还是模板兜底;
-- **camera_facing**:挑视图用的朝向证据原文;
-- **prompt 草稿 vs 终稿**(各截 400 字):brain 原始输出与过完
-  全部闸门(记号化/台词/音频法)后的出门稿 —— 对比可见管线各
-  闸门的实际作用;
-- **references(槽位图例)**:prompt 里的 `<<<image_N>>>` 记号在
-  记录内自解释 —— 逐张判明身份:
-
-  ```json
-  "references": [
-    {"slot": "<<<image_1>>>", "role": "portrait:小女孩"},
-    {"slot": "<<<image_2>>>", "role": "portrait:面包师"},
-    {"slot": "<<<image_3>>>",
-     "role": "derived_junction_frame(切后首帧,机器承接句指它)"}]
-  ```
-
-  记号方言说明:`<<<image_N>>>` 是可灵(百炼)的引用语法,指向
-  API 请求里 `reference_images` 列表的第 N 张挂图。视频模型不认识
-  角色名字,只认挂图 —— 所以 prompt 里"`<<<image_2>>>`说……"
-  = 让面包师肖像那个人说话;"画面从`<<<image_3>>>`所示的首帧
-  继续" = 本镜第一帧照派生缝合帧画(布局/机位/站位全以它为准)。
-  role 的可能取值:`portrait:<名>`(人物肖像)/`bg_plate:<bg>`
-  (空景背景板)/`space_view:<bg>/<视图>`(空间库视角图)/
-  `derived_junction_frame`(派生缝合帧)/`prev_shot_tail_frame`
-  (上镜末帧)。
-
-replay 表是它的"可执行摘要";shot_plans 是"完整现场记录"。
-
-## 3. 构建时机与两条入库通道
-
-1. **在线蒸馏**:`generate_movie_windowed` 收工时(§M)自动调用
-   `distill_episode(user_prompt, storyboard)` —— 台账里的一切
-   (entries/junction_meta/spaces/condition)就地压缩成一条记录,
-   JSONL 追加落库(原子重写);
-2. **离线回填**(新增):
-   ```bash
-   python scripts/distill_episode.py \
-       --run outputs/movie_20260811_022309 --prompt "晨光面包店" \
-       --memory <库路径>            # 不给 --memory 则只出示例不入库
-   ```
-   历史归档 run(尤其 --no-review 时代被跳过蒸馏的成功例)都能补记。
-
-## 4. 检索与利用(信息如何回到 agent 手里)
-
-开工时管线调用 `guidance_for(user_prompt)`:
-
-1. **检索**:查询关键词与库内每条记录的 keywords 做 Jaccard 相似度,
-   top-3 命中(0 分不硬凑)。确定性算法,无 embedding 依赖,分数
-   可复现可解释;
-2. **打包**:good/ungraded 的 replay 行 → `replay_hints`;bad 的
-   教训 → `avoid`;各片的 (镜数, 结局) → `past_task_shapes`;
-3. **注入**:整包作为 `episode_guidance` 进入分镜与条件决策的
-   prompt,并附机器注记 ——
-   > "verified on a similar PAST task — weigh it as advice;
-   > **current-run conditions win**"
-
-   **参谋不当司令**(2026-07-31 裁决):早期"检索即执行"直接照抄
-   历史策略,曾因历史条件与本次错配翻车;现在检索结果只缩小搜索
-   空间、提示已知的坑,拍板权归本次现场条件。
-
-## 5. 与另外两级记忆的边界
+## 7. 三级记忆边界
 
 | | 存什么 | 活多久 | 进 agent 的方式 |
 |---|---|---|---|
 | 技能库(程序性) | 跨片通用规矩 | 永久 | 对应角色每次调用全文注入 |
-| 分镜台账(工作) | 本片每镜事实 | 一部片 | 每次决策全量压缩注入 |
-| **情景记忆(本文)** | **跨片成败案卷** | 永久 | **按相似度检索,命中才注入** |
+| 分镜台账(工作) | 本片每镜全量事实 | 一部片 | 每次决策压缩注入(to_brain_line) |
+| **技能轨迹(本文)** | 跨片的 (上下文→动作→评价) 案卷 | 永久 | 按相似度检索,命中才注入 |

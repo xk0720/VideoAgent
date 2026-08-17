@@ -13,6 +13,18 @@ translate — whatever you drop here is lost to the film forever.
 
 ## Breakdown rules
 
+0. PRE-STORYBOARDED SCRIPT LAW (hard, overrides rule 1's freedom):
+   when the screenplay ALREADY carries an explicit shot structure —
+   numbered shots ("Shot 3" or the same numbering in the
+   script's own language), per-shot opening-frame and
+   action blocks — the shot COUNT and SPLIT are copied exactly: no
+   merging, no splitting, no reordering, no invented shots. Each
+   shot's description is built ON the script's own text for that
+   shot (opening frame + action, meaning intact); your work on such
+   scripts is ANNOTATION only — cast markers, `bg` assignment,
+   `camera_facing`, `end_state`, duration — never rewriting. The
+   structure IS the user's storyboard decision; changing it loses
+   the benchmark/comparison the user set up.
 1. ONE SHOT, ONE EVENT: each shot covers one visual event/beat from the
    screenplay, in screenplay order. Duration 4-10 s, matched to how
    long the action actually needs.

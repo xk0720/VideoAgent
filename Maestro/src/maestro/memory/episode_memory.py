@@ -1,29 +1,29 @@
-"""EpisodeMemory — 跨任务长期记忆:good/bad 案例的【可执行】蒸馏 (需求 R2 / 用户 3.(2)).
+"""EpisodeMemory — 跨任务长期记忆:台账蒸馏成【技能轨迹】(2026-08-13 用户设计).
 
-用户需求原文的标准化:
-    任务结束后,把"生成一条完整视频"的整条轨迹蒸馏进长期记忆,分 good case
-    和 bad case;并回答"记忆的可执行化到底怎么实现"。
+一部片 = 一条轨迹:
+    轨迹头 header(全片共享上下文:人物正典/场景切分/引用解读表/参考库配方)
+    + 步序列 trajectory(一镜一步,每步三格):
+        context  该镜决策时真正看到的东西(裁剪:字段以 brain 决策输入为准)
+        action   工具/策略选择 + 完整 prompt(草稿+终稿,不截断)+ 引用图例
+        feedback VLM 评语头条 + 分数(未评审 → null,诚实留空)
 
-"可执行化"的落地(这就是实现方式,不再是口号):
-  一条 episode 存的不是文本回忆,而是两张可以直接驱动决策的表——
-  • replay 表(good 面):每个 shot 实际被 Verifier 接受的
-    {keyframe 策略, 条件策略}。检索命中后,窗口 brain 可以直接【采纳】同款
-    策略(决策记录 via="episode"),跳过重新推理 —— 检索即执行。
-  • avoid 表(bad 面):被拒/未收敛的 {策略/工具, 场景特征, 失败原因}。
-    检索命中后注入 brain prompt 的 do_not_repeat 区 —— 检索即禁止。
-  修复层的可执行记忆已经存在(skill_library.distill_repair:缺陷签名→可重放
-  工具序列);EpisodeMemory 把同一思想抬到【整条任务】层:
-      修复技能 = "这类缺陷怎么修好"; episode = "这类任务怎么排产"。
+引用自解释法(用户令):轨迹里出现的一切引用(image_N 图例值、挑中的
+space_view)都必须能在 header.reference_registry 查到身份与图注 ——
+"new_0 是什么、图注是什么"在记录内闭环,不需要回台账。
 
-good / bad 的判定(必须客观、来自 artifact,沿用信号诚实原则):
-  • good episode:全部 shot 的内层评审循环收敛(status=verified)。
-  • bad episode:任一 shot 未收敛。注意 bad episode 里收敛了的 shot 的策略
-    仍进 replay 表(好的局部经验不陪葬),未收敛 shot 的策略进 avoid 表。
-  没有任何字段来自 LLM 的自我评价 —— 全部由 Verifier/评审的客观结果推导。
+一份格式三个用途:检索当范文(few-shot)/ 高分步直接进训练语料
+(与 RL 的 (context, action, reward) 同构)/ 人工复盘。
 
-检索(训练自由、确定性):prompt 关键词集合的 Jaccard 重叠打分,同
-lesson_library 的哲学 —— 不引 embedding 依赖,分数可复现可解释。
-持久化:JSONL 追加 + 原子重写,和 skill_library 同款。
+good / bad / ungraded 判定(全部客观信号,无 LLM 自评):
+  good     全镜 Verifier 收敛;
+  bad      开了评审但有镜未收敛;
+  ungraded 全程无实证评审(--no-review 的占位评审行不算)——
+           完成的片是"最佳可得蓝图",不是失败案例。
+
+检索(确定性可复现):关键词 Jaccard;中文按字二元组切分(2026-08-13
+修:整段汉字当一个词会让检索退化成全句精确匹配)。
+持久化:JSONL 追加 + 原子重写;旧版字段(replay/avoid/shot_plans 等
+2026-08-13 前的三表制)load 时静默忽略 —— 轨迹制取代表制。
 """
 from __future__ import annotations
 
@@ -31,22 +31,18 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from pathlib import Path as pathlib_Path
 from typing import Optional
 
 _WORD_RE = re.compile(r"[a-zA-Z一-鿿]+")
-# 检索时忽略的高频虚词(中英),避免 "a/the/的" 撑高相似度
 _STOP = {"a", "an", "the", "of", "in", "on", "and", "to", "with", "is",
          "then", "into", "onto", "at", "for", "by", "从", "的", "了", "在",
          "和", "与", "一个", "上", "下"}
 
 
 def _keywords(text: str) -> set[str]:
-    """检索键:英文按词;中文按【字二元组】(2026-08-13 修:原正则把
-    整段汉字当一个词,中文检索退化成全句精确匹配 —— "面包店的清晨"
-    检索不到"清晨的面包店故事")。整词也保留,精确命中权重自然更高。"""
+    """英文按词;中文按字二元组(整词也保留,精确命中权重自然更高)。"""
     out: set[str] = set()
     for w in _WORD_RE.findall(text or ""):
         lw = w.lower()
@@ -59,46 +55,36 @@ def _keywords(text: str) -> set[str]:
     return out
 
 
+def _graded(rv: dict) -> bool:
+    """一条评审行算不算实证:--no-review 的占位行(review_disabled、
+    零证据零分)不算 —— 否则完成片被误判 bad(2026-08-13 实锤)。"""
+    return rv.get("stop_reason") != "review_disabled" and bool(
+        (rv.get("review_evidence") or {}).get("checklist_items", 0)
+        or rv.get("n_failed") or rv.get("weighted_total"))
+
+
 @dataclass
 class EpisodeRecord:
-    """一次完整视频任务的可执行蒸馏。"""
+    """一部片的技能轨迹(header + steps)。"""
 
     episode_id: str
     user_prompt: str
-    keywords: list[str]                 # 检索键(确定性关键词集合)
-    outcome: str                        # "good" | "bad"
+    keywords: list[str]                 # 检索键(片名+全部分镜描述)
+    outcome: str                        # "good" | "bad" | "ungraded"
     n_shots: int
     final_video: str = ""
-    # replay 表:Verifier 接受的 per-shot 策略(可直接采纳执行)
-    #   [{label, description, keyframe_strategy, condition_strategy,
-    #     converged, final_score}]
-    replay: list = field(default_factory=list)
-    # avoid 表:失败模式(检索命中 → 注入 do_not_repeat)
-    #   [{label, condition_strategy, keyframe_strategy, reason}]
-    avoid: list = field(default_factory=list)
-    # 修复工具的接受/拒绝台账(聚合自内层循环 actions):tool → [n_ok, n_rej]
+    # 轨迹头:全片共享上下文 + 引用解读表(轨迹内一切引用在此闭环)
+    header: dict = field(default_factory=dict)
+    # 步序列:[{step, label, context{}, action{}, feedback{}}]
+    trajectory: list = field(default_factory=list)
+    # 修复工具接受/拒绝台账(聚合;修复线关闭时自然为空)
     repair_tool_stats: dict = field(default_factory=dict)
-    # ── 剧本级档案(2026-08-13 用户令:episode 不止镜级策略,整部片的
-    # "怎么排产"都要留 —— 剧本形状/参考库怎么建/逐镜蓝图)────────────
-    # 剧本形状:{user_prompt 截断, cast:{名:描述符}, setting, n_scenes,
-    #           bgs:{bg_id:[shot_idx…]}, music_scenes}
-    screenplay_digest: dict = field(default_factory=dict)
-    # 参考库构建档案:{portraits:{名:src}, backgrounds:{bg:src},
-    #   spaces:{bg:{views:[{view,src}], n_frame_views}}}—— 哪些视角图、
-    #   从哪条通道来(t2i 主板/环视派生/实拍回流),未来同类片直接照方抓药
-    asset_build: dict = field(default_factory=dict)
-    # 逐镜蓝图:[{label, bg_id, camera_facing, image_plan,
-    #   junction:{kind,fallback_to,space_view,stitcher_via},
-    #   strategy/decided/degraded_from, references:n,
-    #   prompt_draft/prompt_final(截断), score}] —— 完整"这镜当时怎么
-    #   拍的"快照,replay 表是它的可执行摘要
-    shot_plans: list = field(default_factory=list)
     created_at: float = 0.0
-    uses: int = 0                       # 被检索采纳的次数(EMA 淘汰的输入)
+    uses: int = 0
 
 
 class EpisodeMemory:
-    """长期 episode 库:distill(写入)+ retrieve/guidance(读出)。"""
+    """长期轨迹库:distill(写入)+ retrieve/guidance(读出)。"""
 
     def __init__(self, path: Optional[Path] = None):
         self.path = Path(path) if path else None
@@ -106,154 +92,138 @@ class EpisodeMemory:
         if self.path and self.path.exists():
             self._load()
 
-    # ── 写入:任务结束时由窗口循环调用 ─────────────────────────────────────
+    # ── 写入:任务结束时由窗口循环调用 ─────────────────────────────────
     def distill_episode(self, user_prompt: str, storyboard,
                         final_video: str = "") -> EpisodeRecord:
-        """从跑完的 StoryboardMemory 蒸馏一条 episode(good/bad 由客观状态定)。
-
-        replay/avoid 的取材规则(精确定义,不含主观判断):
-          shot.status == "verified"  → 该 shot 的 (keyframe_source,
-            condition.strategy) 进 replay 表,附最终分;
-          其他已生成状态             → 进 avoid 表,reason 带上最后一条评审的
-            头条(为什么没修好),供未来 brain 阅读。
-        repair_tool_stats 聚合每个 shot 的 repair_actions 的 outcome。
-        """
-        replay, avoid = [], []
-        tool_stats: dict[str, list[int]] = {}
-        all_verified = True
-        # "评审过"必须有实证:--no-review 跑法会写一条占位评审行
-        # (stop_reason=review_disabled、checklist_items=0)—— 占位不算数,
-        # 否则整片被误判 bad、8 镜全进 avoid(2026-08-13 蒸馏面包店实锤)
-        def _graded(rv: dict) -> bool:
-            return rv.get("stop_reason") != "review_disabled" and (
-                (rv.get("review_evidence") or {}).get("checklist_items", 0)
-                or rv.get("n_failed") or rv.get("weighted_total"))
-        any_review = any(_graded(r) for e in storyboard.entries
+        """台账 → 技能轨迹。裁剪原则:留"决策与结局",丢"过程与文件"
+        (路径/种子/重试流水/评审逐条/图注全文只在 registry 留必要项)。"""
+        entries = list(storyboard.entries)
+        any_review = any(_graded(r) for e in entries
                          for r in (e.reviews or []))
-        shot_plans = []
-        for e in storyboard.entries:
-            if e.video_path is None:
-                all_verified = False
-                continue
-            last = e.reviews[-1] if e.reviews else {}
-            row = {
-                "label": e.label,
-                "description": e.description,
-                # Image Plan(数量+角色):可执行重放的主键;老台账没有该
-                # 字段就留空("" → 不重放,诚实降级到 LLM/兜底层)。
-                "image_plan": getattr(e, "image_plan", "") or "",
-                "keyframe_strategy": e.keyframe_source or "none",
-                # "strategy" 是【实际执行】的条件(胜出 seed 用的那个);brain 的
-                # 原始决定和降级痕迹一并带上 —— 未来 brain 读 avoid/replay 时能
-                # 分清"策略本身不行"和"策略没跑成、降级顶上"两种情况。
-                "condition_strategy": e.condition.get("strategy", "t2v"),
-                "decided_strategy": e.condition.get("decided_strategy",
-                                                    e.condition.get("strategy", "t2v")),
-                "degraded_from": e.condition.get("degraded_from"),
-                # verified 恒为 True(哪怕评审行缺失的合成台账);
-                # 未评审跑法的非收敛镜诚实标 None(不知道,不是失败)
-                "converged": (True if e.status == "verified"
-                              else (None if not any_review else False)),
-                "final_score": (last.get("weighted_total")
-                                if _graded(last) else None),
-            }
-            jm = getattr(e, "junction_meta", None) or {}
-            cond = e.condition or {}
-            # 槽位图例(2026-08-13 用户指正:prompt 里的 <<<image_N>>>
-            # 在记录里必须可解读,否则蓝图是密文)—— 按挂图顺序逐张
-            # 判明身份:肖像/背景板/空间视图/派生缝合帧
-            _legend = []
-            _por = {str(pathlib_Path(v).name): k for k, v in
-                    (getattr(storyboard, "portraits", {}) or {}).items()}
-            _bgp = {str(pathlib_Path((r or {}).get("path", "")).name): bg
-                    for bg, r in (getattr(storyboard, "backgrounds", {})
-                                  or {}).items()}
-            _spv = {}
-            for _bg, _views in (getattr(storyboard, "spaces", {})
-                                or {}).items():
-                for _v, _it in _views.items():
-                    _spv[str(pathlib_Path((_it or {}).get("path", "")
-                                          ).name)] = f"{_bg}/{_v}"
-            for _i, _rp in enumerate(cond.get("reference_images")
-                                     or [], 1):
-                _n = str(pathlib_Path(str(_rp)).name)
-                if _n in _por:
-                    _role = f"portrait:{_por[_n]}"
-                elif _n in _spv:
-                    _role = f"space_view:{_spv[_n]}"
-                elif _n in _bgp:
-                    _role = f"bg_plate:{_bgp[_n]}"
-                elif "junction_derived" in _n:
-                    _role = "derived_junction_frame(切后首帧,机器承接句指它)"
-                elif "tail" in _n:
-                    _role = "prev_shot_tail_frame"
-                else:
-                    _role = f"other:{_n}"
-                _legend.append({"slot": f"<<<image_{_i}>>>",
-                                "role": _role})
-            shot_plans.append({
-                "label": e.label,
-                "bg_id": getattr(e, "bg_id", ""),
-                "camera_facing": getattr(e, "camera_facing", ""),
-                "image_plan": row["image_plan"],
-                "junction": {
-                    "kind": jm.get("kind"),
-                    "fallback_to": jm.get("fallback_to"),
-                    "space_view": (jm.get("space_view") or {}).get("view")
-                                  if isinstance(jm.get("space_view"), dict)
-                                  else jm.get("space_view"),
-                    "stitcher_via": (jm.get("stitcher") or {}).get("via"),
-                },
-                "strategy": row["condition_strategy"],
-                "decided_strategy": row["decided_strategy"],
-                "degraded_from": row["degraded_from"],
-                "n_references": len(cond.get("reference_images") or []),
-                "references": _legend,
-                # 全文入档(2026-08-13 用户令:范文必须完整,截断的
-                # 范文教不会写手收尾)
-                "prompt_draft": getattr(e, "draft_prompt", "") or "",
-                "prompt_final": str(cond.get("final_prompt")
-                                    or cond.get("brain_prompt") or ""),
-                "score": row["final_score"],
-            })
+        cast = dict(getattr(storyboard, "cast", {}) or {})
+        spaces = getattr(storyboard, "spaces", {}) or {}
+        backgrounds = getattr(storyboard, "backgrounds", {}) or {}
+
+        # ── 引用解读表:轨迹里出现的每个引用键在此有身份+图注 ──
+        registry: dict = {}
+        for name in (getattr(storyboard, "portraits", {}) or {}):
+            registry[f"portrait:{name}"] = {
+                "kind": "portrait",
+                "desc": cast.get(name, "")}
+        for bg, rec_ in backgrounds.items():
+            registry[f"bg_plate:{bg}"] = {
+                "kind": "bg_plate", "src": (rec_ or {}).get("src", "")}
+        for bg, views in spaces.items():
+            for v, it in views.items():
+                registry[f"space_view:{bg}/{v}"] = {
+                    "kind": "space_view",
+                    "src": (it or {}).get("src", ""),
+                    "caption": (it or {}).get("caption", "")}
+        registry["derived_junction_frame"] = {
+            "kind": "derived_frame",
+            "desc": "过渡视频切点后的首帧(由上镜末帧+肖像+空间视图派生);"
+                    "机器承接句把它钉为本镜开场画面"}
+        registry["prev_shot_tail_frame"] = {
+            "kind": "tail_frame", "desc": "上一镜真实视频的最后一帧"}
+
+        # 路径 → registry 键(图例判读用)
+        _by_name: dict[str, str] = {}
+        for name, pth in (getattr(storyboard, "portraits", {})
+                          or {}).items():
+            _by_name[Path(str(pth)).name] = f"portrait:{name}"
+        for bg, rec_ in backgrounds.items():
+            _by_name[Path(str((rec_ or {}).get("path", ""))).name] = \
+                f"bg_plate:{bg}"
+        for bg, views in spaces.items():
+            for v, it in views.items():
+                _by_name[Path(str((it or {}).get("path", ""))).name] = \
+                    f"space_view:{bg}/{v}"
+
+        def _ref_key(path_str: str) -> str:
+            n = Path(str(path_str)).name
+            if n in _by_name:
+                return _by_name[n]
+            if "junction_derived" in n:
+                return "derived_junction_frame"
+            if "tail" in n:
+                return "prev_shot_tail_frame"
+            return f"other:{n}"
+
+        # ── 步序列 ──
+        steps, tool_stats = [], {}
+        all_verified = True
+        prev = None
+        for i, e in enumerate(entries):
             if e.status != "verified":
-                all_verified = False      # 与进哪张表无关的客观事实
-            if e.status == "verified" or (not any_review
-                                          and e.video_path):
-                # 无评审跑法(--no-review):整片完成即最佳可得蓝图,
-                # replay 行照进(converged=None 诚实标注"未评审")——
-                # 参谋价值在,司令权仍归当次现场条件
-                replay.append(row)
-            else:
                 all_verified = False
-                if not any_review:
-                    continue          # 未评审跑法:没有客观失败证据,不进 avoid
-                avoid.append({
-                    "label": e.label,
-                    "condition_strategy": row["condition_strategy"],
-                    "decided_strategy": row["decided_strategy"],
-                    "degraded_from": row["degraded_from"],
-                    "keyframe_strategy": row["keyframe_strategy"],
-                    "reason": last.get("brief_headline")
-                              or f"{last.get('n_failed', '?')} defects unresolved",
-                })
+            if e.video_path is None:
+                prev = e
+                continue
+            cond = e.condition or {}
+            jm = getattr(e, "junction_meta", None) or {}
+            sv = jm.get("space_view")
+            sv_key = None
+            if isinstance(sv, dict) and sv.get("view"):
+                sv_key = f"space_view:{getattr(e, 'bg_id', '')}/" \
+                         f"{sv['view']}"
+            elif isinstance(sv, str) and sv:
+                sv_key = f"space_view:{getattr(e, 'bg_id', '')}/{sv}"
+            last = next((r for r in reversed(e.reviews or [])
+                         if _graded(r)), None)
+            steps.append({
+                "step": i + 1,
+                "label": e.label,
+                "context": {
+                    "shot": e.description,
+                    "camera_facing": getattr(e, "camera_facing", ""),
+                    "bg_id": getattr(e, "bg_id", ""),
+                    "prev_end_state": (prev.end_state if prev else ""),
+                    "junction": {
+                        "kind": jm.get("kind"),
+                        "fallback_to": jm.get("fallback_to"),
+                        "space_view": sv_key,     # ← registry 键,可查图注
+                        "stitcher_via": (jm.get("stitcher")
+                                         or {}).get("via"),
+                    },
+                },
+                "action": {
+                    "strategy": cond.get("strategy", "t2v"),
+                    "decided_strategy": cond.get(
+                        "decided_strategy", cond.get("strategy", "t2v")),
+                    "degraded_from": cond.get("degraded_from"),
+                    "image_plan": getattr(e, "image_plan", "") or "",
+                    "prompt": str(cond.get("final_prompt")
+                                  or cond.get("brain_prompt") or ""),
+                    "prompt_draft": getattr(e, "draft_prompt", "") or "",
+                    "refs": {f"image_{k + 1}": _ref_key(rp)
+                             for k, rp in enumerate(
+                                 cond.get("reference_images") or [])},
+                },
+                "feedback": {
+                    "vlm_headline": (last or {}).get("brief_headline")
+                                    or None,
+                    "score": (last or {}).get("weighted_total"),
+                    "converged": (True if e.status == "verified"
+                                  else (None if not any_review
+                                        else False)),
+                },
+            })
             for a in e.repair_actions:
-                t = str(a.get("tool", "?"))
+                t_ = str(a.get("tool", "?"))
                 ok = a.get("outcome") == "accepted"
-                tool_stats.setdefault(t, [0, 0])[0 if ok else 1] += 1
+                tool_stats.setdefault(t_, [0, 0])[0 if ok else 1] += 1
+            prev = e
 
         bgs_map: dict[str, list] = {}
-        for e in storyboard.entries:
-            bgs_map.setdefault(getattr(e, "bg_id", "") or "?", []).append(
-                e.shot_idx)
-        spaces_digest = {}
-        for bg, views in (getattr(storyboard, "spaces", {}) or {}).items():
-            spaces_digest[bg] = {
-                "views": [{"view": v, "src": (it or {}).get("src", "")}
-                          for v, it in views.items()],
-                "n_frame_views": sum(1 for it in views.values()
-                                     if (it or {}).get("src") == "frame"),
-            }
+        for e in entries:
+            bgs_map.setdefault(getattr(e, "bg_id", "") or "?",
+                               []).append(e.shot_idx)
+        recipe = {bg: {} for bg in spaces}
+        for bg, views in spaces.items():
+            for it in views.values():
+                s = (it or {}).get("src", "?")
+                recipe[bg][s] = recipe[bg].get(s, 0) + 1
+
         rec = EpisodeRecord(
             episode_id="ep_" + hashlib.md5(
                 (user_prompt + str(len(self.episodes))).encode()
@@ -261,43 +231,31 @@ class EpisodeMemory:
             user_prompt=user_prompt,
             keywords=sorted(_keywords(
                 user_prompt + " " + " ".join(
-                    e.description or "" for e in storyboard.entries))),
-            # verified 全过 = good(status 为准,与评审行数无关);
-            # 没全过且全程无实证评审(--no-review)= ungraded;其余 bad
-            outcome=("good" if all_verified and storyboard.entries
-                     else "ungraded" if not any_review
-                     and storyboard.entries else "bad"),
-            n_shots=len(storyboard.entries),
+                    e.description or "" for e in entries))),
+            outcome=("good" if all_verified and entries
+                     else "ungraded" if not any_review and entries
+                     else "bad"),
+            n_shots=len(entries),
             final_video=str(final_video or ""),
-            replay=replay,
-            avoid=avoid,
-            repair_tool_stats=tool_stats,
-            screenplay_digest={
-                "user_prompt": (user_prompt or "")[:200],
-                "cast": dict(getattr(storyboard, "cast", {}) or {}),
+            header={
+                "task": (user_prompt or "")[:200],
+                "cast": cast,
                 "setting": str(getattr(storyboard, "setting", ""))[:300],
-                "n_scenes": len({e.scene_idx for e in storyboard.entries}),
-                "bgs": bgs_map,
-                "music_scenes": sorted(
-                    (getattr(storyboard, "music_plan", {}) or {}).keys()),
+                "scene_layout": {
+                    "n_scenes": len({e.scene_idx for e in entries}),
+                    "bgs": bgs_map},
+                "reference_registry": registry,
+                "asset_recipe": {"spaces": recipe},
             },
-            asset_build={
-                "portraits": {n: "given_or_t2i" for n in
-                              (getattr(storyboard, "portraits", {}) or {})},
-                "backgrounds": {bg: (r or {}).get("src", "")
-                                for bg, r in
-                                (getattr(storyboard, "backgrounds", {})
-                                 or {}).items()},
-                "spaces": spaces_digest,
-            },
-            shot_plans=shot_plans,
+            trajectory=steps,
+            repair_tool_stats=tool_stats,
             created_at=time.time(),
         )
         self.episodes.append(rec)
         self._save()
         return rec
 
-    # ── 读出:任务开始时由窗口循环调用 ─────────────────────────────────────
+    # ── 读出:任务开始时由窗口循环调用 ─────────────────────────────────
     def retrieve(self, user_prompt: str, k: int = 3) -> list[EpisodeRecord]:
         """Jaccard(关键词) 相似度 top-k;0 分不返回(不硬凑无关经验)。"""
         q = _keywords(user_prompt)
@@ -313,24 +271,37 @@ class EpisodeMemory:
         return [ep for _, ep in scored[:k]]
 
     def guidance_for(self, user_prompt: str, k: int = 3) -> dict:
-        """窗口 brain 的开工简报:可采纳的 replay 提示 + 必须规避的 avoid 表。
-
-        good episode 的 replay 行原样给出(brain 可以直接照抄策略,记
-        via="episode");bad episode 只贡献 avoid(它的教训,不是它的做法)。
-        命中的 episode 记一次 uses(使用台账,同 skill mark_used 哲学)。"""
+        """开工简报(从轨迹现场推导,读侧契约不变):
+        replay_hints  good/ungraded 片的步 + bad 片里收敛的步(策略先验)
+        avoid         实证失败的步(策略 + VLM 评语)
+        past_task_shapes  相似任务当年拆几镜、成没成(供 playwriting)"""
         hits = self.retrieve(user_prompt, k)
         replay_hints, avoid, shapes = [], [], []
         for ep in hits:
             ep.uses += 1
-            if ep.outcome in ("good", "ungraded"):
-                replay_hints.extend(ep.replay)
-            else:
-                # bad episode 里收敛的局部经验也值得借(见模块 docstring)
-                replay_hints.extend(r for r in ep.replay if r.get("converged"))
-            avoid.extend(ep.avoid)
-            # 任务形状经验:相似任务当年拆了几镜、成没成 —— 供 playwriting
-            # 的 brain 决定本次 shot 数量(用户裁决:数量绝不预设,由 brain
-            # 结合这些历史经验自己定)。
+            for st in ep.trajectory:
+                fb = st.get("feedback") or {}
+                act = st.get("action") or {}
+                row = {"label": st.get("label"),
+                       "description": (st.get("context")
+                                       or {}).get("shot", ""),
+                       "image_plan": act.get("image_plan", ""),
+                       "condition_strategy": act.get("strategy"),
+                       "decided_strategy": act.get("decided_strategy"),
+                       "degraded_from": act.get("degraded_from"),
+                       "converged": fb.get("converged"),
+                       "final_score": fb.get("score")}
+                if fb.get("converged") is False:
+                    avoid.append({
+                        "label": st.get("label"),
+                        "condition_strategy": act.get("strategy"),
+                        "decided_strategy": act.get("decided_strategy"),
+                        "degraded_from": act.get("degraded_from"),
+                        "reason": fb.get("vlm_headline")
+                                  or "unconverged"})
+                elif ep.outcome in ("good", "ungraded") \
+                        or fb.get("converged"):
+                    replay_hints.append(row)
             shapes.append({"n_shots": ep.n_shots, "outcome": ep.outcome,
                            "user_prompt": ep.user_prompt[:80]})
         if hits:
@@ -339,7 +310,7 @@ class EpisodeMemory:
                 "past_task_shapes": shapes[:5],
                 "n_episodes_matched": len(hits)}
 
-    # ── 持久化(JSONL,原子重写)─────────────────────────────────────────────
+    # ── 持久化(JSONL,原子重写;旧字段静默忽略)────────────────────────
     def _save(self) -> None:
         if self.path is None:
             return
@@ -351,8 +322,11 @@ class EpisodeMemory:
         tmp.replace(self.path)
 
     def _load(self) -> None:
+        known = {f.name for f in fields(EpisodeRecord)}
         self.episodes = []
         for line in self.path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line:
-                self.episodes.append(EpisodeRecord(**json.loads(line)))
+            if not line:
+                continue
+            d = {k: v for k, v in json.loads(line).items() if k in known}
+            self.episodes.append(EpisodeRecord(**d))

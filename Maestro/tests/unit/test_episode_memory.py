@@ -1,4 +1,4 @@
-"""EpisodeMemory (R2) — good/bad 蒸馏、检索、可执行 guidance。CPU-only。"""
+"""EpisodeMemory (R2) — 技能轨迹蒸馏、检索、guidance。CPU-only。"""
 from maestro.memory.episode_memory import EpisodeMemory
 from maestro.memory.storyboard import StoryboardMemory
 
@@ -20,26 +20,28 @@ def _finished_storyboard(tmp_path, converged=(True, True)):
     return sb
 
 
-def test_good_episode_all_strategies_into_replay(tmp_path):
+def test_good_episode_trajectory_steps(tmp_path):
     em = EpisodeMemory(tmp_path / "ep.jsonl")
     rec = em.distill_episode("a glass falls off a table",
                              _finished_storyboard(tmp_path))
     assert rec.outcome == "good"
-    assert len(rec.replay) == 2 and not rec.avoid
-    assert rec.replay[1]["condition_strategy"] == "flf2v_bridge"
+    assert len(rec.trajectory) == 2
+    st = rec.trajectory[1]
+    assert st["action"]["strategy"] == "flf2v_bridge"
+    assert st["feedback"]["converged"] is True
+    assert st["feedback"]["score"] == 0.7
     assert rec.repair_tool_stats["edit_clip"] == [2, 0]
 
 
-def test_bad_episode_splits_replay_and_avoid(tmp_path):
+def test_bad_episode_feedback_carries_vlm_verdict(tmp_path):
     em = EpisodeMemory(tmp_path / "ep.jsonl")
     rec = em.distill_episode("a glass falls off a table",
                              _finished_storyboard(tmp_path, (True, False)))
     assert rec.outcome == "bad"
-    # 收敛的 shot 策略仍进 replay(好的局部经验不陪葬);失败的进 avoid 带原因
-    assert len(rec.replay) == 1 and rec.replay[0]["label"] == "scene 1 shot 1"
-    assert len(rec.avoid) == 1
-    assert rec.avoid[0]["condition_strategy"] == "flf2v_bridge"
-    assert "gravity" in rec.avoid[0]["reason"]
+    ok_step, bad_step = rec.trajectory
+    assert ok_step["feedback"]["converged"] is True
+    assert bad_step["feedback"]["converged"] is False
+    assert "gravity" in bad_step["feedback"]["vlm_headline"]
 
 
 def test_retrieve_by_keyword_overlap_and_persistence(tmp_path):
@@ -55,34 +57,34 @@ def test_retrieve_by_keyword_overlap_and_persistence(tmp_path):
     assert not em2.retrieve("完全无关的水下城市 neon jellyfish")
 
 
-def test_guidance_is_executable_replay_plus_avoid(tmp_path):
+def test_guidance_derived_from_trajectory(tmp_path):
     em = EpisodeMemory(tmp_path / "ep.jsonl")
     em.distill_episode("a glass falls off a table",
                        _finished_storyboard(tmp_path, (True, False)))
     g = em.guidance_for("a glass falls from a shelf")
     assert g["n_episodes_matched"] == 1
-    # bad episode:只有收敛 shot 进 replay 提示;失败策略进 avoid
+    # bad 片:收敛步进 replay 提示;失败步进 avoid 带 VLM 评语
     assert len(g["replay_hints"]) == 1 and g["replay_hints"][0]["converged"]
     assert g["avoid"] and g["avoid"][0]["condition_strategy"] == "flf2v_bridge"
-    assert em.episodes[0].uses == 1                    # 使用记账
+    assert "gravity" in g["avoid"][0]["reason"]
+    assert g["past_task_shapes"][0]["n_shots"] == 2
 
 
-def test_distill_film_level_dossier(tmp_path):
-    """2026-08-13 用户令:episode 是剧本级档案 —— 剧本形状/参考库
-    构建/逐镜蓝图(junction/朝向/prompt/引用数)全落记录;--no-review
-    的占位评审行判 ungraded(replay 照进、avoid 不进、0 分不记)。"""
-    from maestro.memory.episode_memory import EpisodeMemory
-    from maestro.memory.storyboard import StoryboardMemory
-
+def test_trajectory_references_resolve_in_registry(tmp_path):
+    """2026-08-13 用户令:轨迹里的引用必须自解释 —— new_0 是什么、
+    图注是什么,在 header.reference_registry 内闭环;--no-review 片
+    判 ungraded、feedback 诚实留空。"""
     sb = StoryboardMemory.from_outline(
         ["scene 1 shot 1: <A>走进店里。", "shot 2: <A>付钱。"],
         path=tmp_path / "sb.json")
     sb.cast = {"A": "static: tall man"}
     sb.setting = "a bakery at dawn"
     sb.portraits = {"A": str(tmp_path / "a.png")}
-    sb.backgrounds = {"bg_1": {"path": "x.png", "src": "t2i"}}
-    sb.spaces = {"bg_1": {"master": {"path": "x.png", "src": "t2i"},
-                          "new_0": {"path": "y.png", "src": "frame"}}}
+    sb.backgrounds = {"bg_1": {"path": "plate.png", "src": "t2i"}}
+    sb.spaces = {"bg_1": {
+        "master": {"path": "plate.png", "src": "t2i", "caption": "店堂全景"},
+        "new_0": {"path": "y.png", "src": "frame",
+                  "caption": "从入口反打:柜台居右,木架烤炉在后"}}}
     stub = {"revision": 0, "weighted_total": 0.0, "n_failed": 0,
             "review_evidence": {"checklist_items": 0},
             "stop_reason": "review_disabled"}
@@ -92,9 +94,9 @@ def test_distill_film_level_dossier(tmp_path):
         e.reviews = [dict(stub)]
         e.bg_id = "bg_1"
         e.camera_facing = "朝柜台,中景"
-        e.draft_prompt = "草稿"
+        e.draft_prompt = "草稿全文"
         e.condition = {"strategy": "ref2v", "decided_strategy": "ref2v",
-                       "final_prompt": "终稿",
+                       "final_prompt": "终稿全文",
                        "reference_images": [str(tmp_path / "a.png"),
                                             "y.png"]}
         e.junction_meta = {"kind": "derive",
@@ -102,22 +104,20 @@ def test_distill_film_level_dossier(tmp_path):
                            "stitcher": {"via": "agent"}}
     mem = EpisodeMemory(tmp_path / "ep.jsonl")
     rec = mem.distill_episode("面包店的清晨", sb)
-    assert rec.outcome == "ungraded"          # 占位评审 ≠ 评过审
-    assert len(rec.replay) == 2 and not rec.avoid
-    assert rec.replay[0]["final_score"] is None   # 0.0 占位分不记账
-    assert rec.screenplay_digest["cast"]["A"].startswith("static")
-    assert rec.screenplay_digest["bgs"]["bg_1"] == [0, 1]
-    assert rec.asset_build["spaces"]["bg_1"]["n_frame_views"] == 1
-    plan = rec.shot_plans[0]
-    assert plan["junction"]["space_view"] == "new_0"
-    assert plan["camera_facing"] == "朝柜台,中景"
-    assert plan["n_references"] == 2
-    # 槽位图例:prompt 里的 <<<image_N>>> 在记录内可解读(2026-08-13)
-    assert plan["references"][0] == {"slot": "<<<image_1>>>",
-                                     "role": "portrait:A"}
-    assert plan["references"][1]["role"] == "space_view:bg_1/new_0"
-    assert plan["prompt_final"] == "终稿"
-    # ungraded 的 replay 参谋进 guidance
+    assert rec.outcome == "ungraded"
+    st = rec.trajectory[0]
+    # 引用图例 → registry 键 → 图注可查(new_0 在记录内自解释)
+    assert st["action"]["refs"] == {"image_1": "portrait:A",
+                                    "image_2": "space_view:bg_1/new_0"}
+    assert st["context"]["junction"]["space_view"] == "space_view:bg_1/new_0"
+    reg = rec.header["reference_registry"]
+    assert reg["space_view:bg_1/new_0"]["caption"].startswith("从入口反打")
+    assert reg["portrait:A"]["desc"] == "static: tall man"
+    # prompt 全文、feedback 诚实留空
+    assert st["action"]["prompt"] == "终稿全文"
+    assert st["feedback"]["score"] is None
+    assert st["feedback"]["converged"] is None
+    # ungraded 的步照进 replay 参谋
     g = mem.guidance_for("清晨的面包店故事")
-    assert g["n_episodes_matched"] == 1
-    assert g["replay_hints"]
+    assert g["n_episodes_matched"] == 1 and g["replay_hints"]
+    assert not g["avoid"]
