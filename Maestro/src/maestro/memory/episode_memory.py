@@ -33,6 +33,7 @@ import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from pathlib import Path as pathlib_Path
 from typing import Optional
 
 _WORD_RE = re.compile(r"[a-zA-Z一-鿿]+")
@@ -158,6 +159,38 @@ class EpisodeMemory:
             }
             jm = getattr(e, "junction_meta", None) or {}
             cond = e.condition or {}
+            # 槽位图例(2026-08-13 用户指正:prompt 里的 <<<image_N>>>
+            # 在记录里必须可解读,否则蓝图是密文)—— 按挂图顺序逐张
+            # 判明身份:肖像/背景板/空间视图/派生缝合帧
+            _legend = []
+            _por = {str(pathlib_Path(v).name): k for k, v in
+                    (getattr(storyboard, "portraits", {}) or {}).items()}
+            _bgp = {str(pathlib_Path((r or {}).get("path", "")).name): bg
+                    for bg, r in (getattr(storyboard, "backgrounds", {})
+                                  or {}).items()}
+            _spv = {}
+            for _bg, _views in (getattr(storyboard, "spaces", {})
+                                or {}).items():
+                for _v, _it in _views.items():
+                    _spv[str(pathlib_Path((_it or {}).get("path", "")
+                                          ).name)] = f"{_bg}/{_v}"
+            for _i, _rp in enumerate(cond.get("reference_images")
+                                     or [], 1):
+                _n = str(pathlib_Path(str(_rp)).name)
+                if _n in _por:
+                    _role = f"portrait:{_por[_n]}"
+                elif _n in _spv:
+                    _role = f"space_view:{_spv[_n]}"
+                elif _n in _bgp:
+                    _role = f"bg_plate:{_bgp[_n]}"
+                elif "junction_derived" in _n:
+                    _role = "derived_junction_frame(切后首帧,机器承接句指它)"
+                elif "tail" in _n:
+                    _role = "prev_shot_tail_frame"
+                else:
+                    _role = f"other:{_n}"
+                _legend.append({"slot": f"<<<image_{_i}>>>",
+                                "role": _role})
             shot_plans.append({
                 "label": e.label,
                 "bg_id": getattr(e, "bg_id", ""),
@@ -175,6 +208,7 @@ class EpisodeMemory:
                 "decided_strategy": row["decided_strategy"],
                 "degraded_from": row["degraded_from"],
                 "n_references": len(cond.get("reference_images") or []),
+                "references": _legend,
                 "prompt_draft": (getattr(e, "draft_prompt", "") or "")[:400],
                 "prompt_final": str(cond.get("final_prompt")
                                     or cond.get("brain_prompt") or "")[:400],

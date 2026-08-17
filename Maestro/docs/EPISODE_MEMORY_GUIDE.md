@@ -130,7 +130,26 @@ brain(和人)看"整部片的打法"。
 - **prompt 草稿 vs 终稿**(各截 400 字):brain 原始输出与过完
   全部闸门(记号化/台词/音频法)后的出门稿 —— 对比可见管线各
   闸门的实际作用;
-- **n_references**:挂了几张参考图(肖像+空间视图+派生帧的总数)。
+- **references(槽位图例)**:prompt 里的 `<<<image_N>>>` 记号在
+  记录内自解释 —— 逐张判明身份:
+
+  ```json
+  "references": [
+    {"slot": "<<<image_1>>>", "role": "portrait:小女孩"},
+    {"slot": "<<<image_2>>>", "role": "portrait:面包师"},
+    {"slot": "<<<image_3>>>",
+     "role": "derived_junction_frame(切后首帧,机器承接句指它)"}]
+  ```
+
+  记号方言说明:`<<<image_N>>>` 是可灵(百炼)的引用语法,指向
+  API 请求里 `reference_images` 列表的第 N 张挂图。视频模型不认识
+  角色名字,只认挂图 —— 所以 prompt 里"`<<<image_2>>>`说……"
+  = 让面包师肖像那个人说话;"画面从`<<<image_3>>>`所示的首帧
+  继续" = 本镜第一帧照派生缝合帧画(布局/机位/站位全以它为准)。
+  role 的可能取值:`portrait:<名>`(人物肖像)/`bg_plate:<bg>`
+  (空景背景板)/`space_view:<bg>/<视图>`(空间库视角图)/
+  `derived_junction_frame`(派生缝合帧)/`prev_shot_tail_frame`
+  (上镜末帧)。
 
 replay 表是它的"可执行摘要";shot_plans 是"完整现场记录"。
 

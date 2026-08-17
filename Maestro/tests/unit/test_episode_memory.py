@@ -95,7 +95,8 @@ def test_distill_film_level_dossier(tmp_path):
         e.draft_prompt = "草稿"
         e.condition = {"strategy": "ref2v", "decided_strategy": "ref2v",
                        "final_prompt": "终稿",
-                       "reference_images": ["p1", "p2"]}
+                       "reference_images": [str(tmp_path / "a.png"),
+                                            "y.png"]}
         e.junction_meta = {"kind": "derive",
                            "space_view": {"view": "new_0"},
                            "stitcher": {"via": "agent"}}
@@ -111,6 +112,10 @@ def test_distill_film_level_dossier(tmp_path):
     assert plan["junction"]["space_view"] == "new_0"
     assert plan["camera_facing"] == "朝柜台,中景"
     assert plan["n_references"] == 2
+    # 槽位图例:prompt 里的 <<<image_N>>> 在记录内可解读(2026-08-13)
+    assert plan["references"][0] == {"slot": "<<<image_1>>>",
+                                     "role": "portrait:A"}
+    assert plan["references"][1]["role"] == "space_view:bg_1/new_0"
     assert plan["prompt_final"] == "终稿"
     # ungraded 的 replay 参谋进 guidance
     g = mem.guidance_for("清晨的面包店故事")
