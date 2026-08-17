@@ -149,8 +149,10 @@ class EpisodeMemory:
                 "decided_strategy": e.condition.get("decided_strategy",
                                                     e.condition.get("strategy", "t2v")),
                 "degraded_from": e.condition.get("degraded_from"),
-                "converged": (e.status == "verified") if any_review
-                             else None,
+                # verified 恒为 True(哪怕评审行缺失的合成台账);
+                # 未评审跑法的非收敛镜诚实标 None(不知道,不是失败)
+                "converged": (True if e.status == "verified"
+                              else (None if not any_review else False)),
                 "final_score": (last.get("weighted_total")
                                 if _graded(last) else None),
             }
@@ -178,6 +180,8 @@ class EpisodeMemory:
                                     or cond.get("brain_prompt") or "")[:400],
                 "score": row["final_score"],
             })
+            if e.status != "verified":
+                all_verified = False      # 与进哪张表无关的客观事实
             if e.status == "verified" or (not any_review
                                           and e.video_path):
                 # 无评审跑法(--no-review):整片完成即最佳可得蓝图,
@@ -222,9 +226,11 @@ class EpisodeMemory:
             keywords=sorted(_keywords(
                 user_prompt + " " + " ".join(
                     e.description or "" for e in storyboard.entries))),
-            outcome=("ungraded" if not any_review and storyboard.entries
-                     else "good" if all_verified and storyboard.entries
-                     else "bad"),
+            # verified 全过 = good(status 为准,与评审行数无关);
+            # 没全过且全程无实证评审(--no-review)= ungraded;其余 bad
+            outcome=("good" if all_verified and storyboard.entries
+                     else "ungraded" if not any_review
+                     and storyboard.entries else "bad"),
             n_shots=len(storyboard.entries),
             final_video=str(final_video or ""),
             replay=replay,
