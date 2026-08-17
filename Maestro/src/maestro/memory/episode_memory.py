@@ -209,9 +209,11 @@ class EpisodeMemory:
                 "degraded_from": row["degraded_from"],
                 "n_references": len(cond.get("reference_images") or []),
                 "references": _legend,
-                "prompt_draft": (getattr(e, "draft_prompt", "") or "")[:400],
+                # 全文入档(2026-08-13 用户令:范文必须完整,截断的
+                # 范文教不会写手收尾)
+                "prompt_draft": getattr(e, "draft_prompt", "") or "",
                 "prompt_final": str(cond.get("final_prompt")
-                                    or cond.get("brain_prompt") or "")[:400],
+                                    or cond.get("brain_prompt") or ""),
                 "score": row["final_score"],
             })
             if e.status != "verified":
