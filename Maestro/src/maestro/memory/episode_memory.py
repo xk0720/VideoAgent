@@ -43,8 +43,19 @@ _STOP = {"a", "an", "the", "of", "in", "on", "and", "to", "with", "is",
 
 
 def _keywords(text: str) -> set[str]:
-    return {w.lower() for w in _WORD_RE.findall(text or "")
-            if w.lower() not in _STOP and len(w) > 1}
+    """检索键:英文按词;中文按【字二元组】(2026-08-13 修:原正则把
+    整段汉字当一个词,中文检索退化成全句精确匹配 —— "面包店的清晨"
+    检索不到"清晨的面包店故事")。整词也保留,精确命中权重自然更高。"""
+    out: set[str] = set()
+    for w in _WORD_RE.findall(text or ""):
+        lw = w.lower()
+        if lw in _STOP or len(lw) < 2:
+            continue
+        out.add(lw)
+        if re.search(r"[一-鿿]", lw):
+            out.update(lw[i:i + 2] for i in range(len(lw) - 1)
+                       if lw[i:i + 2] not in _STOP)
+    return out
 
 
 @dataclass
@@ -66,6 +77,21 @@ class EpisodeRecord:
     avoid: list = field(default_factory=list)
     # 修复工具的接受/拒绝台账(聚合自内层循环 actions):tool → [n_ok, n_rej]
     repair_tool_stats: dict = field(default_factory=dict)
+    # ── 剧本级档案(2026-08-13 用户令:episode 不止镜级策略,整部片的
+    # "怎么排产"都要留 —— 剧本形状/参考库怎么建/逐镜蓝图)────────────
+    # 剧本形状:{user_prompt 截断, cast:{名:描述符}, setting, n_scenes,
+    #           bgs:{bg_id:[shot_idx…]}, music_scenes}
+    screenplay_digest: dict = field(default_factory=dict)
+    # 参考库构建档案:{portraits:{名:src}, backgrounds:{bg:src},
+    #   spaces:{bg:{views:[{view,src}], n_frame_views}}}—— 哪些视角图、
+    #   从哪条通道来(t2i 主板/环视派生/实拍回流),未来同类片直接照方抓药
+    asset_build: dict = field(default_factory=dict)
+    # 逐镜蓝图:[{label, bg_id, camera_facing, image_plan,
+    #   junction:{kind,fallback_to,space_view,stitcher_via},
+    #   strategy/decided/degraded_from, references:n,
+    #   prompt_draft/prompt_final(截断), score}] —— 完整"这镜当时怎么
+    #   拍的"快照,replay 表是它的可执行摘要
+    shot_plans: list = field(default_factory=list)
     created_at: float = 0.0
     uses: int = 0                       # 被检索采纳的次数(EMA 淘汰的输入)
 
@@ -94,6 +120,16 @@ class EpisodeMemory:
         replay, avoid = [], []
         tool_stats: dict[str, list[int]] = {}
         all_verified = True
+        # "评审过"必须有实证:--no-review 跑法会写一条占位评审行
+        # (stop_reason=review_disabled、checklist_items=0)—— 占位不算数,
+        # 否则整片被误判 bad、8 镜全进 avoid(2026-08-13 蒸馏面包店实锤)
+        def _graded(rv: dict) -> bool:
+            return rv.get("stop_reason") != "review_disabled" and (
+                (rv.get("review_evidence") or {}).get("checklist_items", 0)
+                or rv.get("n_failed") or rv.get("weighted_total"))
+        any_review = any(_graded(r) for e in storyboard.entries
+                         for r in (e.reviews or []))
+        shot_plans = []
         for e in storyboard.entries:
             if e.video_path is None:
                 all_verified = False
@@ -113,13 +149,45 @@ class EpisodeMemory:
                 "decided_strategy": e.condition.get("decided_strategy",
                                                     e.condition.get("strategy", "t2v")),
                 "degraded_from": e.condition.get("degraded_from"),
-                "converged": e.status == "verified",
-                "final_score": last.get("weighted_total"),
+                "converged": (e.status == "verified") if any_review
+                             else None,
+                "final_score": (last.get("weighted_total")
+                                if _graded(last) else None),
             }
-            if e.status == "verified":
+            jm = getattr(e, "junction_meta", None) or {}
+            cond = e.condition or {}
+            shot_plans.append({
+                "label": e.label,
+                "bg_id": getattr(e, "bg_id", ""),
+                "camera_facing": getattr(e, "camera_facing", ""),
+                "image_plan": row["image_plan"],
+                "junction": {
+                    "kind": jm.get("kind"),
+                    "fallback_to": jm.get("fallback_to"),
+                    "space_view": (jm.get("space_view") or {}).get("view")
+                                  if isinstance(jm.get("space_view"), dict)
+                                  else jm.get("space_view"),
+                    "stitcher_via": (jm.get("stitcher") or {}).get("via"),
+                },
+                "strategy": row["condition_strategy"],
+                "decided_strategy": row["decided_strategy"],
+                "degraded_from": row["degraded_from"],
+                "n_references": len(cond.get("reference_images") or []),
+                "prompt_draft": (getattr(e, "draft_prompt", "") or "")[:400],
+                "prompt_final": str(cond.get("final_prompt")
+                                    or cond.get("brain_prompt") or "")[:400],
+                "score": row["final_score"],
+            })
+            if e.status == "verified" or (not any_review
+                                          and e.video_path):
+                # 无评审跑法(--no-review):整片完成即最佳可得蓝图,
+                # replay 行照进(converged=None 诚实标注"未评审")——
+                # 参谋价值在,司令权仍归当次现场条件
                 replay.append(row)
             else:
                 all_verified = False
+                if not any_review:
+                    continue          # 未评审跑法:没有客观失败证据,不进 avoid
                 avoid.append({
                     "label": e.label,
                     "condition_strategy": row["condition_strategy"],
@@ -134,18 +202,53 @@ class EpisodeMemory:
                 ok = a.get("outcome") == "accepted"
                 tool_stats.setdefault(t, [0, 0])[0 if ok else 1] += 1
 
+        bgs_map: dict[str, list] = {}
+        for e in storyboard.entries:
+            bgs_map.setdefault(getattr(e, "bg_id", "") or "?", []).append(
+                e.shot_idx)
+        spaces_digest = {}
+        for bg, views in (getattr(storyboard, "spaces", {}) or {}).items():
+            spaces_digest[bg] = {
+                "views": [{"view": v, "src": (it or {}).get("src", "")}
+                          for v, it in views.items()],
+                "n_frame_views": sum(1 for it in views.values()
+                                     if (it or {}).get("src") == "frame"),
+            }
         rec = EpisodeRecord(
             episode_id="ep_" + hashlib.md5(
                 (user_prompt + str(len(self.episodes))).encode()
             ).hexdigest()[:10],
             user_prompt=user_prompt,
-            keywords=sorted(_keywords(user_prompt)),
-            outcome="good" if all_verified and storyboard.entries else "bad",
+            keywords=sorted(_keywords(
+                user_prompt + " " + " ".join(
+                    e.description or "" for e in storyboard.entries))),
+            outcome=("ungraded" if not any_review and storyboard.entries
+                     else "good" if all_verified and storyboard.entries
+                     else "bad"),
             n_shots=len(storyboard.entries),
             final_video=str(final_video or ""),
             replay=replay,
             avoid=avoid,
             repair_tool_stats=tool_stats,
+            screenplay_digest={
+                "user_prompt": (user_prompt or "")[:200],
+                "cast": dict(getattr(storyboard, "cast", {}) or {}),
+                "setting": str(getattr(storyboard, "setting", ""))[:300],
+                "n_scenes": len({e.scene_idx for e in storyboard.entries}),
+                "bgs": bgs_map,
+                "music_scenes": sorted(
+                    (getattr(storyboard, "music_plan", {}) or {}).keys()),
+            },
+            asset_build={
+                "portraits": {n: "given_or_t2i" for n in
+                              (getattr(storyboard, "portraits", {}) or {})},
+                "backgrounds": {bg: (r or {}).get("src", "")
+                                for bg, r in
+                                (getattr(storyboard, "backgrounds", {})
+                                 or {}).items()},
+                "spaces": spaces_digest,
+            },
+            shot_plans=shot_plans,
             created_at=time.time(),
         )
         self.episodes.append(rec)
@@ -177,7 +280,7 @@ class EpisodeMemory:
         replay_hints, avoid, shapes = [], [], []
         for ep in hits:
             ep.uses += 1
-            if ep.outcome == "good":
+            if ep.outcome in ("good", "ungraded"):
                 replay_hints.extend(ep.replay)
             else:
                 # bad episode 里收敛的局部经验也值得借(见模块 docstring)

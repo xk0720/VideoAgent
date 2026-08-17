@@ -65,3 +65,54 @@ def test_guidance_is_executable_replay_plus_avoid(tmp_path):
     assert len(g["replay_hints"]) == 1 and g["replay_hints"][0]["converged"]
     assert g["avoid"] and g["avoid"][0]["condition_strategy"] == "flf2v_bridge"
     assert em.episodes[0].uses == 1                    # 使用记账
+
+
+def test_distill_film_level_dossier(tmp_path):
+    """2026-08-13 用户令:episode 是剧本级档案 —— 剧本形状/参考库
+    构建/逐镜蓝图(junction/朝向/prompt/引用数)全落记录;--no-review
+    的占位评审行判 ungraded(replay 照进、avoid 不进、0 分不记)。"""
+    from maestro.memory.episode_memory import EpisodeMemory
+    from maestro.memory.storyboard import StoryboardMemory
+
+    sb = StoryboardMemory.from_outline(
+        ["scene 1 shot 1: <A>走进店里。", "shot 2: <A>付钱。"],
+        path=tmp_path / "sb.json")
+    sb.cast = {"A": "static: tall man"}
+    sb.setting = "a bakery at dawn"
+    sb.portraits = {"A": str(tmp_path / "a.png")}
+    sb.backgrounds = {"bg_1": {"path": "x.png", "src": "t2i"}}
+    sb.spaces = {"bg_1": {"master": {"path": "x.png", "src": "t2i"},
+                          "new_0": {"path": "y.png", "src": "frame"}}}
+    stub = {"revision": 0, "weighted_total": 0.0, "n_failed": 0,
+            "review_evidence": {"checklist_items": 0},
+            "stop_reason": "review_disabled"}
+    for i, e in enumerate(sb.entries):
+        e.video_path = f"s{i}.mp4"
+        e.status = "generated_with_defects"
+        e.reviews = [dict(stub)]
+        e.bg_id = "bg_1"
+        e.camera_facing = "朝柜台,中景"
+        e.draft_prompt = "草稿"
+        e.condition = {"strategy": "ref2v", "decided_strategy": "ref2v",
+                       "final_prompt": "终稿",
+                       "reference_images": ["p1", "p2"]}
+        e.junction_meta = {"kind": "derive",
+                           "space_view": {"view": "new_0"},
+                           "stitcher": {"via": "agent"}}
+    mem = EpisodeMemory(tmp_path / "ep.jsonl")
+    rec = mem.distill_episode("面包店的清晨", sb)
+    assert rec.outcome == "ungraded"          # 占位评审 ≠ 评过审
+    assert len(rec.replay) == 2 and not rec.avoid
+    assert rec.replay[0]["final_score"] is None   # 0.0 占位分不记账
+    assert rec.screenplay_digest["cast"]["A"].startswith("static")
+    assert rec.screenplay_digest["bgs"]["bg_1"] == [0, 1]
+    assert rec.asset_build["spaces"]["bg_1"]["n_frame_views"] == 1
+    plan = rec.shot_plans[0]
+    assert plan["junction"]["space_view"] == "new_0"
+    assert plan["camera_facing"] == "朝柜台,中景"
+    assert plan["n_references"] == 2
+    assert plan["prompt_final"] == "终稿"
+    # ungraded 的 replay 参谋进 guidance
+    g = mem.guidance_for("清晨的面包店故事")
+    assert g["n_episodes_matched"] == 1
+    assert g["replay_hints"]
