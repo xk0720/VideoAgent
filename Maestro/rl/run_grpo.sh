@@ -7,6 +7,7 @@
 #                                  # 收集器 + trainer(需 GPU 机)
 #    bash rl/run_grpo.sh --smoke    # 无 GPU 自检:数据流/分组/advantage
 #    bash rl/run_grpo.sh --fresh    # 全新训练:清零状态+开跑标记后继续起链
+#    bash rl/run_grpo.sh --stop     # 一键收摊:清杀四类进程(含孤儿 vLLM)
 #
 #  四进程:①vLLM 服 Qwen3(--enable-lora,adapter 热载)
 #          ②rollout 农场(现有管线,--rl-group K,review 开、enhancer
@@ -59,6 +60,20 @@ PIDS=()
 # ${arr[@]+...} = set -u 下的空数组安全展开(bash 全版本;绝不 kill 0)
 cleanup() { for p in ${PIDS[@]+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT INT TERM
+
+# ── --stop:一键收摊(2026-08-18 实报:vLLM 是上一次启动留下的
+#    "孤儿"时不在本次 trap 的名单里,Ctrl-C 杀不到它)────────────────
+if [[ "${1:-}" == "--stop" ]]; then
+  echo "== STOP:清杀全部训练进程"
+  pkill -f "test_window_movie.py"  2>/dev/null && echo "  rollout ✓"
+  pkill -f "watch_online.py"       2>/dev/null && echo "  collector ✓"
+  pkill -f "train_online.py"       2>/dev/null && echo "  trainer ✓"
+  pkill -f "vllm serve"            2>/dev/null && echo "  vllm ✓"
+  sleep 3
+  pkill -9 -f "vllm serve" 2>/dev/null
+  echo "== 残留检查:"; ps aux | grep -E "vllm|train_online|watch_online|test_window_movie" | grep -v grep || echo "  (干净)"
+  exit 0
+fi
 
 # ── --fresh:全新训练总开关(2026-08-18 用户令:系统默认断点续跑,
 #    这个开关一键归零)——清收集台账/书签/版本计数/旧 checkpoint,
