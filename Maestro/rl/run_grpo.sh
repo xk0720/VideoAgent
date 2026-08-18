@@ -27,6 +27,12 @@ LOGS=$RL/logs; mkdir -p $LOGS $RL/state $RL/data
 #   DASHSCOPE_API_KEY=sk-xxx     # 可灵视频
 #   QWEN_API_KEY=sk-xxx          # qwen-max 冻结 agent + omni 评审
 #   WAVESPEED_API_KEY=ws-xxx     # t2i/图像编辑
+#   WANDB_API_KEY=...            # wandb 密钥(2026-08-14 用户提供,
+#   WANDB_BASE_URL=https://api.wandb.ai      # 写在 .env,不进 git)
+#   WANDB_ENTITY=1120230293-nankai-university
+#   WANDB_PROJECT=VideoAgent
+#   WANDB_MODE=online            # 服务器连不上 api.wandb.ai 就改
+#                                # offline,之后 wandb sync 补传
 unset DASHSCOPE_API_KEY QWEN_API_KEY WAVESPEED_API_KEY
 set -a; source .env 2>/dev/null; set +a
 

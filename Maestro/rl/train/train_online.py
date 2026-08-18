@@ -106,7 +106,10 @@ def wandb_init(args, enabled: bool):
         import os
         import wandb
         os.environ.setdefault("WANDB_MODE", "offline")
-        wandb.init(project=args.wandb_project, name=args.wandb_run,
+        # host/key/entity/project 全走 .env(WANDB_BASE_URL/
+        # WANDB_API_KEY/WANDB_ENTITY/WANDB_PROJECT)—— 密钥不进代码
+        wandb.init(project=args.wandb_project,
+                   entity=args.wandb_entity, name=args.wandb_run,
                    config={"model": args.model, "lr": args.lr,
                            "batch_groups": args.batch_groups,
                            "staleness_max": args.staleness_max})
@@ -146,7 +149,12 @@ def main() -> int:
     ap.add_argument("--data", default=str(DATA))
     ap.add_argument("--wandb", action="store_true",
                     help="开 wandb 监控(默认 offline 模式落本地)")
-    ap.add_argument("--wandb-project", default="maestro-brain-rl")
+    import os as _os
+    ap.add_argument("--wandb-project",
+                    default=_os.getenv("WANDB_PROJECT",
+                                       "maestro-brain-rl"))
+    ap.add_argument("--wandb-entity",
+                    default=_os.getenv("WANDB_ENTITY") or None)
     ap.add_argument("--wandb-run", default=None)
     args = ap.parse_args()
     DATA = Path(args.data)
