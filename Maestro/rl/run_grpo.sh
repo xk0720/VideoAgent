@@ -155,42 +155,73 @@ python rl/collect/watch_online.py --judge > $LOGS/collector.log 2>&1 &
 PIDS+=($!)
 CUDA_VISIBLE_DEVICES=$TRAIN_GPUS \
 python rl/train/train_online.py --model "$BASE_MODEL" \
-  --vllm-url "http://localhost:$VLLM_PORT" \
+  --vllm-url "http://localhost:$VLLM_PORT" --wandb \
   > $LOGS/trainer.log 2>&1 &
 PIDS+=($!)
 echo "== 收集器/trainer 已起(logs: $LOGS)"
 
 # ── ② rollout 农场(前台循环 = 本脚本的生命线)────────────────────
-SCRIPTS=(scripts/sim_scripts/s3_bakery.json
-         scripts/sim_scripts/s2_rooftop.json
-         scripts/sim_scripts/s5_rainstop.json)
-PROMPTS=("晨光面包店" "天台魔术师" "雨停之前")
+# 任务来源 = rl/configs/task_pool.yaml(2026-08-14:剧本/idea 双制式
+# 加权轮转;确定性调度 = 按迭代序号取模,断点续跑不乱序)
+TASK_POOL=${TASK_POOL:-rl/configs/task_pool.yaml}
 i=0
 while true; do
-  idx=$(( i % ${#SCRIPTS[@]} ))
   ADAPTER=$(cat $RL/state/active_adapter.txt 2>/dev/null || true)
   MODEL_NAME=${ADAPTER:-brain}
   export MAESTRO_POLICY_VERSION=$(cat $RL/state/policy_version.txt \
                                   2>/dev/null || echo 0)
-  # 动态生成本轮配置:video_brain → vLLM 当前 adapter;其余 agent
-  # 无 crew 条目 = 冻结在 models.llm(gpt-5.6-sol)—— 裁决 a。
-  python - "$MODEL_NAME" "$RL_BASE_CONFIG" <<'PY'
-import sys, yaml, pathlib
-name = sys.argv[1]
-cfg = yaml.safe_load(open(sys.argv[2]))
+  # 动态生成本轮配置 + 从任务池取本轮任务(加权轮转)
+  TASK_JSON=$(python - "$MODEL_NAME" "$RL_BASE_CONFIG" "$TASK_POOL" "$i" <<'PY'
+import sys, yaml, pathlib, json
+name, cfg_p, pool_p, it = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+cfg = yaml.safe_load(open(cfg_p))
 cfg.setdefault("models", {}).setdefault("crew", {})["video_brain"] = {
     "name": "vllm", "base_url": "http://localhost:8000/v1",
     "model": name, "max_tokens": 4096, "api_key": "dummy"}
 pathlib.Path("rl/configs/_bailian_rl.generated.yaml").write_text(
     yaml.safe_dump(cfg, allow_unicode=True))
+pool = yaml.safe_load(open(pool_p))
+mix = pool.get("mix", {})
+sw, iw = int(mix.get("screenplay_weight", 3)), int(mix.get("idea_weight", 2))
+sps, ideas = pool.get("screenplays", []), pool.get("ideas", [])
+# 确定性调度表:每周期 sw 个剧本位 + iw 个 idea 位,组内各自轮转
+cycle = ["s"] * sw + ["i"] * iw
+pos = it % len(cycle)
+kind = cycle[pos] if (sps or ideas) else "s"
+if kind == "i" and not ideas: kind = "s"
+if kind == "s" and not sps: kind = "i"
+# 该制式的【累计第几次】= 完整周期数×每周期名额 + 本周期内已过名额
+# (修:旧版按周期号取游标,同周期内连抽同一任务)
+n_cyc = it // len(cycle)
+if kind == "s":
+    k = n_cyc * sw + cycle[:pos].count("s")
+    e = sps[k % len(sps)]
+    print(json.dumps({"mode": "screenplay", "file": e["file"],
+                      "prompt": e["prompt"]}, ensure_ascii=False))
+else:
+    k = n_cyc * iw + cycle[:pos].count("i")
+    print(json.dumps({"mode": "idea", "prompt": ideas[k % len(ideas)]},
+                     ensure_ascii=False))
 PY
-  echo "== rollout #$i script=${SCRIPTS[$idx]} policy=$MODEL_NAME" \
-       "(v$MAESTRO_POLICY_VERSION)"
-  python scripts/test_window_movie.py \
-    --config rl/configs/_bailian_rl.generated.yaml \
-    --screenplay "${SCRIPTS[$idx]}" --prompt "${PROMPTS[$idx]}" \
-    --rl-group $RL_GROUP --n-candidates 1 --max-turns 1 \
-    >> $LOGS/rollout.log 2>&1
+)
+  TASK_MODE=$(echo "$TASK_JSON" | python -c "import sys,json;print(json.load(sys.stdin)['mode'])")
+  TASK_PROMPT=$(echo "$TASK_JSON" | python -c "import sys,json;print(json.load(sys.stdin)['prompt'])")
+  echo "== rollout #$i mode=$TASK_MODE prompt=$TASK_PROMPT" \
+       "policy=$MODEL_NAME (v$MAESTRO_POLICY_VERSION)"
+  if [[ "$TASK_MODE" == "screenplay" ]]; then
+    TASK_FILE=$(echo "$TASK_JSON" | python -c "import sys,json;print(json.load(sys.stdin)['file'])")
+    python scripts/test_window_movie.py \
+      --config rl/configs/_bailian_rl.generated.yaml \
+      --screenplay "$TASK_FILE" --prompt "$TASK_PROMPT" \
+      --rl-group $RL_GROUP --n-candidates 1 --max-turns 1 \
+      >> $LOGS/rollout.log 2>&1
+  else
+    python scripts/test_window_movie.py \
+      --config rl/configs/_bailian_rl.generated.yaml \
+      --prompt "$TASK_PROMPT" \
+      --rl-group $RL_GROUP --n-candidates 1 --max-turns 1 \
+      >> $LOGS/rollout.log 2>&1
+  fi
   echo "== rollout #$i exit=$?"
   i=$(( i + 1 ))
 done

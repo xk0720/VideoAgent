@@ -1,0 +1,29 @@
+# RL 训练任务池(2026-08-14 用户设计:剧本/idea 双制式)
+# 覆盖轴:交界配比 · 空间数 · 人数 · 对白密度 · 时长 —— 按轴配平,
+# 不按题材凑数。农场按 weight 加权轮转(确定性调度,断点可续)。
+
+mix:
+  screenplay_weight: 3        # 给定剧本 : 给定 idea = 3 : 2(≈60/40)
+  idea_weight: 2
+
+screenplays:                  # 给定剧本制式(结构稳,state 重访)
+  - {file: scripts/sim_scripts/s1_snowbus.json,  prompt: 雪夜末班车}
+  - {file: scripts/sim_scripts/s2_rooftop.json,  prompt: 天台魔术师}
+  - {file: scripts/sim_scripts/s3_bakery.json,   prompt: 晨光面包店}
+  - {file: scripts/sim_scripts/s4_beach.json,    prompt: 海边的信}
+  - {file: scripts/sim_scripts/s5_rainstop.json, prompt: 雨停之前}
+  # vimax_benchmark_zh 的训练子集(29 个)翻译验收后追加到这里;
+  # 【评测专用禁训】held-out(每型 2 个,共 6):
+  #   chef_international_kitchens_typeA, artist_extreme_weather_typeA,
+  #   board_game_cafe_interior_typeB, puzzle_solving_escape_room_typeB,
+  #   athletes_gym_training_duo_typeC, detective_witness_interview_typeC
+
+ideas:                        # 给定 idea 制式(编剧现写,state 探索)
+  - 深夜便利店,店员和最后一位客人的十分钟
+  - 老修表匠收到一块停在某个时刻的怀表
+  - 早高峰地铁,两个陌生人反复让座
+  - 顶楼天台,辞职当天的最后一支烟被雨浇灭
+  - 菜市场收摊时,母女为一条鱼讨价还价
+  - 图书馆闭馆前,管理员发现一张三十年前的借书卡
+  - 火锅店里一个人过生日的男人
+  - 台风天,外卖员送最后一单

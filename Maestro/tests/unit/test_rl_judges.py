@@ -165,3 +165,24 @@ def test_collector_v3_overwrites_rewards(tmp_path):
     # 无肖像/视图参考 → consistency 跳过并被剔除留痕
     assert "consistency" in s0["dropped_components"]
     assert s0["reward"] > s1["reward"]     # 排名+文本双赢 → 合成分更高
+
+
+def test_batch_metrics_component_means():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]
+                            / "rl" / "train"))
+    from train_online import batch_metrics
+    batch = [{"samples": [
+        {"reward": 0.8, "r_format": 1.0, "r_text": 0.9, "r_video": 0.7,
+         "advantage": 0.1,
+         "video_detail": {"action": 1.0, "physics": 0.5}},
+        {"reward": 0.4, "r_format": 1.0, "r_text": None, "r_video": 0.3,
+         "advantage": -0.1,
+         "video_detail": {"action": 0.0}}]}]
+    m = batch_metrics(batch)
+    assert m["reward/mean"] == 0.6
+    assert m["reward/text"] == 0.9          # None 剔除后均值
+    assert m["batch/judged_text_rate"] == 0.5
+    assert m["video/action"] == 0.5
+    assert m["video/physics"] == 0.5        # 只有一个样本有该维
+    assert m["video/consistency"] is None   # 全缺 → None,不造 0
+    assert abs(m["advantage/std"] - 0.1) < 1e-9

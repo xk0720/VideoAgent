@@ -77,3 +77,15 @@ S3 在线:vllm 换脑 + rollout 农场 + 异步 join + 热载
     元素清单;光线天色/取景豁免;不可判项 null 不计分母)——
     排名会把"矮子里的将军"当好样本,直判还能监控全组烂。
 - 时序一致性不评(用户裁决:底模能力,策略够不着)。
+
+
+## 训练集与监控(2026-08-14 用户令)
+- 任务池 rl/configs/task_pool.yaml:剧本/idea 双制式,权重 3:2 加权
+  轮转(确定性调度,断点续跑不乱序);设计主轴 = 决策覆盖轴(交界
+  配比/空间数/人数/对白密度/时长),不按题材凑数。
+- 红线:vimax_benchmark 每型留 2 个(共 6)为 held-out 评测集永不
+  入训;其余 29 个翻译验收后可入池。
+- 监控:trainer 每步打印+wandb(--wandb,默认 WANDB_MODE=offline
+  落本地、wandb sync 补传;未装 wandb 诚实降级纯打印):loss、
+  reward 总/format/text/video、四个视频分维、judged 率、
+  advantage/std(最关键曲线:塌 0 = 判官分不出好坏,训练空转)。

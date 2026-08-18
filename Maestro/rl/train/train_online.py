@@ -67,6 +67,56 @@ def load_new_groups(offset: int, staleness_max: int,
     return out, len(lines)
 
 
+def batch_metrics(batch: list) -> dict:
+    """一步更新的监测指标(2026-08-14 用户令:reward 各分项都要看)。
+    None 分量按缺失剔除;advantage 统计衡量组内信号强度 —— std 塌到
+    0 附近 = 判官分不出好坏,训练在空转,这是最该盯的一条曲线。"""
+    def _mean(vals):
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals), 4) if vals else None
+    samples = [s for g in batch for s in g["samples"]]
+    advs = [s.get("advantage", 0.0) for s in samples]
+    m = {"reward/mean": _mean([s.get("reward") for s in samples]),
+         "reward/format": _mean([s.get("r_format") for s in samples]),
+         "reward/text": _mean([s.get("r_text") for s in samples]),
+         "reward/video": _mean([s.get("r_video") for s in samples]),
+         "advantage/std": round(
+             (sum(a * a for a in advs) / max(1, len(advs))) ** 0.5, 4),
+         "batch/groups": len(batch),
+         "batch/samples": len(samples),
+         "batch/judged_text_rate": round(
+             sum(1 for s in samples if s.get("r_text") is not None)
+             / max(1, len(samples)), 3),
+         "batch/judged_video_rate": round(
+             sum(1 for s in samples if s.get("r_video") is not None)
+             / max(1, len(samples)), 3)}
+    for dim in ("action", "physics", "camera", "consistency"):
+        m[f"video/{dim}"] = _mean(
+            [(s.get("video_detail") or {}).get(dim) for s in samples])
+    return m
+
+
+def wandb_init(args, enabled: bool):
+    """wandb 可选依赖 + 离线优先(2026-08-14:训练服务器出网受限,
+    默认 WANDB_MODE=offline 落本地,之后 wandb sync 补传;装了才用,
+    没装诚实降级为纯打印,绝不因监控库缺失挡训练)。"""
+    if not enabled:
+        return None
+    try:
+        import os
+        import wandb
+        os.environ.setdefault("WANDB_MODE", "offline")
+        wandb.init(project=args.wandb_project, name=args.wandb_run,
+                   config={"model": args.model, "lr": args.lr,
+                           "batch_groups": args.batch_groups,
+                           "staleness_max": args.staleness_max})
+        return wandb
+    except Exception as exc:
+        print(f"[trainer] wandb unavailable ({exc}) — metrics will "
+              "only be printed", flush=True)
+        return None
+
+
 def hot_reload_vllm(vllm_url: str, adapter_name: str,
                     adapter_path: Path) -> bool:
     import requests
@@ -94,9 +144,14 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="不加载模型:验证数据流/分组/advantage")
     ap.add_argument("--data", default=str(DATA))
+    ap.add_argument("--wandb", action="store_true",
+                    help="开 wandb 监控(默认 offline 模式落本地)")
+    ap.add_argument("--wandb-project", default="maestro-brain-rl")
+    ap.add_argument("--wandb-run", default=None)
     args = ap.parse_args()
     DATA = Path(args.data)
 
+    wb = wandb_init(args, args.wandb)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     CKPT_DIR.mkdir(parents=True, exist_ok=True)
     ver_file = STATE_DIR / "policy_version.txt"
@@ -154,8 +209,19 @@ def main() -> int:
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
         step += 1
-        print(f"[trainer] step={step} groups={len(batch)} "
-              f"samples={n} loss={total / max(1, n):.4f}", flush=True)
+        met = batch_metrics(batch)
+        met["train/loss"] = round(total / max(1, n), 4)
+        met["train/policy_version"] = version
+        print(f"[trainer] step={step} loss={met['train/loss']} "
+              f"reward={met['reward/mean']} "
+              f"(fmt={met['reward/format']} text={met['reward/text']} "
+              f"video={met['reward/video']}) "
+              f"adv_std={met['advantage/std']} "
+              f"video_dims=[act={met['video/action']} "
+              f"phy={met['video/physics']} cam={met['video/camera']} "
+              f"con={met['video/consistency']}]", flush=True)
+        if wb is not None:
+            wb.log(met, step=step)
         if step % args.save_every == 0:
             version += 1
             adapter = CKPT_DIR / f"adapter_v{version}"
