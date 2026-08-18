@@ -277,6 +277,18 @@ def main() -> int:
                 ver_file.write_text(str(version))
                 (STATE_DIR / "active_adapter.txt").write_text(
                     f"brain-v{version}")
+                # 装新卸旧(--max-loras 4 只有 4 个插槽,只装不卸训到
+                # 第 5 次保存必然满仓;留 v-1 给在途请求当缓冲)
+                if version >= 3:
+                    try:
+                        import requests as _rq
+                        _rq.post(f"{args.vllm_url}"
+                                 "/v1/unload_lora_adapter",
+                                 json={"lora_name":
+                                       f"brain-v{version - 2}"},
+                                 timeout=30)
+                    except Exception:
+                        pass          # 卸旧失败不致命,满仓时自然报错
             print(f"[trainer] saved {adapter} hot_reload={ok} "
                   f"policy_version={version}", flush=True)
     return 0
