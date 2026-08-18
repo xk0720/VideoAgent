@@ -220,7 +220,9 @@ echo "== 收集器/trainer 已起(logs: $LOGS)"
 # ── ② rollout 农场(前台循环 = 本脚本的生命线)────────────────────
 # 任务来源 = rl/configs/task_pool.yaml(2026-08-14:剧本/idea 双制式
 # 加权轮转;确定性调度 = 按迭代序号取模,断点续跑不乱序)
-TASK_POOL=${TASK_POOL:-rl/configs/task_pool.yaml}
+# 默认 = 100 条正式训练集(2026-08-18);老的 5+8 小池是
+# rl/configs/task_pool.yaml,想用它就显式 TASK_POOL= 指过去
+TASK_POOL=${TASK_POOL:-rl/configs/task_pool_train100.yaml}
 i=0
 while true; do
   ADAPTER=$(cat $RL/state/active_adapter.txt 2>/dev/null || true)
