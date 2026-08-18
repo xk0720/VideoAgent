@@ -76,6 +76,24 @@ assert n >= 1, "mock rollout 未产出组记录"
 print(f"[smoke] mock rollout OK: {n} groups in {run}")
 PY
   python rl/collect/watch_online.py --once --outputs "$SBX"     --out "$SBX/groups.jsonl" --state "$SBX/state.json" || exit 1
+  # mock 各候选 m1/p1 全同 → 组内零优势被 trainer 正确弃组(这正是
+  # reward v2 焊死结构代理刷分的证明)。补一个带真差异的合成组,
+  # 专验 trainer 的分组/优势数学:
+  python - "$SBX/groups.jsonl" <<'PY'
+import json, sys
+g = {"kind": "condition_group", "run": "synthetic", "shot_idx": 0,
+     "label": "synthetic shot", "junction_kind": None,
+     "policy_version": "1", "group_size": 3,
+     "menu": [{"name": "t2v"}],
+     "context": {"shot": {"label": "synthetic"}},
+     "samples": [
+       {"decision_id": f"d{i}", "via": "llm", "chosen": i == 0,
+        "completion": '{"strategy": "t2v"}', "raw": '{"strategy": "t2v"}',
+        "weighted_total": w, "reward": 0.2 + 0.8 * w,
+        "metrics": {"m1_semantic": w, "p1_physics": w}}
+       for i, w in enumerate([0.9, 0.5, 0.7])]}
+open(sys.argv[1], "a").write(json.dumps(g) + "\n")
+PY
   python rl/train/train_online.py --dry-run --data "$SBX/groups.jsonl"     | tee /tmp/rl_smoke_trainer.txt || exit 1
   grep -qE "usable groups=[1-9]" /tmp/rl_smoke_trainer.txt || { echo "❌ trainer 分组为 0"; exit 1; }
   python -m pytest tests/unit/test_rl_group.py -q || exit 1

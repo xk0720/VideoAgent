@@ -49,3 +49,13 @@ S3 在线:vllm 换脑 + rollout 农场 + 异步 join + 热载
 - trainer 诚实定位:组相对优势 policy gradient(LoRA),陈旧度 ≤K 版
   过滤,无 ratio clip;vLLM --enable-lora 热载 adapter,policy_version
   经 MAESTRO_POLICY_VERSION 注入 rollout 记录。
+
+
+## reward v2(2026-08-13 用户裁决)
+- task 分只取【看片维】:r_task = 0.5·m1_semantic + 0.5·p1_physics
+  (VLM 真读画面的两维);p2 剔除(用户令),id1/m2 剔除(结构代理:
+  只看挂没挂参考/钉没钉帧,策略选择可白刷分 —— 组内相对优势会放大
+  该偏差,训出"无脑 ref2v 机器"),m5/aesthetic 剔除(常量/读计划)。
+- rl_steps 样本携带全维 metrics,收集器算分;老记录退回 weighted_total。
+- 后续升级(待令):id1 → VLM 肖像逐项比对(量规借 ViMax
+  best_image_selector 的七条外观清单);m2 → 帧间 MAD 测量型。

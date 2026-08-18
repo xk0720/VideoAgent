@@ -112,6 +112,7 @@ def test_rl_group_samples_and_records(tmp_path, monkeypatch):
     for s_ in g["samples"]:
         assert s_["decision_id"]
         assert "weighted_total" in s_
+        assert "m1_semantic" in s_["metrics"]     # reward v2 的原料
     # 变体策略确实多样(轮换桩:两种策略都出现过)
     strats = {s_["strategy"] for s_ in g["samples"]}
     assert strats == {"i2v_keyframe", "t2v"}

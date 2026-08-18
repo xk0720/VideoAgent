@@ -5100,6 +5100,9 @@ def generate_movie_windowed(
                         "weighted_total": float(
                             (_clip.metric_scores or {}).get(
                                 "weighted_total", 0.0)),
+                        # 全维分数入记录(2026-08-13 reward v2:训练
+                        # 侧只取"看片维",结构代理/常量在收集器剔除)
+                        "metrics": dict(_clip.metric_scores or {}),
                         "video": str(_clip.video_path),
                         "chosen": str(_clip.video_path) ==
                                   str(best.video_path)}

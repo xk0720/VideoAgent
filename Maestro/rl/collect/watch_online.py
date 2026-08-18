@@ -23,6 +23,18 @@ OUT = REPO / "rl/data/groups_online.jsonl"
 W_FORMAT, W_TASK = 0.2, 0.8
 
 
+def _task_score(s: dict) -> float:
+    """reward v2(2026-08-13 用户裁决):只取【看片维】——
+    r_task = 0.5·m1_semantic + 0.5·p1_physics。
+    剔除:id1/m2(结构代理 —— 只看挂没挂图/钉没钉帧,可被策略选择
+    白刷分,组内对比会放大该偏差)、p2(用户令:去掉)、m5/aesthetic
+    (常量/读计划)。老记录无分维数据 → 退回 weighted_total。"""
+    m = s.get("metrics") or {}
+    if "m1_semantic" in m and "p1_physics" in m:
+        return 0.5 * float(m["m1_semantic"]) +             0.5 * float(m["p1_physics"])
+    return float(s.get("weighted_total") or 0.0)
+
+
 def _brain_index(run_dir: Path) -> dict:
     idx = {}
     p = run_dir / "brain_calls.jsonl"
@@ -63,7 +75,7 @@ def collect_run(run_dir: Path, seen: set) -> list:
         for s_ in g.get("samples") or []:
             call = bidx.get(s_.get("decision_id")) or {}
             r_fmt = 1.0 if s_.get("via") == "llm" else 0.0
-            wt = float(s_.get("weighted_total") or 0.0)
+            wt = _task_score(s_)
             r = round(W_FORMAT * r_fmt + W_TASK * wt, 4)
             samples.append({**s_, "r_format": r_fmt,
                             "reward": r,
