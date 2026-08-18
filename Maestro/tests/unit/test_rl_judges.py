@@ -186,3 +186,20 @@ def test_batch_metrics_component_means():
     assert m["video/physics"] == 0.5        # 只有一个样本有该维
     assert m["video/consistency"] is None   # 全缺 → None,不造 0
     assert abs(m["advantage/std"] - 0.1) < 1e-9
+
+
+def test_group_rank_lines_per_candidate():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]
+                            / "rl" / "train"))
+    from train_online import group_rank_lines
+    batch = [{"run": "movie_x", "label": "s1", "samples": [
+        {"video_detail": {"action": 1.0, "physics": 2 / 3,
+                          "camera": 1.0, "consistency": 0.85}},
+        {"video_detail": {"action": 0.0, "physics": None,
+                          "camera": 0.5}},
+        {"video_detail": {}}]}]
+    lines = group_rank_lines(batch)
+    assert len(lines) == 1
+    assert "c0 a/p/c=1.00/0.67/1.00 avg=0.89 con=0.85" in lines[0]
+    assert "c1 a/p/c=0.00/--/0.50 avg=0.25" in lines[0]
+    assert "c2" not in lines[0]               # 无排序分的候选不占行

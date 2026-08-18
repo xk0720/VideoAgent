@@ -6,6 +6,7 @@
 #    bash rl/run_grpo.sh            # 全链:vLLM 策略 + rollout 农场 +
 #                                  # 收集器 + trainer(需 GPU 机)
 #    bash rl/run_grpo.sh --smoke    # 无 GPU 自检:数据流/分组/advantage
+#    bash rl/run_grpo.sh --fresh    # 全新训练:清零状态+开跑标记后继续起链
 #
 #  四进程:①vLLM 服 Qwen3(--enable-lora,adapter 热载)
 #          ②rollout 农场(现有管线,--rl-group K,review 开、enhancer
@@ -58,6 +59,21 @@ PIDS=()
 # ${arr[@]+...} = set -u 下的空数组安全展开(bash 全版本;绝不 kill 0)
 cleanup() { for p in ${PIDS[@]+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT INT TERM
+
+# ── --fresh:全新训练总开关(2026-08-18 用户令:系统默认断点续跑,
+#    这个开关一键归零)——清收集台账/书签/版本计数/旧 checkpoint,
+#    杀掉带旧 adapter 的 vLLM,落"开跑标记"(收集器只收标记之后的
+#    rollout,旧片彻底隔离)─────────────────────────────────────────
+if [[ "${1:-}" == "--fresh" ]]; then
+  shift
+  echo "== FRESH:清零训练状态"
+  rm -f rl/data/groups_online.jsonl rl/data/.watch_state.json
+  rm -rf rl/state rl/ckpt
+  mkdir -p rl/state
+  date "+movie_%Y%m%d_%H%M%S" > rl/state/session_start
+  pkill -f "vllm serve" 2>/dev/null && sleep 5
+  echo "== FRESH 完成,标记 $(cat rl/state/session_start)"
+fi
 
 # ── smoke:无 GPU 自检 ────────────────────────────────────────────────
 if [[ "${1:-}" == "--smoke" ]]; then
@@ -141,7 +157,10 @@ esac
 if ! curl -s "http://localhost:$VLLM_PORT/v1/models" >/dev/null; then
   echo "== 启动 vLLM($BASE_MODEL)"
   VLLM_TP=$(( $(echo "$VLLM_GPUS" | tr -cd "," | wc -c) + 1 ))
+  # VLLM_ALLOW_RUNTIME_LORA_UPDATING:不开它 /v1/load_lora_adapter
+  # 直接 4xx,热载永败(2026-08-18 实报根因)
   CUDA_VISIBLE_DEVICES=$VLLM_GPUS \
+  VLLM_ALLOW_RUNTIME_LORA_UPDATING=True \
   vllm serve "$BASE_MODEL" --served-model-name brain \
     --enable-lora --max-loras 4 --port $VLLM_PORT \
     --tensor-parallel-size $VLLM_TP \

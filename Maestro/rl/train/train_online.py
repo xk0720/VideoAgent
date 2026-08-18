@@ -122,16 +122,47 @@ def wandb_init(args, enabled: bool):
 
 def hot_reload_vllm(vllm_url: str, adapter_name: str,
                     adapter_path: Path) -> bool:
+    """失败必须带 vLLM 的原话(2026-08-18 排障:光一个 False 查不了案;
+    常见根因 = 起服未开 VLLM_ALLOW_RUNTIME_LORA_UPDATING=True)。"""
     import requests
     try:
         r = requests.post(f"{vllm_url}/v1/load_lora_adapter",
                           json={"lora_name": adapter_name,
                                 "lora_path": str(adapter_path)},
                           timeout=60)
-        return r.status_code < 400
+        if r.status_code < 400:
+            return True
+        print(f"[trainer] vLLM hot-reload REJECTED "
+              f"({r.status_code}): {r.text[:300]}", flush=True)
+        return False
     except Exception as exc:
         print(f"[trainer] vLLM hot-reload failed: {exc}", flush=True)
         return False
+
+
+def group_rank_lines(batch: list) -> list[str]:
+    """逐组逐候选的排序维得分(2026-08-18 用户令:排名点数组均值恒
+    0.5 是恒等式,要看就看每个候选的分与其平均)。"""
+    lines = []
+    for g in batch:
+        parts = []
+        for i, s in enumerate(g.get("samples", [])):
+            vd = s.get("video_detail") or {}
+            dims = [vd.get(k) for k in ("action", "physics", "camera")]
+            if all(d is None for d in dims):
+                continue
+            shown = [f"{d:.2f}" if d is not None else "--"
+                     for d in dims]
+            avg = [d for d in dims if d is not None]
+            parts.append(
+                f"c{i} a/p/c={'/'.join(shown)}"
+                f" avg={sum(avg) / len(avg):.2f}"
+                + (f" con={vd['consistency']:.2f}"
+                   if vd.get("consistency") is not None else ""))
+        if parts:
+            lines.append(f"  [{g.get('run', '?')}/{g.get('label', '?')}] "
+                         + " | ".join(parts))
+    return lines
 
 
 def main() -> int:
@@ -230,17 +261,24 @@ def main() -> int:
               f"con={met['video/consistency']}]", flush=True)
         if wb is not None:
             wb.log(met, step=step)
+        for ln in group_rank_lines(batch):
+            print(ln, flush=True)
         if step % args.save_every == 0:
-            version += 1
-            adapter = CKPT_DIR / f"adapter_v{version}"
+            cand = version + 1
+            adapter = CKPT_DIR / f"adapter_v{cand}"
             model.save_pretrained(adapter)
-            ver_file.write_text(str(version))
-            ok = hot_reload_vllm(args.vllm_url, f"brain-v{version}",
+            ok = hot_reload_vllm(args.vllm_url, f"brain-v{cand}",
                                  adapter)
-            (STATE_DIR / "active_adapter.txt").write_text(
-                f"brain-v{version}" if ok else "")
-            print(f"[trainer] saved {adapter} hot_reload={ok}",
-                  flush=True)
+            if ok:
+                # 版本号只在权重真正进了 vLLM 后才推进(2026-08-18:
+                # 热载失败还 +1 会让陈旧度过滤误杀好样本,且农场
+                # 挂空 adapter 名)
+                version = cand
+                ver_file.write_text(str(version))
+                (STATE_DIR / "active_adapter.txt").write_text(
+                    f"brain-v{version}")
+            print(f"[trainer] saved {adapter} hot_reload={ok} "
+                  f"policy_version={version}", flush=True)
     return 0
 
 

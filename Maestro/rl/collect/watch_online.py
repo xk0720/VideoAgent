@@ -230,12 +230,22 @@ def main() -> int:
     ap.add_argument("--outputs", default=str(REPO / "outputs"))
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--state", default=str(STATE))
+    ap.add_argument("--since-marker",
+                    default=str(REPO / "rl/state/session_start"),
+                    help="开跑标记文件(--fresh 写入;存在则只收目录名"
+                         "晚于标记值的 run —— 旧 rollout 彻底隔离)")
     ap.add_argument("--judge", action="store_true",
                     help="开 reward v3 双重评审(文本+视频判官;需百炼 key)")
     ap.add_argument("--judge-config",
                     default=str(REPO / "rl/configs/server_bailian_qwen.yaml"))
     args = ap.parse_args()
     judges = build_judges(args.judge_config) if args.judge else None
+    cutoff = ""
+    mk = Path(args.since_marker)
+    if mk.exists():
+        cutoff = mk.read_text().strip()
+        print(f"[collector] fresh marker: only runs after {cutoff}",
+              flush=True)
     out_path = Path(args.out)
     state_path = Path(args.state)
     seen = set()
@@ -248,6 +258,8 @@ def main() -> int:
     while True:
         new = 0
         for run_dir in sorted(Path(args.outputs).glob("movie_*")):
+            if cutoff and run_dir.name <= cutoff:
+                continue                    # 开跑标记之前的旧 rollout
             groups = collect_run(run_dir, seen, judges=judges)
             if groups:
                 with open(out_path, "a") as f:
