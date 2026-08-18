@@ -71,7 +71,24 @@ if [[ "${1:-}" == "--stop" ]]; then
   pkill -f "vllm serve"            2>/dev/null && echo "  vllm ✓"
   sleep 3
   pkill -9 -f "vllm serve" 2>/dev/null
-  echo "== 残留检查:"; ps aux | grep -E "vllm|train_online|watch_online|test_window_movie" | grep -v grep || echo "  (干净)"
+  pkill -9 -f "VLLM::EngineCore" 2>/dev/null
+  pkill -9 -f "vllm.entrypoints" 2>/dev/null
+  # 兜底:按【显卡占用 PID】清(2026-08-18 实报:vLLM 的 worker 子
+  # 进程名不含 "vllm serve",按名清杀漏网,显存不放)
+  if command -v nvidia-smi >/dev/null; then
+    GPIDS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader \
+            2>/dev/null | tr -d " ")
+    if [[ -n "$GPIDS" ]]; then
+      echo "== 显卡残留 PID:$GPIDS(kill -9)"
+      echo "$GPIDS" | xargs -r kill -9 2>/dev/null
+      sleep 2
+    fi
+    nvidia-smi --query-compute-apps=pid,used_memory \
+      --format=csv,noheader 2>/dev/null | grep . \
+      && echo "⚠️ 仍有占卡进程,手动 nvidia-smi 核查" \
+      || echo "== 显存已清空"
+  fi
+  echo "== 进程残留:"; ps aux | grep -E "vllm|train_online|watch_online|test_window_movie" | grep -v grep || echo "  (干净)"
   exit 0
 fi
 
