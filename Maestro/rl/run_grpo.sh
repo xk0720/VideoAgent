@@ -151,7 +151,7 @@ fi
 echo "== vLLM 就绪"
 
 # ── ③ 收集器 & ④ trainer ────────────────────────────────────────────
-python rl/collect/watch_online.py > $LOGS/collector.log 2>&1 &
+python rl/collect/watch_online.py --judge > $LOGS/collector.log 2>&1 &
 PIDS+=($!)
 CUDA_VISIBLE_DEVICES=$TRAIN_GPUS \
 python rl/train/train_online.py --model "$BASE_MODEL" \
