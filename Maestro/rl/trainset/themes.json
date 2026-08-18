@@ -1,0 +1,348 @@
+{
+  "bench": [
+    {
+      "type": "Type A",
+      "theme_key": "chengshi_chenjian",
+      "theme": "一名成年通勤者清晨独自穿行公寓、电车站与写字楼，安静完成上班准备。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "dengta_jilu",
+      "theme": "一名成年灯塔管理员在白天与夜晚往返塔顶、值班室和海边记录天气。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "zhiwu_yanghu",
+      "theme": "一名成年植物养护员独自巡查温室、屋顶花园与办公大厅并整理绿植。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "yeshi_shougong",
+      "theme": "一名成年手工艺人傍晚从工作室前往夜市摊位，独自布置并展示木制摆件。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "gaoshan_celiang",
+      "theme": "一名成年测绘员白天独自经过山路、草坡与观景台，完成多点地形记录。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "bowuguan_biye",
+      "theme": "一名成年展陈员闭馆后独自穿过展厅、库房和修复室检查陈列状态。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "yudi_sushe",
+      "theme": "一名成年研究员在雨夜独自往返观测甲板、狭窄舱室与通信间整理数据。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "mianbao_songhuo",
+      "theme": "一名成年面包师清晨独自在烘焙间、街道与社区柜台之间完成送货。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "shamo_guance",
+      "theme": "一名成年气象观察员从日落到星夜独自穿越沙丘营地与仪器站采集读数。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "jiuchang_xunwei",
+      "theme": "一名成年调香师白天独自走访花田、蒸馏坊与气味档案室寻找新香调。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "tushuguan_xiufu",
+      "theme": "两名成年修复师在白天的古籍修复室内围绕长桌、压书机与材料架细致协作。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "qiancheng_ceshi",
+      "theme": "一名成年工程师在夜间潜艇模拟舱内操作阀门、仪表墙与狭窄控制台完成测试。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "jiudian_chufang",
+      "theme": "三名成年厨师在午间酒店后厨同一空间内协调蒸烤设备、备餐台与传菜口。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "guangbo_zhibo",
+      "theme": "两名成年主持人在夜间广播直播间内切换话筒、音控台与来电屏幕展开大量对白。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "zhongzi_dangan",
+      "theme": "一名成年保管员在地下种子档案库内核对密集抽屉、冷藏柜与环境面板。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "hunli_huafang",
+      "theme": "三名成年花艺师在白天花房内利用操作岛、悬挂架与冷柜共同制作大型花门。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "feixing_moniting",
+      "theme": "两名成年教员在夜间飞行模拟中心内围绕驾驶舱、投影幕与控制席进行平静演练。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "taoci_jiaoshi",
+      "theme": "三名成年学员在陶艺教室内使用转盘、釉料墙与晾坯架完成不同器皿。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "xijuyifu_cang",
+      "theme": "一名成年服装管理员在剧院衣帽库内穿行旋转衣架、熨烫台与编号柜清点服饰。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "tianwen_kongzhishi",
+      "theme": "两名成年观测员在山顶天文控制室内调节圆顶、终端阵列与星图台追踪夜空。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "gongyuan_qipan",
+      "theme": "两名成年邻居白天在公园石桌旁下棋，以少量对白和细微表情交流。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "yujia_daoke",
+      "theme": "三名成年旅客在雨夜车站候车区因列车延迟展开轻松而密集的交谈。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "haibian_fengzheng",
+      "theme": "两名成年朋友在晴日海滩合作放飞大型风筝，奔跑调整线轴并互相提示。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "jiating_yueqi",
+      "theme": "三名成年室友夜晚在客厅尝试合奏手鼓、吉他与口琴，笑着协调节奏。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "nongchang_caiyang",
+      "theme": "两名成年农艺师清晨在露天农场共同采样土壤，以简短手势分配任务。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "dianti_linju",
+      "theme": "三名成年住户在公寓电梯短暂受检停靠时礼貌聊天并互相分享购物袋空间。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "xueye_sheying",
+      "theme": "两名成年摄影爱好者在雪夜广场合作完成长曝光拍摄，频繁讨论构图与灯光。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "chuanwu_ditu",
+      "theme": "三名成年游客在白天的观光船舱内研究航线图并商量下一处停靠点。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "shequ_fenlei",
+      "theme": "两名成年志愿者傍晚在社区回收站快速整理物品，默契配合而很少说话。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "wuding_wancan",
+      "theme": "三名成年同事夜晚在屋顶餐桌旁分享家常晚餐，围绕旅行计划热烈交谈。"
+    }
+  ],
+  "story": [
+    {
+      "type": "Type A",
+      "theme_key": "shizhong_xunji",
+      "theme": "一名成年钟表匠从晨间店铺走到钟楼机房，再回家寻找一枚停摆怀表的原因。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "yundonghui_zhunbei",
+      "theme": "一名成年场地协调员独自穿梭仓库、跑道与看台，为社区运动日完成最后布置。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "bingdao_youji",
+      "theme": "一名成年地质记录员在白昼冰岛海岸、黑沙滩与岩洞外依次收集自然样本。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "chengshi_suxie",
+      "theme": "一名成年插画师从午后旧街画到黄昏天桥，最终在夜间餐馆整理城市速写。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "huoche_shuimian",
+      "theme": "一名成年乘务员独自巡视夜行卧铺车厢、餐车与连接通道，帮助维护安静旅程。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "shuixi_guance",
+      "theme": "一名成年水文员在雨后沿河堤、湿地栈道与泵站记录逐渐回落的水位。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "xueyuan_kaifang",
+      "theme": "一名成年管理员清晨依次开启礼堂、画室和庭院，为校园开放日做好准备。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "yuncang_jiancha",
+      "theme": "一名成年技术员在高空云层观测站的外台、气球舱与数据室完成独立巡检。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "xiangcun_youbian",
+      "theme": "一名成年邮递员骑车经过田间小路、村口商店与山坡住家，送出几封手写信。"
+    },
+    {
+      "type": "Type A",
+      "theme_key": "wuye_xunchuang",
+      "theme": "一名成年橱窗设计师夜间走访三家不同店面，逐步完成一组季节主题陈列。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "dangao_zhanlan",
+      "theme": "三名成年评审在明亮展览厨房内观察旋转台、冷藏柜与灯光墙上的创意蛋糕。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "disheng_shiyan",
+      "theme": "两名成年声学研究员在无回声实验室内用移动音板和传感器寻找最安静的位置。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "shucai_paimai",
+      "theme": "三名成年采购员在清晨室内批发大厅的一间竞价室里快速讨论并完成蔬菜订货。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "laodainao_dangan",
+      "theme": "一名成年档案员在堆满旧电脑、磁带柜与读取设备的数字保存室恢复家庭录像目录。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "haiyang_jiaoshi",
+      "theme": "两名成年讲师在海洋教学舱内借助水循环模型、观察窗与图表墙准备公开课程。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "xiangliao_cangku",
+      "theme": "三名成年调配师在香料仓库同一大厅内辨认密集货架上的气味并协商配方。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "wutai_dengguang",
+      "theme": "两名成年灯光师在空剧场控制室内通过调光台、监视屏与提示表设计柔和场景。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "zhineng_xiyifang",
+      "theme": "一名成年值班员夜间在大型自助洗衣房内处理传送篮、烘干墙与故障提示灯。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "fengdong_shiyan",
+      "theme": "两名成年设计师在风洞实验舱内调整缩尺建筑、烟流装置与多排测量探头。"
+    },
+    {
+      "type": "Type B",
+      "theme_key": "qiaokeli_gongfang",
+      "theme": "三名成年巧克力师在玻璃工坊内围绕调温机、模具架与包装桌开发节庆礼盒。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "shanding_richu",
+      "theme": "两名成年徒步者在山顶等待日出，用很少的对白分享热饮和远处景色。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "caifeng_dingzhi",
+      "theme": "三名成年顾客与裁缝在安静试衣室讨论一套保守礼服的尺寸、面料和使用场合。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "yewai_guanxing",
+      "theme": "两名成年天文爱好者在乡间草地组装望远镜，因一张模糊星图展开耐心推理。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "shichang_xunwei",
+      "theme": "三名成年朋友在白天露天市场轮流挑选陌生水果，并交流各自的烹饪想法。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "banshigong_banzhuo",
+      "theme": "两名成年同事夜晚整理共享办公桌，从便签和旧照片中回顾一年的合作。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "hupan_huahua",
+      "theme": "三名成年绘画社成员在湖边写生，因天气变化互相固定画架并调整颜料。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "shudian_huanshu",
+      "theme": "两名成年读者在旧书店偶然拿到同一本书，通过温和交谈决定交换阅读清单。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "lvguan_zaocan",
+      "theme": "三名成年陌生旅客在小旅馆早餐桌旁发现行程相近，热烈商量结伴参观花园。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "maitou_yinyue",
+      "theme": "两名成年街头乐手傍晚在码头即兴合奏，用眼神和节拍完成无对白配合。"
+    },
+    {
+      "type": "Type C",
+      "theme_key": "gongxiang_gongju",
+      "theme": "三名成年住户在社区工具间共同修理一辆手推车，边操作边讨论更方便的收纳方式。"
+    }
+  ],
+  "ideas": [
+    "成年花艺师在清晨空商场里布置一条鲜花长廊。",
+    "两位成年游客夜游古镇，边找客栈边讨论地图。",
+    "一名成年厨师在潜艇餐舱尝试制作松软面包。",
+    "三位成年室友用纸箱改造客厅的分类收纳区。",
+    "雨夜里成年站务员独自检查车站失物招领柜。",
+    "两名成年园丁在屋顶花园搬运花盆迎接日出。",
+    "成年摄影师沿着雾中湖岸寻找合适的倒影角度。",
+    "三名成年同事在安静茶室商量公益市集方案。",
+    "一名成年木匠夜间整理堆满工具的狭长工作间。",
+    "两位成年邻居在雪后院子合作清理木桌和长椅。",
+    "成年调音师在空音乐厅逐排测试座位回声效果。",
+    "三名成年旅客在船舱餐厅交换各自的旅行笔记。",
+    "一名成年农场主骑车巡看清晨的向日葵田。",
+    "两位成年研究员在种子库寻找标签模糊的样本。",
+    "成年烘焙师闭店后为第二天准备不同形状面团。",
+    "三位成年志愿者在海边收集并分类漂来的树枝。",
+    "一名成年导览员夜间独自预演水族馆讲解路线。",
+    "两位成年设计师在布料仓库搭配保守秋装面料。",
+    "成年气象员在高原营地追踪一团缓慢移动的云。",
+    "三名成年朋友在家庭厨房挑战制作彩色蔬菜面。",
+    "一名成年修表师乘公交送还刚修好的老式座钟。",
+    "两位成年露营者在河边合作架设遮雨天幕。",
+    "成年图书管理员在地下书库寻找一本错架图册。",
+    "三位成年合唱成员在楼梯间练习轻柔和声。",
+    "一名成年陶艺师从采泥到烧制记录杯子的变化。",
+    "两位成年咖啡师在打烊后测试新的无糖饮品。",
+    "成年观察员在沙漠夜色中校准一排微光仪器。",
+    "三名成年居民在社区大厅交换闲置园艺用品。",
+    "一名成年画家带着折叠画架穿过午后旧城区。",
+    "两位成年工程师在深海模拟舱核对照明面板。",
+    "成年裁缝在晨光里为橱窗模特整理端庄套装。",
+    "三名成年骑行者在乡间岔路口讨论返程路线。",
+    "一名成年管理员巡视关闭后的室内植物园。",
+    "两位成年朋友在夜市寻找五种不同香料。",
+    "成年航拍操作员在空旷盐湖记录几何纹理。",
+    "三名成年演员在化妆间安静练习生活化对白。",
+    "一名成年面点师在山间民宿准备清晨早餐。",
+    "两位成年观鸟者躲在湿地观察屋记录候鸟。",
+    "成年仓管员在自动货架间寻找一只错放纸箱。",
+    "三名成年邻居在露台晚餐时计划共享菜园。"
+  ]
+}

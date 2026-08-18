@@ -1,0 +1,165 @@
+mix:
+  screenplay_weight: 3
+  idea_weight: 2
+screenplays:
+- file: rl/trainset/screenplays/b00_chengshi_chenjian.screenplay.json
+  prompt: 故事总览:清晨，一名32岁的成年通勤者在公寓内确
+- file: rl/trainset/screenplays/b01_dengta_jilu.screenplay.json
+  prompt: 故事总览:一名成年灯塔管理员按照固定路线在海边、
+- file: rl/trainset/screenplays/b02_zhiwu_yanghu.screenplay.json
+  prompt: 故事总览:一名32岁的成年植物养护员独自完成例行
+- file: rl/trainset/screenplays/b03_yeshi_shougong.screenplay.json
+  prompt: 故事总览:傍晚，一名32岁的成年女性手工艺人完成
+- file: rl/trainset/screenplays/b04_gaoshan_celiang.screenplay.json
+  prompt: 故事总览:32岁的成年男性测绘员独自沿山地路线前
+- file: rl/trainset/screenplays/b05_bowuguan_biye.screenplay.json
+  prompt: 故事总览:闭馆后的博物馆内，32岁的成年展陈员林
+- file: rl/trainset/screenplays/b06_yudi_sushe.screenplay.json
+  prompt: 故事总览:雨夜中，一名成年研究员独自在露天观测甲
+- file: rl/trainset/screenplays/b07_mianbao_songhuo.screenplay.json
+  prompt: 故事总览:清晨，一名身份与服装始终一致的成年面包
+- file: rl/trainset/screenplays/b08_shamo_guance.screenplay.json
+  prompt: 故事总览:一名32岁的成年女性气象观察员在日落后
+- file: rl/trainset/screenplays/b09_jiuchang_xunwei.screenplay.json
+  prompt: 故事总览:32岁的成年女调香师林岚在一个白天独自
+- file: rl/trainset/screenplays/b10_tushuguan_xiufu.screenplay.json
+  prompt: 故事总览:白昼中，两名成年古籍修复师在布局恒定的
+- file: rl/trainset/screenplays/b11_qiancheng_ceshi.screenplay.json
+  prompt: 故事总览:夜间，一名34岁的成年女工程师在结构固
+- file: rl/trainset/screenplays/b12_jiudian_chufang.screenplay.json
+  prompt: 故事总览:午间出餐高峰开始，三名成年厨师在结构固
+- file: rl/trainset/screenplays/b13_guangbo_zhibo.screenplay.json
+  prompt: 故事总览:夜间广播特别节目中，两名成年主持人林岚
+- file: rl/trainset/screenplays/b14_zhongzi_dangan.screenplay.json
+  prompt: 故事总览:一名42岁的成年女性保管员在结构固定的
+- file: rl/trainset/screenplays/b15_hunli_huafang.screenplay.json
+  prompt: 故事总览:白天，三名成年花艺师在结构固定的玻璃花
+- file: rl/trainset/screenplays/b16_feixing_moniting.screenplay.json
+  prompt: 故事总览:夜间飞行模拟中心内，两名成年教员依次核
+- file: rl/trainset/screenplays/b17_taoci_jiaoshi.screenplay.json
+  prompt: 故事总览:三名成年学员在布局固定的室内陶艺教室中
+- file: rl/trainset/screenplays/b18_xijuyifu_cang.screenplay.json
+  prompt: 故事总览:一名32岁的成年剧院服装管理员在结构固
+- file: rl/trainset/screenplays/b19_tianwen_kongzhishi.screenplay.json
+  prompt: 故事总览:在一座山顶天文台的固定圆形控制室内，两
+- file: rl/trainset/screenplays/b20_gongyuan_qipan.screenplay.json
+  prompt: 故事总览:白天的社区公园里，两名成年邻居林岚与周
+- file: rl/trainset/screenplays/b21_yujia_daoke.screenplay.json
+  prompt: 故事总览:雨夜，一列客车延迟到站，三名衣着端庄、
+- file: rl/trainset/screenplays/b22_haibian_fengzheng.screenplay.json
+  prompt: 故事总览:晴朗海滩上，两名外观鲜明且均已成年的朋
+- file: rl/trainset/screenplays/b23_jiating_yueqi.screenplay.json
+  prompt: 故事总览:夜晚，三名成年室友在温馨的客厅里首次尝
+- file: rl/trainset/screenplays/b24_nongchang_caiyang.screenplay.json
+  prompt: 故事总览:清晨，两名成年农艺师在露天农场的工具台
+- file: rl/trainset/screenplays/b25_dianti_linju.screenplay.json
+  prompt: 故事总览:公寓电梯因例行安全检查短暂停靠，三名携
+- file: rl/trainset/screenplays/b26_xueye_sheying.screenplay.json
+  prompt: 故事总览:雪夜广场上，两名成年摄影爱好者共同筹备
+- file: rl/trainset/screenplays/b27_chuanwu_ditu.screenplay.json
+  prompt: 故事总览:白天，三名成年游客在观光船舱内共同研究
+- file: rl/trainset/screenplays/b28_shequ_fenlei.screenplay.json
+  prompt: 故事总览:傍晚，社区回收站即将结束当日收集工作。
+- file: rl/trainset/screenplays/b29_wuding_wancan.screenplay.json
+  prompt: 故事总览:夜晚的城市屋顶上，三名成年同事围坐在餐
+- file: rl/trainset/screenplays/s00_shizhong_xunji.screenplay.json
+  prompt: 场景一：晨间钟表店  42岁的成年男性，清瘦长脸
+- file: rl/trainset/screenplays/s01_yundonghui_zhunbei.screenplay.json
+  prompt: 仓库  32岁的成年女性场地协调员林岚有着椭圆脸
+- file: rl/trainset/screenplays/s02_bingdao_youji.screenplay.json
+  prompt: 【白昼冰岛礁石海岸】 三十二岁的林岳来到海风强劲
+- file: rl/trainset/screenplays/s03_chengshi_suxie.screenplay.json
+  prompt: 【午后旧街】 二十九岁的成年男性插画师林澈，清瘦
+- file: rl/trainset/screenplays/s04_huoche_shuimian.screenplay.json
+  prompt: 【卧铺车厢·深夜】 32岁的成年女性乘务员林岚，
+- file: rl/trainset/screenplays/s05_shuixi_guance.screenplay.json
+  prompt: 场景：雨后河堤，清晨。 32岁的成年女性水文员林
+- file: rl/trainset/screenplays/s06_xueyuan_kaifang.screenplay.json
+  prompt: 场景：清晨的礼堂  34岁的成年男性校园管理员林
+- file: rl/trainset/screenplays/s07_yuncang_jiancha.screenplay.json
+  prompt: 场景：高空云层观测站外台  清晨，观测站的金属外
+- file: rl/trainset/screenplays/s08_xiangcun_youbian.screenplay.json
+  prompt: 第一场：田间小路 清晨的田野覆着薄薄露水，金黄麦
+- file: rl/trainset/screenplays/s09_wuye_xunchuang.screenplay.json
+  prompt: 场景：夜间的街角花艺店  32岁的成年女性橱窗设
+- file: rl/trainset/screenplays/s10_dangao_zhanlan.screenplay.json
+  prompt: 【开端：展览厨房开放评审】 明亮的室内展览厨房保
+- file: rl/trainset/screenplays/s11_disheng_shiyan.screenplay.json
+  prompt: 【场景一：初次测量】 无回声实验室的结构始终保持
+- file: rl/trainset/screenplays/s12_shucai_paimai.screenplay.json
+  prompt: 场景一：清晨，室内批发大厅的竞价室  竞价室的结
+- file: rl/trainset/screenplays/s13_laodainao_dangan.screenplay.json
+  prompt: 场景：清晨，数字保存室 数字保存室的结构保持固定
+- file: rl/trainset/screenplays/s14_haiyang_jiaoshi.screenplay.json
+  prompt: 【课程准备开始】 海洋教学舱的结构始终保持不变：
+- file: rl/trainset/screenplays/s15_xiangliao_cangku.screenplay.json
+  prompt: 场景：上午，香料仓库大厅 高挑的拱形木梁覆盖整座
+- file: rl/trainset/screenplays/s16_wutai_dengguang.screenplay.json
+  prompt: 场景一：空剧场控制室 控制室的空间结构始终保持不
+- file: rl/trainset/screenplays/s17_zhineng_xiyifang.screenplay.json
+  prompt: 开端｜夜间的大型自助洗衣房  室内布局清晰而固定
+- file: rl/trainset/screenplays/s18_fengdong_shiyan.screenplay.json
+  prompt: 场景一：实验准备  室内风洞实验舱保持着严整而固
+- file: rl/trainset/screenplays/s19_qiaokeli_gongfang.screenplay.json
+  prompt: 开端｜玻璃工坊  工坊的空间布局始终保持不变：入
+- file: rl/trainset/screenplays/s20_shanding_richu.screenplay.json
+  prompt: 山顶·黎明前 天色仍是深蓝色，山脊边缘浮着一层淡
+- file: rl/trainset/screenplays/s21_caifeng_dingzhi.screenplay.json
+  prompt: 场景：安静试衣室  试衣室内摆放着一面落地镜、一
+- file: rl/trainset/screenplays/s22_yewai_guanxing.screenplay.json
+  prompt: 【乡间草地·傍晚】 晚霞逐渐淡去，平坦草地旁立着
+- file: rl/trainset/screenplays/s23_shichang_xunwei.screenplay.json
+  prompt: 上午·露天市场入口 阳光洒在整齐排列的遮阳棚上，
+- file: rl/trainset/screenplays/s24_banshigong_banzhuo.screenplay.json
+  prompt: 【深夜的共享办公区】 窗外的城市灯光映在玻璃上，
+- file: rl/trainset/screenplays/s25_hupan_huahua.screenplay.json
+  prompt: 【湖边清晨】 平静的湖水映着浅金色晨光，岸边草地
+- file: rl/trainset/screenplays/s26_shudian_huanshu.screenplay.json
+  prompt: 【旧书店午后】 木质书架一直延伸到店铺深处，旧纸
+- file: rl/trainset/screenplays/s27_lvguan_zaocan.screenplay.json
+  prompt: 【小旅馆餐厅·清晨】 温暖整洁的餐厅里，三名陌生
+- file: rl/trainset/screenplays/s28_maitou_yinyue.screenplay.json
+  prompt: 傍晚，码头步道被橙金色夕阳照亮，系船柱、木箱和整
+- file: rl/trainset/screenplays/s29_gongxiang_gongju.screenplay.json
+  prompt: 【社区工具间·傍晚】 工具间内设有固定的灰色金属
+ideas:
+- 成年花艺师在清晨空商场里布置一条鲜花长廊。
+- 两位成年游客夜游古镇，边找客栈边讨论地图。
+- 一名成年厨师在潜艇餐舱尝试制作松软面包。
+- 三位成年室友用纸箱改造客厅的分类收纳区。
+- 雨夜里成年站务员独自检查车站失物招领柜。
+- 两名成年园丁在屋顶花园搬运花盆迎接日出。
+- 成年摄影师沿着雾中湖岸寻找合适的倒影角度。
+- 三名成年同事在安静茶室商量公益市集方案。
+- 一名成年木匠夜间整理堆满工具的狭长工作间。
+- 两位成年邻居在雪后院子合作清理木桌和长椅。
+- 成年调音师在空音乐厅逐排测试座位回声效果。
+- 三名成年旅客在船舱餐厅交换各自的旅行笔记。
+- 一名成年农场主骑车巡看清晨的向日葵田。
+- 两位成年研究员在种子库寻找标签模糊的样本。
+- 成年烘焙师闭店后为第二天准备不同形状面团。
+- 三位成年志愿者在海边收集并分类漂来的树枝。
+- 一名成年导览员夜间独自预演水族馆讲解路线。
+- 两位成年设计师在布料仓库搭配保守秋装面料。
+- 成年气象员在高原营地追踪一团缓慢移动的云。
+- 三名成年朋友在家庭厨房挑战制作彩色蔬菜面。
+- 一名成年修表师乘公交送还刚修好的老式座钟。
+- 两位成年露营者在河边合作架设遮雨天幕。
+- 成年图书管理员在地下书库寻找一本错架图册。
+- 三位成年合唱成员在楼梯间练习轻柔和声。
+- 一名成年陶艺师从采泥到烧制记录杯子的变化。
+- 两位成年咖啡师在打烊后测试新的无糖饮品。
+- 成年观察员在沙漠夜色中校准一排微光仪器。
+- 三名成年居民在社区大厅交换闲置园艺用品。
+- 一名成年画家带着折叠画架穿过午后旧城区。
+- 两位成年工程师在深海模拟舱核对照明面板。
+- 成年裁缝在晨光里为橱窗模特整理端庄套装。
+- 三名成年骑行者在乡间岔路口讨论返程路线。
+- 一名成年管理员巡视关闭后的室内植物园。
+- 两位成年朋友在夜市寻找五种不同香料。
+- 成年航拍操作员在空旷盐湖记录几何纹理。
+- 三名成年演员在化妆间安静练习生活化对白。
+- 一名成年面点师在山间民宿准备清晨早餐。
+- 两位成年观鸟者躲在湿地观察屋记录候鸟。
+- 成年仓管员在自动货架间寻找一只错放纸箱。
+- 三名成年邻居在露台晚餐时计划共享菜园。
