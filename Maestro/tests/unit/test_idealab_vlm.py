@@ -73,3 +73,45 @@ def test_native_reject_falls_back_to_frames(tmp_path, monkeypatch):
     assert reply == "抽帧路成功"
     assert len(calls) == 2                          # 原生被拒 → 帧路重试
     assert all(c.get("type") != "video_url" for c in calls[1])
+
+
+def test_list_content_normalized(monkeypatch):
+    """2026-08-19 事故回归:idealab 网关把 message.content 按分段列表
+    返回([{"type":"text","text":"…"}]),曾直接把 list 交给
+    _extract_json 崩 AttributeError。修后:边界归一化成 str。"""
+    from maestro.models.llm_backends import content_to_text
+    assert content_to_text('{"a":1}') == '{"a":1}'
+    assert content_to_text(None) is None
+    assert content_to_text(
+        [{"type": "text", "text": '[{"question"'},
+         {"type": "text", "text": ':"q","passed":true,"fix":""}]'},
+         {"type": "image_url", "image_url": {"url": "x"}},  # 非 text 段忽略
+         {"type": "text", "text": None},                     # 脏 None 忽略
+         "tail"]) == '[{"question":"q","passed":true,"fix":""}]tail'
+
+    # 三个客户端的 _chat/chat 出口都吃 list 形态(打桩 HTTP,端到端)
+    import requests as _rq
+
+    class _R:
+        status_code = 200
+        text = ""
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"choices": [{"message": {"content": [
+                {"type": "text", "text": "PART1-"},
+                {"type": "text", "text": "PART2"}]}}]}
+
+    monkeypatch.setattr(_rq, "post",
+                        lambda *a, **k: _R(), raising=True)
+
+    from maestro.models.mllm_backends import OpenAICompatVLM
+    v = OpenAICompatVLM("qwen-vl", {"api_key": "k"})
+    import numpy as np
+    fr = np.zeros((8, 8, 3), dtype=np.uint8)
+    assert v._chat([fr], "hi") == "PART1-PART2"
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rl"))
+    from reward.judges import OpenAICompatChat
+    c = OpenAICompatChat("http://x/v1", "m", "k")
+    assert c.chat("hi") == "PART1-PART2"

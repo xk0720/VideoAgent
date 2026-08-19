@@ -43,7 +43,9 @@ def _http_complete_fn(base_url: str, model: str, api_key: str,
                   "messages": [{"role": "user", "content": prompt}]},
             timeout=120)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"] or ""
+        from maestro.models.llm_backends import content_to_text
+        return content_to_text(
+            r.json()["choices"][0]["message"]["content"]) or ""
     return complete
 
 

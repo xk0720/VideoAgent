@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..logging_utils import get_logger
+from .llm_backends import content_to_text
 from ..physics.failure_modes import suggest_intervention
 from ..physics.track_extractor_backends import _decode_frames
 from ..types import (
@@ -236,7 +237,9 @@ class OpenAICompatVLM(BaseMLLMClient):
                     self.name, self.model, resp.status_code, resp.text[:500],
                 )
                 return None
-            return resp.json()["choices"][0]["message"]["content"]
+            # idealab/Gemini 网关会把 content 按分段列表返回 → 统一成 str
+            return content_to_text(
+                resp.json()["choices"][0]["message"]["content"])
         except Exception as exc:  # non-fatal: degrade + warn
             log.warning(
                 "VLM(%s) inference failed (%d frames): %r — no verdict emitted",
@@ -297,7 +300,8 @@ class OpenAICompatVLM(BaseMLLMClient):
                 log.warning("VLM(%s) caption HTTP %d: %s", self.name,
                             resp.status_code, resp.text[:300])
                 return ""
-            return str(resp.json()["choices"][0]["message"]["content"]).strip()
+            return (content_to_text(
+                resp.json()["choices"][0]["message"]["content"]) or "").strip()
         except Exception as exc:  # degrade down the Q-D chain, loudly
             log.warning("VLM(%s) caption_image failed for %s: %r",
                         self.name, p.name, exc)
@@ -658,7 +662,8 @@ class IdealabGeminiVLM(OpenAICompatVLM):
                             "falling back to frames",
                             resp.status_code, resp.text[:300])
                 return super()._chat(self._frames_fallback(frames), text)
-            return resp.json()["choices"][0]["message"]["content"]
+            return content_to_text(
+                resp.json()["choices"][0]["message"]["content"])
         except Exception as exc:
             log.warning("idealab VLM native-video failed: %r — "
                         "falling back to frames", exc)

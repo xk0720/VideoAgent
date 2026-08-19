@@ -43,6 +43,25 @@ _OPENAI_COMPAT_DEFAULTS: dict[str, tuple[str, str, str]] = {
 }
 
 
+def content_to_text(content):
+    """OpenAI 兼容层 message.content 的两种合法形态归一化为 str:
+    纯字符串,或内容分段列表 [{"type":"text","text":"…"}, …] ——
+    idealab/Gemini 网关实测返回后者(2026-08-19 事故:list 进了
+    _extract_json 直接 AttributeError)。None 原样保留,让调用方的
+    "无回包→无判决"分支继续成立。"""
+    if content is None or isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict) and isinstance(p.get("text"), str):
+                parts.append(p["text"])
+        return "".join(parts)
+    return str(content)
+
+
 def _is_reasoning_model(model: str) -> bool:
     """gpt-5.x / o-series reasoning models take DIFFERENT chat-completions
     params than gpt-4-era models: `max_completion_tokens` instead of
@@ -232,7 +251,7 @@ class OpenAICompatLLM(BaseLLMClient):
             )
         body = resp.json()
         choice = body["choices"][0]
-        content = choice["message"]["content"]
+        content = content_to_text(choice["message"]["content"])
         if not content:
             # Reasoning models share the completion budget between thinking
             # and visible text — a long think returns 200 with EMPTY content

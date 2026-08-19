@@ -101,7 +101,16 @@ class OpenAICompatChat:
                           "model": self.model, "messages": msg},
                     timeout=self.timeout)
                 r.raise_for_status()
-                return r.json()["choices"][0]["message"]["content"]
+                c = r.json()["choices"][0]["message"]["content"]
+                # idealab/Gemini 网关按 OpenAI 协议的分段列表形态返回
+                # content([{"type":"text","text":"…"}])→ 归一化 str
+                # (rl/ 隔离纪律:不引主管线,内联同款归一化)
+                if isinstance(c, list):
+                    c = "".join(
+                        p if isinstance(p, str)
+                        else p.get("text") or ""
+                        for p in c if isinstance(p, (str, dict)))
+                return c
             except Exception:
                 if attempt >= retries:
                     raise
