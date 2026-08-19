@@ -36,7 +36,7 @@ _OPENAI_COMPAT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "QWEN_API_KEY"),
     # 专属 MaaS 网关(2026-08-19 用户令:外部文本统一 qwen3.8-max,
     # key 直接用 DASHSCOPE_API_KEY)
-    "qwen-maas": ("https://ws-ox5q19lbmn2u1drg.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    "qwen-maas": ("https://dashscope.aliyuncs.com/compatible-mode/v1",
                   "qwen3.8-max", "DASHSCOPE_API_KEY"),
     "vllm": ("http://localhost:8000/v1", "", "LLM_API_KEY"),
     "openai-compat": ("", "", "LLM_API_KEY"),
@@ -187,7 +187,10 @@ class OpenAICompatLLM(BaseLLMClient):
         }
         payload = self._payload(prompt, **kwargs)
         url = f"{self.base_url}/chat/completions"
-        timeout = float(kwargs.get("timeout", 120))
+        # config.timeout 兜底(2026-08-19:思考型模型长产出,120s
+        # 写死会连环掐死 scene_write —— 调用方 kwargs 仍最高优先)
+        timeout = float(kwargs.get("timeout",
+                                   self.config.get("timeout", 120)))
         resp = _post_with_transient_retry(url, payload, headers, timeout,
                                           tag=f"{self.name}/{self.model}")
         if resp.status_code == 400:

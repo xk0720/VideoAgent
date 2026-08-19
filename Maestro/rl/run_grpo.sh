@@ -66,9 +66,16 @@ trap cleanup EXIT INT TERM
 #    "孤儿"时不在本次 trap 的名单里,Ctrl-C 杀不到它)────────────────
 if [[ "${1:-}" == "--stop" ]]; then
   echo "== STOP:清杀全部训练进程"
-  pkill -f "test_window_movie.py"  2>/dev/null && echo "  rollout ✓"
-  pkill -f "watch_online.py"       2>/dev/null && echo "  collector ✓"
-  pkill -f "train_online.py"       2>/dev/null && echo "  trainer ✓"
+  # 先杀农场主循环(2026-08-19 实报:只杀 rollout 不杀 while-true 的
+  # 农场,它立刻孵新进程,残留越积越多);排除本 --stop 进程自身
+  for fpid in $(pgrep -f "rl/run_grpo"); do
+    [[ "$fpid" != "$$" && "$fpid" != "$PPID" ]] \
+      && kill -9 "$fpid" 2>/dev/null && echo "  farm($fpid) ✓"
+  done
+  sleep 1
+  pkill -9 -f "test_window_movie.py" 2>/dev/null && echo "  rollout ✓"
+  pkill -9 -f "watch_online.py"    2>/dev/null && echo "  collector ✓"
+  pkill -9 -f "train_online.py"    2>/dev/null && echo "  trainer ✓"
   pkill -f "vllm serve"            2>/dev/null && echo "  vllm ✓"
   sleep 3
   pkill -9 -f "vllm serve" 2>/dev/null

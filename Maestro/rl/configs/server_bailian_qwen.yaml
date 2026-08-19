@@ -21,6 +21,8 @@ models:
                                        # 以及 RL 文本判官)
     max_tokens: 16384                  # 思考型模型:reasoning 与正文共享
                                        # 预算,给足防"思考吃光正文"
+    timeout: 600                       # 长产出(分镜 2-5 分钟)——120s
+                                       # 默认会读超时连环掐死
 
   mllm:
     name: "idealab-gemini"             # 内部 Gemini 网关(2026-08-19 用户
