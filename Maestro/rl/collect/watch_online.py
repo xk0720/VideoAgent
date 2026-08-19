@@ -183,7 +183,10 @@ def build_judges(judge_cfg_path: str):
     IDE = "https://idealab-external.alibaba-inc.com/api/openai/v1"
     # 端点/key 跟着 mllm 的供应商名走(2026-08-19 修:此前写死百炼,
     # mllm 切 idealab 后视频判官拿着 gemini 型号打百炼必 4xx)
-    _BY_NAME = {"qwen": (DAS, "QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+    MAAS = ("https://ws-ox5q19lbmn2u1drg.cn-beijing.maas.aliyuncs.com"
+            "/compatible-mode/v1")
+    _BY_NAME = {"qwen-maas": (MAAS, "DASHSCOPE_API_KEY", None),
+                "qwen": (DAS, "QWEN_API_KEY", "DASHSCOPE_API_KEY"),
                 "qwen-vl": (DAS, "QWEN_API_KEY", "DASHSCOPE_API_KEY"),
                 "idealab": (IDE, "IDEALAB_API_KEY", None),
                 "idealab-gemini": (IDE, "IDEALAB_API_KEY", None)}

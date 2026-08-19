@@ -14,10 +14,13 @@
 
 models:
   llm:
-    name: "qwen"                       # DashScope OpenAI 兼容端点
-    model: "qwen-max"                  # 冻结 agent 的底座(编剧/分镜/
-                                       # 缝合师/enhancer/抽取等)
-    max_tokens: 8192
+    name: "qwen-maas"                  # 专属 MaaS 网关(2026-08-19 用户令;
+                                       # key = $DASHSCOPE_API_KEY)
+    model: "qwen3.8-max"               # 全部外部文本统一此型号(冻结
+                                       # agent:编剧/分镜/缝合师/抽取,
+                                       # 以及 RL 文本判官)
+    max_tokens: 16384                  # 思考型模型:reasoning 与正文共享
+                                       # 预算,给足防"思考吃光正文"
 
   mllm:
     name: "idealab-gemini"             # 内部 Gemini 网关(2026-08-19 用户

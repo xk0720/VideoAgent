@@ -34,6 +34,10 @@ _OPENAI_COMPAT_DEFAULTS: dict[str, tuple[str, str, str]] = {
     "openai": ("https://api.openai.com/v1", "gpt-5.6-sol", "OPENAI_API_KEY"),
     "deepseek": ("https://api.deepseek.com/v1", "deepseek-chat", "DEEPSEEK_API_KEY"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-plus", "QWEN_API_KEY"),
+    # 专属 MaaS 网关(2026-08-19 用户令:外部文本统一 qwen3.8-max,
+    # key 直接用 DASHSCOPE_API_KEY)
+    "qwen-maas": ("https://ws-ox5q19lbmn2u1drg.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                  "qwen3.8-max", "DASHSCOPE_API_KEY"),
     "vllm": ("http://localhost:8000/v1", "", "LLM_API_KEY"),
     "openai-compat": ("", "", "LLM_API_KEY"),
 }
