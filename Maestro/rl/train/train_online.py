@@ -120,6 +120,33 @@ def wandb_init(args, enabled: bool):
         return None
 
 
+def adapter_norm(model) -> float:
+    """LoRA 权重的"指纹":全部 lora_B 矩阵的平均绝对值。lora_B 初始
+    化恒为 0 —— 指纹 >0 = 梯度真落到了补丁上;两次保存之间指纹在变
+    = 权重持续在更新(2026-08-19 用户问的"如何判断权重更新"①)。"""
+    import torch
+    tot, n = 0.0, 0
+    with torch.no_grad():
+        for name, prm in model.named_parameters():
+            if "lora_B" in name:
+                tot += float(prm.detach().abs().sum())
+                n += prm.numel()
+    return tot / max(1, n)
+
+
+def verify_in_vllm(vllm_url: str, adapter_name: str) -> bool:
+    """加载核验(用户问②):不信 load 接口的 200,直接查 vLLM 的
+    /v1/models 名单 —— adapter 名在列 = 真正可被采样请求使用。"""
+    import requests
+    try:
+        r = requests.get(f"{vllm_url}/v1/models", timeout=30)
+        ids = [m.get("id") for m in r.json().get("data", [])]
+        return adapter_name in ids
+    except Exception as exc:
+        print(f"[trainer] verify_in_vllm failed: {exc}", flush=True)
+        return False
+
+
 def hot_reload_vllm(vllm_url: str, adapter_name: str,
                     adapter_path: Path) -> bool:
     """失败必须带 vLLM 的原话(2026-08-18 排障:光一个 False 查不了案;
@@ -225,6 +252,9 @@ def main() -> int:
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     offset, step, pending = 0, 0, []
+    last_norm = adapter_norm(model)      # 起点应为 0(lora_B 零初始化)
+    print(f"[trainer] adapter fingerprint at start: {last_norm:.3e} "
+          "(应为 0 —— lora_B 零初始化)", flush=True)
     while True:
         new, offset = load_new_groups(offset, args.staleness_max, version)
         pending.extend(new)
@@ -275,8 +305,18 @@ def main() -> int:
             cand = version + 1
             adapter = CKPT_DIR / f"adapter_v{cand}"
             model.save_pretrained(adapter)
+            norm = adapter_norm(model)
+            print(f"[trainer] adapter fingerprint: {norm:.3e} "
+                  f"(delta {norm - last_norm:+.3e}) — "
+                  f"{'权重在更新' if norm != last_norm else '⚠️ 权重没动'}",
+                  flush=True)
             ok = hot_reload_vllm(args.vllm_url, f"brain-v{cand}",
                                  adapter)
+            if ok:
+                ok = verify_in_vllm(args.vllm_url, f"brain-v{cand}")
+                if not ok:
+                    print("[trainer] ⚠️ load 接口 200 但 /v1/models "
+                          "名单里没有 —— 视为失败", flush=True)
             if ok:
                 # 版本号只在权重真正进了 vLLM 后才推进(2026-08-18:
                 # 热载失败还 +1 会让陈旧度过滤误杀好样本,且农场
@@ -299,6 +339,11 @@ def main() -> int:
                         pass          # 卸旧失败不致命,满仓时自然报错
             print(f"[trainer] saved {adapter} hot_reload={ok} "
                   f"policy_version={version}", flush=True)
+            if wb is not None:
+                wb.log({"adapter/fingerprint": norm,
+                        "adapter/delta": norm - last_norm,
+                        "adapter/hot_reload_ok": int(ok)}, step=step)
+            last_norm = norm
     return 0
 
 
