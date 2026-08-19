@@ -23,14 +23,14 @@ from collections import defaultdict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "rl"))
 
 
 def build_prompt(step: dict) -> str:
-    """训练用 prompt = 生产用 prompt(单一事实源:window_loop 的技能
-    拼装)。context 里已有 task 全量;技能文本按 stage 载入。"""
-    from maestro.pipeline.window_loop import _skill_body_named
-    skill = _skill_body_named("window_generation")
+    """训练用 prompt = 采样用 prompt(单一事实源:rl/env/skills.py;
+    2026-08-19 用户令 rl/ 自包含,不再 import 主管线)。"""
+    from env.skills import skill_body
+    skill = skill_body("window_generation")
     task = dict(step.get("context") or {})
     task["menu"] = step.get("menu")
     return (skill + "\n\nTHIS TASK (JSON):\n"

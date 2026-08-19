@@ -3756,11 +3756,6 @@ def generate_movie_windowed(
     enable_audio: bool = False,         # 音频线(2026-07-29):对白原生音频+配乐
     use_junction_agent: bool = True,    # 缝合师(2026-08-09 用户令,默认开;
                                         # 关 = 派生描述回模板装配,回滚开关)
-    rl_group: int = 0,                  # RL 组采样(2026-08-10):>1 = 每镜
-                                        # 同 state 采 K 个条件决策各生成一
-                                        # 候选,小循环择优推进主干,组记录
-                                        # 落 rl_steps.jsonl(semi-online GRPO)
-    rl_temperature: float = 0.9,        # 组内采样温度(首个变体用默认温度)
     character_library=None,             # 跨片角色肖像库(2026-07-31)
     screenplay: Optional[str] = None,   # M2:用户自带剧本(给了就跳过 §A0)
     enable_review: bool = True,         # M2:评审/修复总开关(关 = 首选即收)
@@ -4383,28 +4378,8 @@ def generate_movie_windowed(
             replay_hint=replay_cond.get(entry.label),
             priority=_CONDITION_PRIORITY,
         )
-        # RL 组采样(2026-08-10 用户令,semi-online GRPO):主干+单步
-        # 分支 —— 同一 state(同上下文/同 replay_hint)带温度再采 K-1
-        # 个决策;K 个各自走完整 prompt 链并各生成一个候选,小循环评审
-        # 择优即主干推进,组记录落 rl_steps.jsonl。rl 跑法约定
-        # (rl/configs/online.yaml):review 开、enhancer 关、max_turns=1。
-        rl_variants = None
-        rl_state = None
-        if rl_group and rl_group > 1 and llm_video_brain is not None:
-            rl_variants = [d]
-            for _rlk in range(rl_group - 1):
-                rl_variants.append(_decide(
-                    llm_video_brain, "generation-condition", menu,
-                    _cond_context,
-                    replay_hint=replay_cond.get(entry.label),
-                    priority=_CONDITION_PRIORITY,
-                    temperature=rl_temperature))
-            # 组记录自包含(2026-08-10:state=context+menu、action=
-            # completion 全落记录 —— 收集器/训练器不依赖旁路文件;
-            # completion = 决策语义字段的规范 JSON,与 STRICT JSON
-            # 输出契约同形,训练目标即"产出可解析决策")
-            rl_state = {"menu": [dict(m) for m in menu],
-                        "context": _cond_context}
+        # (RL 组采样已迁出主管线,2026-08-19 用户令:训练环境整体
+        # 重建于 rl/env/ —— 这里回到纯生产路径。)
         decisions.append({"stage": "condition", "label": entry.label, **d})
         # 草稿留档(消融实验前提):brain 的 video_prompt 原文,在一切
         # 清洗/润色/闸门/对白追加之前,逐字入台账。
@@ -4615,15 +4590,7 @@ def generate_movie_windowed(
             return brain_prompt, slots, use_tail, want_audio
 
         brain_prompt, slots, use_tail, want_audio = _prompt_chain(d)
-        _gen_plan = ([(k, v) for k, v in enumerate(rl_variants)]
-                     if rl_variants else
-                     [(s, None) for s in range(max(1, n_candidates))])
-        for s, _rl_d in _gen_plan:
-            if _rl_d is not None:
-                # RL 分支:本变体自己的决策走同一条 prompt 链
-                d = _rl_d
-                brain_prompt, slots, use_tail, want_audio = \
-                    _prompt_chain(d)
+        for s in range(max(1, n_candidates)):
             _old_ga = getattr(video_gen, "generate_audio", False)
             if want_audio:
                 video_gen.generate_audio = True
@@ -4673,11 +4640,6 @@ def generate_movie_windowed(
                 # 不带该参数,见 video_gen_backends._is_range_family)。
                 cond["generate_audio"] = True
             cond["seed"] = s
-            if _rl_d is not None:
-                cond["rl"] = {"k": s,
-                              "decision_id": _rl_d.get("decision_id"),
-                              "via": _rl_d.get("via"),
-                              "strategy": _rl_d.get("strategy")}
             # §G 钉帧完整性闸门(2026-08-02 用户批准,默认关:阈值 ≤0)。
             # 只看钉了开场的路线(按 cond 里的【实际】路线,降级后不误判):
             # 开场撕裂度(接点/帧0→1/帧1→2 取最大)爆表 = 模型抛开钉帧
@@ -5076,56 +5038,6 @@ def generate_movie_windowed(
         storyboard.set_result(entry.shot_idx, best.video_path,
                               converged=res.converged,
                               repair_actions=res.actions)
-        if rl_variants:
-            # RL 组记录(semi-online GRPO 的训练原料):每变体的决策 id
-            # + 它那支候选的评审分;胜者 = 主干。上下文/raw 不重复存 ——
-            # 收集器按 decision_id 回 brain_calls.jsonl 取(单源)。
-            import os as _os
-            _scores = {}
-            for _clip, _cond in zip(initial, seed_conds):
-                _r = (_cond or {}).get("rl") or {}
-                if _r:
-                    _v = (rl_variants[_r["k"]]
-                          if _r.get("k") is not None
-                          and _r["k"] < len(rl_variants) else {})
-                    _scores[_r.get("k")] = {
-                        "decision_id": _r.get("decision_id"),
-                        "via": _r.get("via"),
-                        "completion": json.dumps(
-                            {k2: v2 for k2, v2 in (_v or {}).items()
-                             if k2 not in ("via", "decision_id")},
-                            ensure_ascii=False),
-                        "strategy": _r.get("strategy"),
-                        "degraded_from": (_cond or {}).get("degraded_from"),
-                        "weighted_total": float(
-                            (_clip.metric_scores or {}).get(
-                                "weighted_total", 0.0)),
-                        # 全维分数入记录(2026-08-13 reward v2:训练
-                        # 侧只取"看片维",结构代理/常量在收集器剔除)
-                        "metrics": dict(_clip.metric_scores or {}),
-                        "video": str(_clip.video_path),
-                        "chosen": str(_clip.video_path) ==
-                                  str(best.video_path)}
-            try:
-                with open(cache_dir / "rl_steps.jsonl", "a") as _f:
-                    _f.write(json.dumps({
-                        "kind": "condition_group",
-                        "run": cache_dir.name,
-                        "shot_idx": entry.shot_idx,
-                        "label": entry.label,
-                        "junction_kind": (entry.junction_meta or {}
-                                          ).get("kind"),
-                        "policy_version": _os.environ.get(
-                            "MAESTRO_POLICY_VERSION", "0"),
-                        "group_size": len(rl_variants),
-                        "menu": (rl_state or {}).get("menu"),
-                        "context": (rl_state or {}).get("context"),
-                        "samples": [_scores[k]
-                                    for k in sorted(_scores)],
-                    }, ensure_ascii=False, default=str) + "\n")
-            except Exception as _exc:
-                log.warning("rl group record failed (%s)",
-                            str(_exc)[:120])
         log.info("window: %s done — %s (score=%.4f, %d repair turns)",
                  entry.label,
                  "verified" if res.converged else "generated_with_defects",

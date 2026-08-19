@@ -109,39 +109,27 @@ def test_compose_renormalizes_on_missing_components():
     assert out[1]["r_text"] is None
 
 
-def test_collector_v3_overwrites_rewards(tmp_path):
-    """桩判官走通收集器 v3 全链:案卷组装/覆写/明细留痕。"""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]
-                            / "rl" / "collect"))
-    import watch_online as W
+def test_env_judge_group_composes_rewards(tmp_path):
+    """桩判官走通采样端评审全链(2026-08-19 评审移进 rl/env):案卷
+    组装/合成/明细留痕 —— 文本逐候选 + 排名 + 一致性剔除归一化。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rl"))
+    from env.loop import judge_group
     run = tmp_path / "movie_x"
     run.mkdir()
+    videos = []
     for i in range(2):
-        (run / f"v{i}.mp4").write_bytes(b"fake")
-    (run / "storyboard.json").write_text(json.dumps({
-        "entries": [{"shot_idx": 0, "camera_facing": "朝柜台",
-                     "junction_meta": {"kind": "continue"}}],
-        "portraits": {}}))
-    g = {"kind": "condition_group", "run": "movie_x", "shot_idx": 0,
-         "label": "s1", "junction_kind": "continue",
-         "policy_version": "0", "group_size": 2,
-         "menu": [{"name": "t2v"}],
-         "context": {"shot": {"description": "A 走进店里。"},
-                     "cast": {}, "cast_in_shot": [],
-                     "prev_shot": {"end_state": "A 在门口"},
-                     "storyboard": [], "slots_by_strategy": {"t2v": []}},
-         "samples": [
-             {"decision_id": "d0", "via": "llm", "chosen": True,
-              "completion": json.dumps({"strategy": "t2v",
-                                        "video_prompt": "p0"}),
-              "weighted_total": 0.7, "video": str(run / "v0.mp4"),
-              "metrics": {"m1_semantic": 0.7, "p1_physics": 0.7}},
-             {"decision_id": "d1", "via": "llm", "chosen": False,
-              "completion": json.dumps({"strategy": "t2v",
-                                        "video_prompt": "p1"}),
-              "weighted_total": 0.6, "video": str(run / "v1.mp4"),
-              "metrics": {"m1_semantic": 0.6, "p1_physics": 0.6}}]}
-    (run / "rl_steps.jsonl").write_text(json.dumps(g) + "\n")
+        v = run / f"v{i}.mp4"
+        v.write_bytes(b"fake")
+        videos.append(v)
+    entry = {"description": "A 走进店里。", "label": "s1",
+             "bg_id": "bg_1", "camera_facing": "朝柜台"}
+    context = {"cast": {}, "cast_in_shot": [], "storyboard": [],
+               "prev_shot": {"end_state": "A 在门口"},
+               "slots_by_strategy": {"t2v": []}, "setting": ""}
+    variants = [{"strategy": "t2v", "via": "llm", "decision_id": "d0",
+                 "video_prompt": "p0"},
+                {"strategy": "t2v", "via": "llm", "decision_id": "d1",
+                 "video_prompt": "p1"}]
 
     class _TJ:
         def score(self, case, tag=None):
@@ -158,13 +146,17 @@ def test_collector_v3_overwrites_rewards(tmp_path):
         def score(self, video, refs, ctx, tag=None):
             return 0.8, {"checks": []}
 
-    groups = W.collect_run(run, set(), judges={
-        "text": _TJ(), "ranker": _RK(), "consistency": _CC()})
-    s0, s1 = groups[0]["samples"]
+    rewards, jv = judge_group(
+        {"text": _TJ(), "ranker": _RK(), "consistency": _CC()},
+        context, entry, {"portraits": {}, "backgrounds": {}},
+        variants, videos, "movie_x",
+        {"junction_kind": "continue"})
+    s0, s1 = rewards
     assert s0["r_text"] == 0.9 and s1["r_text"] == 0.4
-    # 无肖像/视图参考 → consistency 跳过并被剔除留痕
+    # 无肖像/背景板参考 → consistency 跳过并被剔除留痕
     assert "consistency" in s0["dropped_components"]
     assert s0["reward"] > s1["reward"]     # 排名+文本双赢 → 合成分更高
+
 
 
 def test_batch_metrics_component_means():

@@ -1,3 +1,9 @@
 
 # 真实密钥永不入库(.env.example 是模板)
 .env
+
+# RL 运行时产物(2026-08-19:台账/判词日志/ckpt/版本状态,只活在服务器)
+rl/data/
+rl/logs/
+rl/ckpt/
+rl/state/

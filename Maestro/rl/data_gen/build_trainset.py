@@ -26,15 +26,31 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "src"))
-sys.path.insert(0, str(REPO / "scripts"))
+sys.path.insert(0, str(REPO / "rl"))
 
-from maestro.config import load_dotenv, load_yaml      # noqa: E402
+from env.config import load_dotenv, load_yaml          # noqa: E402
 
 load_dotenv(REPO / ".env")
 
-from maestro.models import build_llm                   # noqa: E402
-from run_vimax_benchmark import adapt_story            # noqa: E402
+from reward.judges import OpenAICompatChat             # noqa: E402
+
+# 2026-08-19 用户令(rl/ 自包含):adapt_story 从
+# scripts/run_vimax_benchmark.py 逐字拷贝,不再跨目录 import。
+def adapt_story(d: dict) -> str:
+    """预分镜 benchmark JSON → 我们的剧本 content 文本。
+
+    形状:总览一句 + 逐场逐镜"场景N 镜头M:【开场画面】…【本镜动作】…"
+    —— 镜头结构显式可见,scene_write 按预分镜法照抄切分,只做标注。"""
+    lines = [f"故事总览:{d.get('story_overview', '').strip()}", ""]
+    for sc in d.get("scenes", []):
+        n = sc.get("scene_num")
+        for sh in sc.get("shots", []):
+            lines.append(
+                f"场景{n} 镜头{sh.get('shot_id')}:"
+                f"【开场画面】{sh.get('first_frame', '').strip()}"
+                f"【本镜动作】{sh.get('video_prompt', '').strip()}")
+            lines.append("")
+    return "\n".join(lines).strip()
 
 OUT = REPO / "rl/trainset"
 PROMPT = (Path(__file__).parent / "benchgen_prompt.md").read_text()
@@ -65,7 +81,7 @@ def _extract_json(text):
 def _call(llm, prompt, retries=2):
     for i in range(retries + 1):
         try:
-            data = _extract_json(llm.complete(prompt))
+            data = _extract_json(llm.chat(prompt))
             if data:
                 return data
         except Exception as exc:
@@ -101,8 +117,22 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(REPO / "configs/bailian.yaml"))
     args = ap.parse_args()
-    llm = build_llm(load_yaml(Path(args.config)).get("models", {})
-                    .get("llm"))
+    spec = (load_yaml(Path(args.config)).get("models", {})
+            .get("llm") or {})
+    _BASES = {"qwen-maas": ("https://ws-ox5q19lbmn2u1drg.cn-beijing.maas"
+                            ".aliyuncs.com/compatible-mode/v1",
+                            "DASHSCOPE_API_KEY"),
+              "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1",
+                       "QWEN_API_KEY")}
+    base, ev = _BASES.get(str(spec.get("name", "qwen")),
+                          _BASES["qwen"])
+    import os
+    llm = OpenAICompatChat(
+        spec.get("base_url") or base, spec.get("model", "qwen-max"),
+        spec.get("api_key") or os.getenv(ev)
+        or os.getenv("DASHSCOPE_API_KEY") or "",
+        timeout=int(spec.get("timeout", 600)),
+        extra_body=spec.get("extra_body"))
     for sub in ("bench", "story", "screenplays"):
         (OUT / sub).mkdir(parents=True, exist_ok=True)
 

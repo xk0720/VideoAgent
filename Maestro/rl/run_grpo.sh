@@ -3,16 +3,17 @@
 # ══════════════════════════════════════════════════════════════════════
 #  Maestro brain GRPO 一键训练(semi-online;2026-08-10 用户令)
 #
-#    bash rl/run_grpo.sh            # 全链:vLLM 策略 + rollout 农场 +
+#    bash rl/run_grpo.sh            # 全链:vLLM 策略 + rl/env rollout 农场 +
 #                                  # 收集器 + trainer(需 GPU 机)
 #    bash rl/run_grpo.sh --smoke    # 无 GPU 自检:数据流/分组/advantage
 #    bash rl/run_grpo.sh --fresh    # 全新训练:清零状态+开跑标记后继续起链
 #    bash rl/run_grpo.sh --stop     # 一键收摊:清杀四类进程(含孤儿 vLLM)
 #
 #  四进程:①vLLM 服 Qwen3(--enable-lora,adapter 热载)
-#          ②rollout 农场(现有管线,--rl-group K,review 开、enhancer
-#            关、max_turns=1;video_brain 指 vLLM,其余 agent 冻结)
-#          ③收集器(rl_steps → groups_online.jsonl,补 reward)
+#          ②rollout 农场(rl/env/rollout.py —— rl/ 自包含 agent loop,
+#            2026-08-19 用户令:每镜 K 组采样,skill 判官在采样端择主干
+#            并内联 reward;策略指 vLLM,其余 agent 冻结,无修复无评审板)
+#          ③收集器(纯聚合:rl_steps → groups_online.jsonl)
 #          ④trainer(组相对优势 PG + LoRA,热载回 ①)
 # ══════════════════════════════════════════════════════════════════════
 set -u
@@ -73,7 +74,8 @@ if [[ "${1:-}" == "--stop" ]]; then
       && kill -9 "$fpid" 2>/dev/null && echo "  farm($fpid) ✓"
   done
   sleep 1
-  pkill -9 -f "test_window_movie.py" 2>/dev/null && echo "  rollout ✓"
+  pkill -9 -f "rl/env/rollout.py"   2>/dev/null && echo "  rollout ✓"
+  pkill -9 -f "test_window_movie.py" 2>/dev/null && echo "  旧rollout ✓"
   pkill -9 -f "watch_online.py"    2>/dev/null && echo "  collector ✓"
   pkill -9 -f "train_online.py"    2>/dev/null && echo "  trainer ✓"
   pkill -f "vllm serve"            2>/dev/null && echo "  vllm ✓"
@@ -120,27 +122,24 @@ if [[ "${1:-}" == "--smoke" ]]; then
   echo "== smoke: mock rollout → collector → trainer 分组(全链合成)"
   SBX=$(mktemp -d)
   python - "$SBX" <<'PY' || exit 1
-import sys, json, pathlib, logging
-sys.path.insert(0, "src"); sys.path.insert(0, "tests/unit")
-logging.disable(logging.CRITICAL)
+import sys, pathlib
+sys.path.insert(0, "rl"); sys.path.insert(0, "tests/unit")
 sbx = pathlib.Path(sys.argv[1]); run = sbx / "movie_rlsmoke"
-from test_rl_group import _SamplingLLM, _VG, _components
-import maestro.pipeline.window_loop as wl
-wl._last_frame = lambda v, o: None
 import os; os.environ["MAESTRO_POLICY_VERSION"] = "1"
-from maestro.pipeline.window_loop import generate_movie_windowed
-generate_movie_windowed("a cat walks", cache_dir=run,
-                        llm=_SamplingLLM(), max_turns=1, n_candidates=1,
-                        rl_group=3, rl_temperature=0.8,
-                        **_components(_VG()))
+from test_rl_group import (FakeFrozenLLM, FakeJudges, FakeKling,
+                           FakePolicy, FakeT2I)
+from env.loop import run_episode
+res = run_episode(task_text="深夜便利店,店员和最后一位客人的十分钟",
+                  run_dir=run, frozen_llm=FakeFrozenLLM(),
+                  policy=FakePolicy(), kling=FakeKling(), t2i=FakeT2I(),
+                  judges=FakeJudges(), group=3, rl_temperature=0.8)
 n = len((run / "rl_steps.jsonl").read_text().splitlines())
 assert n >= 1, "mock rollout 未产出组记录"
 print(f"[smoke] mock rollout OK: {n} groups in {run}")
 PY
   python rl/collect/watch_online.py --once --outputs "$SBX"     --out "$SBX/groups.jsonl" --state "$SBX/state.json" || exit 1
-  # mock 各候选 m1/p1 全同 → 组内零优势被 trainer 正确弃组(这正是
-  # reward v2 焊死结构代理刷分的证明)。补一个带真差异的合成组,
-  # 专验 trainer 的分组/优势数学:
+  # 另补一个手工合成组,专验 trainer 的分组/优势数学
+  # (与 mock 采样解耦,字段即契约):
   python - "$SBX/groups.jsonl" <<'PY'
 import json, sys
 g = {"kind": "condition_group", "run": "synthetic", "shot_idx": 0,
@@ -218,7 +217,9 @@ fi
 echo "== vLLM 就绪"
 
 # ── ③ 收集器 & ④ trainer ────────────────────────────────────────────
-python rl/collect/watch_online.py --judge > $LOGS/collector.log 2>&1 &
+# (2026-08-19:评审移进 rollout —— skill 判官在采样端择主干并内联
+# reward,收集器只聚合,不再 --judge)
+python rl/collect/watch_online.py > $LOGS/collector.log 2>&1 &
 PIDS+=($!)
 CUDA_VISIBLE_DEVICES=$TRAIN_GPUS \
 python rl/train/train_online.py --model "$BASE_MODEL" \
@@ -239,16 +240,11 @@ while true; do
   MODEL_NAME=${ADAPTER:-brain}
   export MAESTRO_POLICY_VERSION=$(cat $RL/state/policy_version.txt \
                                   2>/dev/null || echo 0)
-  # 动态生成本轮配置 + 从任务池取本轮任务(加权轮转)
-  TASK_JSON=$(python - "$MODEL_NAME" "$RL_BASE_CONFIG" "$TASK_POOL" "$i" <<'PY'
-import sys, yaml, pathlib, json
-name, cfg_p, pool_p, it = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-cfg = yaml.safe_load(open(cfg_p))
-cfg.setdefault("models", {}).setdefault("crew", {})["video_brain"] = {
-    "name": "vllm", "base_url": "http://localhost:8000/v1",
-    "model": name, "max_tokens": 8192, "api_key": "dummy"}
-pathlib.Path("rl/configs/_bailian_rl.generated.yaml").write_text(
-    yaml.safe_dump(cfg, allow_unicode=True))
+  # 从任务池取本轮任务(加权轮转;策略指向由 rollout.py 的
+  # --policy-base/--policy-model 直给,不再生成拼接配置)
+  TASK_JSON=$(python - "$TASK_POOL" "$i" <<'PY'
+import sys, yaml, json
+pool_p, it = sys.argv[1], int(sys.argv[2])
 pool = yaml.safe_load(open(pool_p))
 mix = pool.get("mix", {})
 sw, iw = int(mix.get("screenplay_weight", 3)), int(mix.get("idea_weight", 2))
@@ -279,16 +275,20 @@ PY
        "policy=$MODEL_NAME (v$MAESTRO_POLICY_VERSION)"
   if [[ "$TASK_MODE" == "screenplay" ]]; then
     TASK_FILE=$(echo "$TASK_JSON" | python -c "import sys,json;print(json.load(sys.stdin)['file'])")
-    python scripts/test_window_movie.py \
-      --config rl/configs/_bailian_rl.generated.yaml \
+    python rl/env/rollout.py \
+      --config "$RL_BASE_CONFIG" \
       --screenplay "$TASK_FILE" --prompt "$TASK_PROMPT" \
-      --rl-group $RL_GROUP --n-candidates 1 --max-turns 0 \
+      --group $RL_GROUP \
+      --policy-base "http://localhost:$VLLM_PORT/v1" \
+      --policy-model "$MODEL_NAME" \
       >> $LOGS/rollout.log 2>&1
   else
-    python scripts/test_window_movie.py \
-      --config rl/configs/_bailian_rl.generated.yaml \
+    python rl/env/rollout.py \
+      --config "$RL_BASE_CONFIG" \
       --prompt "$TASK_PROMPT" \
-      --rl-group $RL_GROUP --n-candidates 1 --max-turns 0 \
+      --group $RL_GROUP \
+      --policy-base "http://localhost:$VLLM_PORT/v1" \
+      --policy-model "$MODEL_NAME" \
       >> $LOGS/rollout.log 2>&1
   fi
   echo "== rollout #$i exit=$?"

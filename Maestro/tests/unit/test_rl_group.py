@@ -1,131 +1,197 @@
-"""RL 组采样(2026-08-10 用户令,semi-online GRPO):主干+单步分支。
-
-断言:同 state 采 K 个条件决策(首个默认温度,其余带温);每变体各
-生成一候选;组记录落 rl_steps.jsonl(decision_id/score/chosen);
-主干 = 评审胜者;rl_group=0 时行为与旧版完全一致(单决策)。
-"""
+"""rl/env agent loop 单测(2026-08-19 用户令:loop 重建进 rl/ 后,
+本文件针对 rl/env —— 桩件同时被 run_grpo.sh --smoke 复用)。
+零 API:LLM/生成器/判官全打桩。"""
 import json
-import pathlib
+import sys
 from pathlib import Path
 
-from maestro.agents.generator import GeneratorAgent
-from maestro.agents.orchestrator import OrchestratorAgent
-from maestro.agents.refiner import RefinerAgent
-from maestro.agents.verifier import VerifierAgent
-from maestro.critics.board import ReviewBoard
-from maestro.critics.consistency import ConsistencyCritic
-from maestro.critics.physics import PhysicsCritic
-from maestro.critics.rhythm import RhythmCritic
-from maestro.critics.semantic import SemanticCritic
-from maestro.models.llm import BaseLLMClient
-from maestro.models.video_gen import MockVideoGenClient
-from maestro.pipeline.window_loop import generate_movie_windowed
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rl"))
+
+from env import loop as L                                     # noqa: E402
 
 
-class _SamplingLLM(BaseLLMClient):
-    """条件决策桩:逐次轮换策略(模拟温度采样的多样性);记录每次
-    调用的 temperature 入参。"""
-
-    _STRATS = ["i2v_keyframe", "t2v", "i2v_keyframe"]
-
-    def __init__(self):
-        self.cond_calls = []
-
-    def complete(self, prompt: str, **kwargs) -> str:
-        # 分支判据用【菜单内容】(prompt 里 menu JSON 必然带策略名):
-        # image-plan 菜单含 single_first_frame;条件菜单含 t2v/i2v 等。
-        if '"name": "single_first_frame"' in prompt:
+# ── 桩件(--smoke 复用)────────────────────────────────────────────
+class FakeFrozenLLM:
+    def complete(self, prompt, temperature=None, max_tokens=None):
+        if '"cast"' in prompt[-3000:]:          # scene_write 契约尾
             return json.dumps({
-                "strategy": "single_first_frame",
-                "images": [{"source": "t2i",
-                            "description": "opening frame"}],
-                "reason": "stub"})
-        if '"name": "t2v"' in prompt:
-            k = len(self.cond_calls)
-            self.cond_calls.append(kwargs.get("temperature"))
-            return json.dumps({
-                "strategy": self._STRATS[k % len(self._STRATS)],
-                "video_prompt": f"variant {k}: the cat walks",
-                "reason": "stub"})
-        return "not json"
+                "cast": {"小明": "static: 蓝夹克短发男子; dynamic: none"},
+                "setting": "深夜便利店,冷白灯光",
+                "shots": [
+                    {"description": "Shot 1: <小明>推门进入便利店",
+                     "duration_s": 5, "end_state": "小明站在货架前",
+                     "variation": "medium",
+                     "opening_frame": "便利店门口静景", "bg": "bg_1"},
+                    {"description": "Shot 2: <小明>拿起饭团走向收银台",
+                     "duration_s": 5, "end_state": "小明到达收银台",
+                     "variation": "medium", "bg": "bg_1",
+                     "dialogue": {"speaker": "小明", "line": "就这个吧"}},
+                    {"description": "Shot 3: <小明>走出店门",
+                     "duration_s": 4, "end_state": "门关上",
+                     "variation": "large", "bg": "bg_2"}]},
+                ensure_ascii=False)
+        return json.dumps({"prompt": "empty convenience store interior"})
 
 
-class _VG(MockVideoGenClient):
+class FakePolicy:
     def __init__(self):
-        super().__init__(name="mock-rl-gen")
         self.calls = []
 
-    def capabilities(self):
-        return {"t2v", "i2v", "t2i"}
-
-    def text_to_image(self, prompt, out_path, seed=0):
-        out_path = pathlib.Path(out_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(b"PNG-STUB")
-        return out_path
-
-    def generate(self, prompt, duration, out_path, fps=8,
-                 first_frame=None, reference_images=None, seed=0,
-                 reference_video=None):
-        self.calls.append({"prompt": prompt, "seed": seed})
-        return super().generate(prompt, duration, out_path, fps=fps,
-                                first_frame=first_frame, seed=seed)
+    def complete(self, prompt, temperature=None, max_tokens=None):
+        self.calls.append(temperature)
+        strat = "ref2v" if '"ref2v"' in prompt else "t2v"
+        return json.dumps(
+            {"strategy": strat, "reason": "test",
+             "video_prompt": "<小明>在<<<image_1>>>所示空间行动"},
+            ensure_ascii=False)
 
 
-def _components(video_gen):
-    board = ReviewBoard([SemanticCritic(), PhysicsCritic(),
-                         ConsistencyCritic(), RhythmCritic()])
-    gen = GeneratorAgent(video_gen=video_gen)
-    orch = OrchestratorAgent(generator=gen)
-    return dict(board=board, generator=gen, refiner=RefinerAgent(),
-                verifier=VerifierAgent(), orchestrator=orch)
+class FakeT2I:
+    def text_to_image(self, prompt, out, seed=0):
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_bytes(b"png")
+        return out
 
 
-def test_rl_group_samples_and_records(tmp_path, monkeypatch):
-    import maestro.pipeline.window_loop as wl
-    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
-    monkeypatch.setenv("MAESTRO_POLICY_VERSION", "7")
-    vg = _VG()
-    llm = _SamplingLLM()
-    res = generate_movie_windowed(
-        "a cat walks across the room", cache_dir=tmp_path,
-        llm=llm, max_turns=1, n_candidates=1,
-        rl_group=3, rl_temperature=0.8,
-        **_components(vg))
-    # 每镜:1 个默认温度 + 2 个带温采样
-    n_shots = len(res.storyboard.entries)
-    assert len(llm.cond_calls) == 3 * n_shots
-    per_shot = llm.cond_calls[:3]
-    assert per_shot[0] is None                # 首变体默认温度
-    assert per_shot[1] == 0.8 and per_shot[2] == 0.8
-    # 组记录落盘
-    rec_path = tmp_path / "rl_steps.jsonl"
-    assert rec_path.exists()
-    recs = [json.loads(l) for l in rec_path.read_text().splitlines()]
-    assert len(recs) == n_shots
-    g = recs[0]
-    assert g["kind"] == "condition_group"
-    assert g["group_size"] == 3
-    assert g["policy_version"] == "7"
-    assert len(g["samples"]) == 3
-    assert sum(1 for s_ in g["samples"] if s_["chosen"]) == 1
-    for s_ in g["samples"]:
-        assert s_["decision_id"]
-        assert "weighted_total" in s_
-        assert "m1_semantic" in s_["metrics"]     # reward v2 的原料
-    # 变体策略确实多样(轮换桩:两种策略都出现过)
-    strats = {s_["strategy"] for s_ in g["samples"]}
-    assert strats == {"i2v_keyframe", "t2v"}
+class FakeKling:
+    def generate(self, prompt, duration, out, first_frame=None,
+                 reference_images=None, audio=False):
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_bytes(b"mp4")
+        return out
 
 
-def test_rl_group_off_is_legacy_behavior(tmp_path, monkeypatch):
-    import maestro.pipeline.window_loop as wl
-    monkeypatch.setattr(wl, "_last_frame", lambda v, o: None)
-    vg = _VG()
-    llm = _SamplingLLM()
-    generate_movie_windowed(
-        "a cat walks across the room", cache_dir=tmp_path,
-        llm=llm, max_turns=1, n_candidates=1,
-        **_components(vg))
-    assert not (tmp_path / "rl_steps.jsonl").exists()
-    assert all(t is None for t in llm.cond_calls)   # 无带温采样
+class FakeJudges(dict):
+    def __init__(self):
+        class T:
+            def score(self, case, tag=None):
+                return 0.8, {"scores": {}}
+
+        class R:
+            def rank(self, dim, ctx, videos, tag=None):
+                return {"points": {i: 1.0 - 0.2 * i
+                                   for i in range(len(videos))},
+                        "order": list(range(len(videos))),
+                        "evidence": {}}
+
+        class C:
+            def score(self, video, refs, ctx, tag=None):
+                return 0.9, {"checks": []}
+        super().__init__(text=T(), ranker=R(), consistency=C())
+
+
+def _episode(tmp_path, group=4):
+    run = tmp_path / "movie_test"
+    pol = FakePolicy()
+    L.run_episode(task_text="深夜便利店,店员和最后一位客人的十分钟",
+                  run_dir=run, frozen_llm=FakeFrozenLLM(), policy=pol,
+                  kling=FakeKling(), t2i=FakeT2I(), judges=FakeJudges(),
+                  group=group, rl_temperature=0.9)
+    recs = [json.loads(x) for x in
+            (run / "rl_steps.jsonl").read_text().splitlines()]
+    return run, pol, recs
+
+
+def test_group_sampling_and_temperatures(tmp_path):
+    """K 组采样:v0 默认温度(None → 客户端默认),其余带 rl 温度。"""
+    _run, pol, recs = _episode(tmp_path)
+    assert len(recs) == 3
+    assert all(r["group_size"] == 4 and len(r["samples"]) == 4
+               for r in recs)
+    assert pol.calls[:4] == [None, 0.9, 0.9, 0.9]
+
+
+def test_record_schema_and_trunk(tmp_path):
+    """记录自包含:menu/context/completion/reward 字段齐;主干唯一,
+    且 = reward argmax(桩判官给 c0 最高)。"""
+    _run, _pol, recs = _episode(tmp_path)
+    g = recs[1]
+    for f in ("kind", "run", "shot_idx", "label", "junction_kind",
+              "policy_version", "group_size", "menu", "context",
+              "samples"):
+        assert f in g, f
+    s0 = g["samples"][0]
+    for f in ("decision_id", "via", "completion", "raw", "usable",
+              "strategy", "final_prompt", "video", "chosen", "reward",
+              "r_format", "r_text", "r_video", "video_detail",
+              "dropped_components"):
+        assert f in s0, f
+    assert sum(1 for s in g["samples"] if s["chosen"]) == 1
+    assert s0["chosen"] is True
+    comp = json.loads(s0["completion"])
+    assert set(comp) == {"strategy", "reason", "video_prompt"}
+    ctx = g["context"]
+    assert set(ctx) == {"shot", "prompt_language", "prev_shot",
+                        "junction", "cast", "setting", "cast_in_shot",
+                        "slots_by_strategy", "storyboard",
+                        "episode_guidance"}
+
+
+def test_junction_and_menu_lock(tmp_path):
+    """精简 junction:shot0=None(全菜单)、同 bg=continue、换 bg=cut;
+    非首镜菜单锁 [ref2v](与生产菜单锁一致)。"""
+    _run, _pol, recs = _episode(tmp_path)
+    assert [r["junction_kind"] for r in recs] == [None, "continue", "cut"]
+    assert [m["name"] for m in recs[0]["menu"]] == ["t2v", "ref2v"]
+    assert [m["name"] for m in recs[1]["menu"]] == ["ref2v"]
+
+
+def test_outgoing_prompt_chain():
+    """出门链:剥标记 → 引用闸 → 名字终换 → 对白+无BGM 压制句;
+    引用清单外编号 → 弃用整条落剧本兜底。"""
+    entry = {"description": "Shot 2: <小明>拿起饭团",
+             "dialogue": "就这个吧", "dialogue_speaker": "小明",
+             "end_state": ""}
+    slots = [{"slot": "<<<image_1>>>", "content": "master plate",
+              "referenceable": True},
+             {"slot": "<<<image_2>>>", "content": "portrait",
+              "referenceable": True, "name": "小明"}]
+    p, audio = L.outgoing_prompt(
+        {"video_prompt": "<小明>在<<<image_1>>>前", "strategy": "ref2v"},
+        entry, slots, {"小明": "蓝夹克男子"}, zh=True)
+    assert audio and "无背景音乐" in p
+    assert "<小明>" not in p and "<<<image_2>>>" in p     # 名字终换
+    # 清单外编号 → 弃用,落剧本兜底(剥 Shot 前缀)
+    p2, _ = L.outgoing_prompt(
+        {"video_prompt": "看<<<image_9>>>", "strategy": "ref2v"},
+        entry, slots, {}, zh=True)
+    assert "<<<image_9>>>" not in p2 and "拿起饭团" in p2
+
+
+def test_fallback_on_bad_policy_reply(tmp_path):
+    """策略回复不可解析 → via=fallback、reward 只剩 format 差异,
+    组照样成型(loop 不因坏回复卡死)。"""
+    class BadPolicy:
+        def complete(self, prompt, temperature=None, max_tokens=None):
+            return "我拒绝输出 JSON"
+    run = tmp_path / "movie_bad"
+    L.run_episode(task_text="深夜便利店的十分钟", run_dir=run,
+                  frozen_llm=FakeFrozenLLM(), policy=BadPolicy(),
+                  kling=FakeKling(), t2i=FakeT2I(), judges=FakeJudges(),
+                  group=3, rl_temperature=0.9)
+    recs = [json.loads(x) for x in
+            (run / "rl_steps.jsonl").read_text().splitlines()]
+    assert all(s["via"] == "fallback" and s["r_format"] == 0.0
+               for r in recs for s in r["samples"])
+
+
+def test_collector_aggregates_and_skips_unjudged(tmp_path):
+    """收集器 = 纯聚合:reward 内联的组直通;缺 reward 的旧格式组
+    响亮跳过。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]
+                           / "rl/collect"))
+    import watch_online as W
+    run = tmp_path / "movie_c"
+    run.mkdir(parents=True)
+    good = {"kind": "condition_group", "run": "movie_c", "shot_idx": 0,
+            "label": "s", "group_size": 2, "menu": [], "context": {},
+            "samples": [{"completion": "{}", "reward": 0.7},
+                        {"completion": "{}", "reward": 0.3}]}
+    bad = {**good, "samples": [{"completion": "{}"},
+                               {"completion": "{}"}]}
+    (run / "rl_steps.jsonl").write_text(
+        json.dumps(good) + "\n" + json.dumps(bad) + "\n")
+    seen = set()
+    out = W.collect_run(run, seen)
+    assert len(out) == 1 and out[0]["samples"][0]["reward"] == 0.7
+    assert len(seen) == 2                     # 坏组也记书签,不反复读

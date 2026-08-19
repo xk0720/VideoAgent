@@ -25,16 +25,17 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "rl"))
 DATA = REPO / "rl/data/groups_online.jsonl"
 STATE_DIR = REPO / "rl/state"
 CKPT_DIR = REPO / "rl/ckpt"
 
 
 def build_prompt(group: dict) -> str:
-    from maestro.pipeline.window_loop import (_skill_body_named,
-                                              decision_prompt)
-    skill = _skill_body_named("window_generation")
+    # 2026-08-19 用户令:rl/ 自包含 —— prompt 拼装以 rl/env/skills.py
+    # 为唯一事实源(env 采样与训练重建共用同一份代码)。
+    from env.skills import decision_prompt, skill_body
+    skill = skill_body("window_generation")
     return decision_prompt(skill, group.get("menu") or [],
                            group.get("context") or {})
 

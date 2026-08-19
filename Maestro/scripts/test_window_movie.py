@@ -98,11 +98,6 @@ def main() -> int:
     ap.add_argument("--no-review", action="store_true",
                     help="M2:关闭评审/修复总开关(首选候选直接收货,"
                          "不评审不修复;episode 蒸馏同时停用)")
-    ap.add_argument("--rl-group", type=int, default=0,
-                    help="RL 组采样(semi-online GRPO):每镜同 state 采 "
-                         "K 个条件决策各生成一候选,评审择优推进主干;"
-                         "组记录落 run 目录 rl_steps.jsonl")
-    ap.add_argument("--rl-temperature", type=float, default=0.9)
     ap.add_argument("--no-junction-agent", action="store_true",
                     help="缝合师回滚开关(2026-08-09):关掉 LLM 组稿,"
                          "派生双镜描述回确定性模板装配")
@@ -377,8 +372,6 @@ def main() -> int:
         given_characters=_given_chars,
         enable_review=(not args.no_review),
         use_junction_agent=(not args.no_junction_agent),
-        rl_group=args.rl_group,
-        rl_temperature=args.rl_temperature,
         repair_mode=args.repair_mode,
         enable_bgm=args.bgm,
         enable_transitions=args.transitions,
