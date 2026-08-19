@@ -236,7 +236,7 @@ name, cfg_p, pool_p, it = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]
 cfg = yaml.safe_load(open(cfg_p))
 cfg.setdefault("models", {}).setdefault("crew", {})["video_brain"] = {
     "name": "vllm", "base_url": "http://localhost:8000/v1",
-    "model": name, "max_tokens": 4096, "api_key": "dummy"}
+    "model": name, "max_tokens": 8192, "api_key": "dummy"}
 pathlib.Path("rl/configs/_bailian_rl.generated.yaml").write_text(
     yaml.safe_dump(cfg, allow_unicode=True))
 pool = yaml.safe_load(open(pool_p))
@@ -272,13 +272,13 @@ PY
     python scripts/test_window_movie.py \
       --config rl/configs/_bailian_rl.generated.yaml \
       --screenplay "$TASK_FILE" --prompt "$TASK_PROMPT" \
-      --rl-group $RL_GROUP --n-candidates 1 --max-turns 1 \
+      --rl-group $RL_GROUP --n-candidates 1 --max-turns 0 \
       >> $LOGS/rollout.log 2>&1
   else
     python scripts/test_window_movie.py \
       --config rl/configs/_bailian_rl.generated.yaml \
       --prompt "$TASK_PROMPT" \
-      --rl-group $RL_GROUP --n-candidates 1 --max-turns 1 \
+      --rl-group $RL_GROUP --n-candidates 1 --max-turns 0 \
       >> $LOGS/rollout.log 2>&1
   fi
   echo "== rollout #$i exit=$?"
