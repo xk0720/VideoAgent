@@ -225,3 +225,29 @@ def test_judge_log_written(tmp_path):
     assert rec["tag"]["label"] == "s1"
     assert rec["scores"]["character_consistency"] == 5
     assert "ts" in rec and rec["latency_s"] >= 0
+
+
+def test_extra_body_merged_into_request(monkeypatch):
+    """2026-08-19:关思考开关 —— extra_body 原样并进请求体,且不
+    覆盖 model/messages(网关实测认顶层 enable_thinking:false)。"""
+    from reward.judges import OpenAICompatChat
+    sent = {}
+
+    class _R:
+        status_code = 200
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent.update(json)
+        return _R()
+
+    import reward.judges as J
+    monkeypatch.setattr(J.requests, "post", fake_post)
+    c = OpenAICompatChat("http://x/v1", "m", "k",
+                         extra_body={"enable_thinking": False})
+    assert c.chat("hi") == "ok"
+    assert sent["enable_thinking"] is False
+    assert sent["model"] == "m" and sent["messages"][0]["content"] == "hi"

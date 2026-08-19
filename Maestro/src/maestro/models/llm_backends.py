@@ -165,6 +165,13 @@ class OpenAICompatLLM(BaseLLMClient):
             "messages": [{"role": "user", "content": prompt}],
         }
         limit = int(kwargs.get("max_tokens", self.max_tokens))
+        # extra_body 透传(2026-08-19):把 config.extra_body 原样并进请求体。
+        # 用途:思考型模型关思考(MaaS 网关认顶层 enable_thinking:false,
+        # 实测 /no_think 软开关无效)、vLLM 的 chat_template_kwargs 等
+        # 方言字段 —— 客户端不逐个认字段,网关认什么由配置说了算。
+        extra = kwargs.get("extra_body", self.config.get("extra_body"))
+        if isinstance(extra, dict):
+            payload.update(extra)
         if _is_reasoning_model(self.model):
             payload["max_completion_tokens"] = limit
         else:

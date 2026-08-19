@@ -201,7 +201,8 @@ def build_judges(judge_cfg_path: str):
         if not key:
             raise RuntimeError(f"judge({name}) 缺 key:设 {ev1}")
         return OpenAICompatChat(base, (spec or {}).get(
-            "model", default_model), key)
+            "model", default_model), key,
+            extra_body=(spec or {}).get("extra_body"))
 
     txt = _client(models.get("llm"), "qwen-max")
     vlm = _client(models.get("mllm"), "gemini-3.1-pro-preview")

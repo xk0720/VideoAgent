@@ -23,6 +23,11 @@ models:
                                        # 预算,给足防"思考吃光正文"
     timeout: 600                       # 长产出(分镜 2-5 分钟)——120s
                                        # 默认会读超时连环掐死
+    extra_body:                        # 2026-08-19 实测:MaaS 网关认顶层
+      enable_thinking: false           # enable_thinking:false(reasoning_
+                                       # content 消失、直出正文);/no_think
+                                       # 软开关无效。关思考 = 冻结 agent 与
+                                       # 文本判官提速数倍,16384 全给正文
 
   mllm:
     name: "idealab-gemini"             # 内部 Gemini 网关(2026-08-19 用户

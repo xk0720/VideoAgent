@@ -80,11 +80,14 @@ class OpenAICompatChat:
     """极简 OpenAI 兼容客户端(文本或多模态消息;判官专用)。"""
 
     def __init__(self, base_url: str, model: str, api_key: str,
-                 timeout: int = 300):
+                 timeout: int = 300, extra_body: dict = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
+        # 原样并进请求体(思考型模型关思考:MaaS 网关认顶层
+        # enable_thinking:false;判官只要 JSON 判词,不需要思考链)
+        self.extra_body = extra_body if isinstance(extra_body, dict) else {}
 
     def chat(self, content, retries: int = 2) -> str:
         """content: str 或 OpenAI 多模态 content 列表。"""
@@ -94,7 +97,8 @@ class OpenAICompatChat:
                 r = requests.post(
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": self.model, "messages": msg},
+                    json={**self.extra_body,
+                          "model": self.model, "messages": msg},
                     timeout=self.timeout)
                 r.raise_for_status()
                 return r.json()["choices"][0]["message"]["content"]
