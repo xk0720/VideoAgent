@@ -194,7 +194,7 @@ if ! curl -s "http://localhost:$VLLM_PORT/v1/models" >/dev/null; then
   CUDA_VISIBLE_DEVICES=$VLLM_GPUS \
   VLLM_ALLOW_RUNTIME_LORA_UPDATING=True \
   vllm serve "$BASE_MODEL" --served-model-name brain \
-    --enable-lora --max-loras 4 --port $VLLM_PORT \
+    --enable-lora --max-loras 4 --max-lora-rank 64 --port $VLLM_PORT \
     --tensor-parallel-size $VLLM_TP \
     > $LOGS/vllm.log 2>&1 &
   PIDS+=($!)

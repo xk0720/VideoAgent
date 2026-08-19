@@ -174,6 +174,8 @@ def main() -> int:
     ap.add_argument("--save-every", type=int, default=20)
     ap.add_argument("--staleness-max", type=int, default=3)
     ap.add_argument("--lr", type=float, default=1e-5)
+    ap.add_argument("--grad-checkpoint", action="store_true",
+                    default=True)
     ap.add_argument("--poll", type=int, default=60)
     ap.add_argument("--dry-run", action="store_true",
                     help="不加载模型:验证数据流/分组/advantage")
@@ -211,9 +213,15 @@ def main() -> int:
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.bfloat16, device_map="auto")
+    if args.grad_checkpoint:
+        # 大底座(14B+)必开:激活值显存从几十 GB 压到个位数,
+        # 代价 ~30% 训练速度 —— RL 瓶颈在采样,训练侧慢点无感
+        model.gradient_checkpointing_enable()
+        model.enable_input_require_grads()
     model = get_peft_model(model, LoraConfig(
-        r=16, lora_alpha=32, target_modules="all-linear",
-        task_type="CAUSAL_LM"))
+        r=64, lora_alpha=128, target_modules="all-linear",
+        task_type="CAUSAL_LM"))   # 2026-08-18 用户令 r=64(alpha 恒 2r;
+                                  # 改 r 必须同步 vLLM --max-lora-rank)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     offset, step, pending = 0, 0, []
