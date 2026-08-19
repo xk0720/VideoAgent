@@ -35,7 +35,8 @@ LOGS=$RL/logs; mkdir -p $LOGS $RL/state $RL/data
 #   WANDB_PROJECT=VideoAgent
 #   WANDB_MODE=online            # 服务器连不上 api.wandb.ai 就改
 #                                # offline,之后 wandb sync 补传
-unset DASHSCOPE_API_KEY QWEN_API_KEY WAVESPEED_API_KEY
+#   IDEALAB_API_KEY=...          # 评审走 idealab Gemini 网关时必填
+unset DASHSCOPE_API_KEY QWEN_API_KEY WAVESPEED_API_KEY IDEALAB_API_KEY
 set -a; source .env 2>/dev/null; set +a
 
 # 本地策略权重 —— vLLM 与 trainer 共用一个值;服务器写本地目录
@@ -172,6 +173,8 @@ python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null \
   || fail "QWEN_API_KEY 缺失 —— 写进 Maestro/.env(qwen 冻结 agent+omni 评审;与 DASHSCOPE 同一把 key 也要写这一行)"
 [[ -n "${WAVESPEED_API_KEY:-}" ]] \
   || fail "WAVESPEED_API_KEY 缺失 —— 写进 Maestro/.env(t2i/图像编辑)"
+grep -q "idealab" "$RL_BASE_CONFIG" && [[ -z "${IDEALAB_API_KEY:-}" ]] \
+  && fail "IDEALAB_API_KEY 缺失 —— 评审走 idealab Gemini 网关(写进 .env)"
 [[ -f "$RL_BASE_CONFIG" ]] || fail "RL 基配置缺失:$RL_BASE_CONFIG"
 # 权重路径预检:BASE_MODEL 含 "/" 开头或 "./" = 本地目录 → 必须存在,
 # 且切 HF 离线(服务器拉不到 hub;权重不齐当场报,不半夜才崩)

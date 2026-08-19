@@ -63,6 +63,12 @@ _VLM_DEFAULTS: dict[str, tuple[str, str, str]] = {
     "openai-vlm": ("https://api.openai.com/v1", "gpt-4o", "OPENAI_API_KEY"),
     "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", "QWEN_API_KEY"),
     "qwen-vl": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-vl-max", "QWEN_API_KEY"),
+    # 内部 Gemini 代理(2026-08-19 用户令:服务器直连 Google 不通,走
+    # idealab 网关;OpenAI 兼容 + 原生 video_url/video_metadata 方言)
+    "idealab": ("https://idealab-external.alibaba-inc.com/api/openai/v1",
+                "gemini-3.1-pro-preview", "IDEALAB_API_KEY"),
+    "idealab-gemini": ("https://idealab-external.alibaba-inc.com/api/openai/v1",
+                       "gemini-3.1-pro-preview", "IDEALAB_API_KEY"),
 }
 
 
@@ -556,6 +562,107 @@ Reply with ONLY a JSON object, no markdown fence:
  "defect_present": {{"video1": bool, "video2": bool}},
  "issues": ["short concrete strings — what the WORSE video still gets wrong"],
  "summary": "one sentence overall"}}"""
+
+
+
+class IdealabGeminiVLM(OpenAICompatVLM):
+    """Gemini via the idealab internal gateway(2026-08-19 用户令)。
+
+    服务器直连 generativelanguage.googleapis.com 不通;idealab 网关以
+    OpenAI 兼容协议代理 Gemini,并支持【原生视频】content part:
+        {"type": "video_url", "video_url": {"url": ...},
+         "video_metadata": {"fps": N}}
+    本类复用 OpenAICompatVLM 的全部评审方法,仅换掉媒体装配:clip 优先
+    走原生视频(本地 mp4 → base64 data URI),网关拒收或超限时自动退回
+    抽帧路 —— 评审永不因通道问题断链。
+
+    config(models.mllm):
+        name: "idealab-gemini"
+        model: "gemini-3.1-pro-preview"   # 网关放行的 Gemini 型号
+        api_key: ...                       # 或 $IDEALAB_API_KEY
+        video_fps: 5                       # video_metadata.fps
+        n_frames: 4                        # 退回抽帧路时的帧数
+    """
+
+    # 原生视频 inline 上限(base64 后 ×1.33;超限退抽帧,不硬闯)
+    MAX_VIDEO_MB = 30.0
+
+    class _VideoRef:                       # 哨兵:携带视频路径穿过 _chat
+        def __init__(self, path):
+            self.path = path
+
+    def _sample_frames(self, clip, k=None):
+        from pathlib import Path as _P
+        p = _P(str(getattr(clip, "video_path", "") or ""))
+        if (p.exists() and p.suffix.lower() == ".mp4"
+                and 1000 < p.stat().st_size
+                <= self.MAX_VIDEO_MB * 1e6):
+            return [self._VideoRef(p)]
+        # 非 mp4/超限/占位假文件 → 父类抽帧路(含"无像素不判"诚实闸)
+        return super()._sample_frames(clip, k)
+
+    def _frames_fallback(self, items, k=None):
+        """哨兵 → 真抽帧(原生通道被拒时的退路)。"""
+        out = []
+        for it in items:
+            if isinstance(it, self._VideoRef):
+                frames = _decode_frames(it.path)
+                if frames is None or len(frames) == 0:
+                    continue
+                kk = k or self.n_frames
+                n = len(frames)
+                idxs = (list(range(n)) if n <= kk else
+                        [min(n - 1, int(round(i * n / float(kk))))
+                         for i in range(kk)])
+                out.extend(frames[i] for i in idxs)
+            else:
+                out.append(it)
+        return out
+
+    def _chat(self, frames, text):
+        import base64 as _b64
+
+        import requests  # lazy
+
+        if not any(isinstance(f, self._VideoRef) for f in (frames or [])):
+            return super()._chat(frames, text)
+        key = self._require_key()
+        content = [{"type": "text", "text": text}]
+        for it in frames:
+            if isinstance(it, self._VideoRef):
+                data = _b64.b64encode(it.path.read_bytes()).decode()
+                content.append({
+                    "type": "video_url",
+                    "video_url": {"url":
+                                  f"data:video/mp4;base64,{data}"},
+                    "video_metadata": {"fps": int(
+                        self.config.get("video_fps", 5))},
+                })
+            else:
+                b64 = _encode_jpeg_b64(it)
+                if b64 is not None:
+                    content.append({"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{b64}"}})
+        payload = {"model": self.model,
+                   "messages": [{"role": "user", "content": content}],
+                   "max_tokens": self.max_tokens}
+        headers = {"Authorization": f"Bearer {key}",
+                   "Content-Type": "application/json"}
+        try:
+            resp = requests.post(f"{self.base_url}/chat/completions",
+                                 json=payload, headers=headers,
+                                 timeout=float(self.config.get(
+                                     "timeout", 300)))
+            if resp.status_code >= 400:
+                log.warning("idealab VLM native-video HTTP %d: %s — "
+                            "falling back to frames",
+                            resp.status_code, resp.text[:300])
+                return super()._chat(self._frames_fallback(frames), text)
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            log.warning("idealab VLM native-video failed: %r — "
+                        "falling back to frames", exc)
+            return super()._chat(self._frames_fallback(frames), text)
 
 
 class GeminiVLM(OpenAICompatVLM):
@@ -1362,6 +1469,8 @@ _REGISTRY = {
     "qwen-vl": OpenAICompatVLM,
     "qwen": OpenAICompatVLM,
     "gemini": GeminiVLM,
+    "idealab": IdealabGeminiVLM,
+    "idealab-gemini": IdealabGeminiVLM,
     "qwen-local": LocalQwenVLM,
     "local-qwen": LocalQwenVLM,
 }
