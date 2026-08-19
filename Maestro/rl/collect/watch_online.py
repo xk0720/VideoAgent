@@ -179,15 +179,29 @@ def build_judges(judge_cfg_path: str):
                                OpenAICompatChat, TextJudge, VideoRanker)
     cfg = yaml.safe_load(open(judge_cfg_path))
     models = cfg.get("models", {})
-    key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-    if not key:
-        raise RuntimeError("judge 需要 QWEN_API_KEY/DASHSCOPE_API_KEY")
-    base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    txt = OpenAICompatChat(base, (models.get("llm")
-                                  or {}).get("model", "qwen-max"), key)
-    vlm = OpenAICompatChat(base, (models.get("mllm")
-                                  or {}).get("model",
-                                             "qwen3.5-omni-plus"), key)
+    DAS = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    IDE = "https://idealab-external.alibaba-inc.com/api/openai/v1"
+    # 端点/key 跟着 mllm 的供应商名走(2026-08-19 修:此前写死百炼,
+    # mllm 切 idealab 后视频判官拿着 gemini 型号打百炼必 4xx)
+    _BY_NAME = {"qwen": (DAS, "QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+                "qwen-vl": (DAS, "QWEN_API_KEY", "DASHSCOPE_API_KEY"),
+                "idealab": (IDE, "IDEALAB_API_KEY", None),
+                "idealab-gemini": (IDE, "IDEALAB_API_KEY", None)}
+
+    def _client(spec, default_model):
+        name = (spec or {}).get("name", "qwen")
+        base, ev1, ev2 = _BY_NAME.get(
+            name, _BY_NAME.get(name.split("-")[0], _BY_NAME["qwen"]))
+        base = (spec or {}).get("base_url") or base
+        key = ((spec or {}).get("api_key") or os.getenv(ev1)
+               or (os.getenv(ev2) if ev2 else None))
+        if not key:
+            raise RuntimeError(f"judge({name}) 缺 key:设 {ev1}")
+        return OpenAICompatChat(base, (spec or {}).get(
+            "model", default_model), key)
+
+    txt = _client(models.get("llm"), "qwen-max")
+    vlm = _client(models.get("mllm"), "gemini-3.1-pro-preview")
     jlog = JudgeLog()                 # rl/logs/judge_calls.jsonl
     return {"text": TextJudge(txt, log=jlog),
             "ranker": VideoRanker(vlm, log=jlog),
