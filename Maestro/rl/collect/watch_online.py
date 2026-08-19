@@ -100,7 +100,10 @@ def _judge_group(g: dict, samples: list, run_dir: Path, judges) -> None:
                           or {}).get(comp.get("strategy"), []),
                 "candidate_prompt": comp.get("video_prompt", ""),
             }
-            score, detail = judges["text"].score(case)
+            score, detail = judges["text"].score(
+                case, tag={"run": g.get("run"), "label": g.get("label"),
+                           "candidate": len(text_scores),
+                           "decision_id": s.get("decision_id")})
             s["judge_text"] = detail
             text_scores.append(score)
         except Exception as exc:
@@ -117,7 +120,9 @@ def _judge_group(g: dict, samples: list, run_dir: Path, judges) -> None:
                     "cast_canon": ctx.get("cast") or {}}
         for dim in ("action", "physics", "camera"):
             try:
-                res = judges["ranker"].rank(dim, rank_ctx, videos)
+                res = judges["ranker"].rank(
+                    dim, rank_ctx, videos,
+                    tag={"run": g.get("run"), "label": g.get("label")})
                 video_parts[dim] = res["points"]
                 g.setdefault("judge_video", {})[dim] = {
                     "evidence": res.get("evidence"),
@@ -143,8 +148,10 @@ def _judge_group(g: dict, samples: list, run_dir: Path, judges) -> None:
             for i, v in enumerate(videos):
                 try:
                     sc, detail = judges["consistency"].score(
-                        v, refs, {"shot_script":
-                                  shot.get("description", "")})
+                        v, refs,
+                        {"shot_script": shot.get("description", "")},
+                        tag={"run": g.get("run"),
+                             "label": g.get("label"), "candidate": i})
                     cons[i] = sc
                     samples[i]["judge_consistency"] = detail
                 except Exception as exc:
@@ -168,8 +175,8 @@ def build_judges(judge_cfg_path: str):
     omni 原生视频通道)。key:QWEN_API_KEY / DASHSCOPE_API_KEY。"""
     import os
     import yaml
-    from reward.judges import (ConsistencyChecker, OpenAICompatChat,
-                               TextJudge, VideoRanker)
+    from reward.judges import (ConsistencyChecker, JudgeLog,
+                               OpenAICompatChat, TextJudge, VideoRanker)
     cfg = yaml.safe_load(open(judge_cfg_path))
     models = cfg.get("models", {})
     key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
@@ -181,8 +188,10 @@ def build_judges(judge_cfg_path: str):
     vlm = OpenAICompatChat(base, (models.get("mllm")
                                   or {}).get("model",
                                              "qwen3.5-omni-plus"), key)
-    return {"text": TextJudge(txt), "ranker": VideoRanker(vlm),
-            "consistency": ConsistencyChecker(vlm)}
+    jlog = JudgeLog()                 # rl/logs/judge_calls.jsonl
+    return {"text": TextJudge(txt, log=jlog),
+            "ranker": VideoRanker(vlm, log=jlog),
+            "consistency": ConsistencyChecker(vlm, log=jlog)}
 
 
 def collect_run(run_dir: Path, seen: set, judges=None) -> list:

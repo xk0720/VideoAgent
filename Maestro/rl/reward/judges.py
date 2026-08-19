@@ -31,6 +31,28 @@ from pathlib import Path
 import requests
 
 _SKILL_DIR = Path(__file__).parent / "skills"
+_DEFAULT_JUDGE_LOG = (Path(__file__).resolve().parents[2]
+                      / "rl/logs/judge_calls.jsonl")
+
+
+
+class JudgeLog:
+    """判官全量留痕(2026-08-19 用户令):每次评审一行 JSONL ——
+    谁评的(judge/model)、评的什么(tag: run/镜/候选)、回了什么
+    (parsed 全量 + raw 截断)、多久、成败。文件: rl/logs/judge_calls.jsonl"""
+
+    def __init__(self, path=None):
+        self.path = Path(path) if path else _DEFAULT_JUDGE_LOG
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(self, rec: dict) -> None:
+        try:
+            rec = {"ts": time.time(), **rec}
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False,
+                                   default=str) + "\n")
+        except Exception:
+            pass                      # 留痕失败绝不打断评审
 
 W_FORMAT, W_TEXT, W_VIDEO = 0.15, 0.35, 0.50
 VIDEO_W = {"action": 0.30, "physics": 0.25, "camera": 0.15,
@@ -99,23 +121,44 @@ def _image_part(path: str) -> dict:
 
 # ── 文本判官 ──────────────────────────────────────────────────────────
 class TextJudge:
-    def __init__(self, client: OpenAICompatChat):
+    def __init__(self, client: OpenAICompatChat, log: "JudgeLog" = None):
         self.client = client
         self.skill = _skill("prompt_review")
+        self.log = log
 
-    def score(self, case: dict) -> tuple[float, dict]:
+    def score(self, case: dict, tag: dict = None) -> tuple[float, dict]:
         """case 见 prompt_review 技能的 Input materials;返回 (0..1, 明细)。"""
-        raw = self.client.chat(
-            self.skill + "\n\nTHE CASE FILE (JSON):\n"
-            + json.dumps(case, ensure_ascii=False))
-        data = _extract_json(raw)
-        scores = (data or {}).get("scores") or {}
-        vals = [v for v in scores.values()
-                if isinstance(v, (int, float))]
-        if not vals:
-            raise RuntimeError(f"text judge unusable reply: {raw[:120]}")
-        return sum(vals) / (5.0 * len(vals)), {
-            "scores": scores, "rationale": (data or {}).get("rationale")}
+        t0 = time.time()
+        raw, err = "", ""
+        try:
+            raw = self.client.chat(
+                self.skill + "\n\nTHE CASE FILE (JSON):\n"
+                + json.dumps(case, ensure_ascii=False))
+            data = _extract_json(raw)
+            scores = (data or {}).get("scores") or {}
+            vals = [v for v in scores.values()
+                    if isinstance(v, (int, float))]
+            if not vals:
+                raise RuntimeError(
+                    f"text judge unusable reply: {raw[:120]}")
+            out = sum(vals) / (5.0 * len(vals)), {
+                "scores": scores,
+                "rationale": (data or {}).get("rationale")}
+            return out
+        except Exception as exc:
+            err = str(exc)[:200]
+            raise
+        finally:
+            if getattr(self, "log", None) is not None:
+                self.log.write({"judge": "text",
+                                "model": getattr(self.client, "model", "?"),
+                                "tag": tag or {},
+                                "scores": (_extract_json(raw) or {}
+                                           ).get("scores"),
+                                "rationale": (_extract_json(raw) or {}
+                                              ).get("rationale"),
+                                "raw": raw[:2000], "error": err,
+                                "latency_s": round(time.time() - t0, 1)})
 
 
 # ── 视频排名判官(一组四段一次调用)───────────────────────────────────
@@ -140,12 +183,14 @@ def rank_to_points(ranking: list, n: int) -> dict:
 
 
 class VideoRanker:
-    def __init__(self, client: OpenAICompatChat, rng_seed: int = 0):
+    def __init__(self, client: OpenAICompatChat, rng_seed: int = 0,
+                 log: "JudgeLog" = None):
         self.client = client
         self.rng = random.Random(rng_seed)
+        self.log = log
 
     def rank(self, dim: str, context: dict,
-             videos: list[str]) -> dict:
+             videos: list[str], tag: dict = None) -> dict:
         """videos: 按候选序的路径表。返回 {候选下标: 点数 0..1}。
         展示顺序随机打乱(防位置偏好),映射留在返回明细里。"""
         n = len(videos)
@@ -159,29 +204,49 @@ class VideoRanker:
         for lab, idx in zip(labels, order):
             content.append({"type": "text", "text": f"Video {lab}:"})
             content.append(_video_part(videos[idx]))
-        raw = self.client.chat(content)
-        data = _extract_json(raw)
-        ranking = (data or {}).get("ranking")
-        if not ranking:
-            raise RuntimeError(f"rank judge unusable: {raw[:120]}")
-        pts_by_label = rank_to_points(ranking, n)
-        out = {}
-        for lab, idx in zip(labels, order):
-            if lab not in pts_by_label:
-                raise RuntimeError(f"rank missing label {lab}")
-            out[idx] = pts_by_label[lab]
-        return {"points": out, "order": order,
-                "evidence": (data or {}).get("evidence")}
+        t0 = time.time()
+        raw, err = "", ""
+        try:
+            raw = self.client.chat(content)
+            data = _extract_json(raw)
+            ranking = (data or {}).get("ranking")
+            if not ranking:
+                raise RuntimeError(f"rank judge unusable: {raw[:120]}")
+            pts_by_label = rank_to_points(ranking, n)
+            out = {}
+            for lab, idx in zip(labels, order):
+                if lab not in pts_by_label:
+                    raise RuntimeError(f"rank missing label {lab}")
+                out[idx] = pts_by_label[lab]
+            return {"points": out, "order": order,
+                    "evidence": (data or {}).get("evidence")}
+        except Exception as exc:
+            err = str(exc)[:200]
+            raise
+        finally:
+            if getattr(self, "log", None) is not None:
+                d_ = _extract_json(raw) or {}
+                self.log.write({"judge": f"rank_{dim}",
+                                "model": getattr(self.client, "model", "?"),
+                                "tag": tag or {},
+                                "videos": [Path(v).name for v in videos],
+                                "display_order": order,
+                                "ranking": d_.get("ranking"),
+                                "evidence": d_.get("evidence"),
+                                "regime": d_.get("regime"),
+                                "raw": raw[:2000], "error": err,
+                                "latency_s": round(time.time() - t0, 1)})
 
 
 # ── 一致性直判(对照清单,逐候选)─────────────────────────────────────
 class ConsistencyChecker:
-    def __init__(self, client: OpenAICompatChat):
+    def __init__(self, client: OpenAICompatChat, log: "JudgeLog" = None):
         self.client = client
         self.skill = _skill("consistency_check")
+        self.log = log
 
     def score(self, video: str, refs: list[dict],
-              context: dict) -> tuple[float, dict]:
+              context: dict, tag: dict = None) -> tuple[float, dict]:
         """refs: [{"kind": "portrait:<名>"|"space_view", "path", "note"}]。
         返回 (通过率 0..1, 明细)。"""
         content: list = [{"type": "text", "text":
@@ -194,17 +259,36 @@ class ConsistencyChecker:
             content.append(_image_part(r["path"]))
         content.append({"type": "text", "text": "The video under review:"})
         content.append(_video_part(video))
-        raw = self.client.chat(content)
-        data = _extract_json(raw)
-        checks = (data or {}).get("checks")
-        if not isinstance(checks, list) or not checks:
-            raise RuntimeError(f"consistency judge unusable: {raw[:120]}")
-        valid = [c for c in checks if c.get("pass") is not None]
-        if not valid:
-            raise RuntimeError("consistency judge: all items unjudgeable")
-        n_pass = sum(1 for c in valid if c.get("pass") is True)
-        return n_pass / len(valid), {"checks": checks,
-                                     "n_null": len(checks) - len(valid)}
+        t0 = time.time()
+        raw, err = "", ""
+        try:
+            raw = self.client.chat(content)
+            data = _extract_json(raw)
+            checks = (data or {}).get("checks")
+            if not isinstance(checks, list) or not checks:
+                raise RuntimeError(
+                    f"consistency judge unusable: {raw[:120]}")
+            valid = [c for c in checks if c.get("pass") is not None]
+            if not valid:
+                raise RuntimeError(
+                    "consistency judge: all items unjudgeable")
+            n_pass = sum(1 for c in valid if c.get("pass") is True)
+            return n_pass / len(valid), {"checks": checks,
+                                         "n_null": len(checks) - len(valid)}
+        except Exception as exc:
+            err = str(exc)[:200]
+            raise
+        finally:
+            if getattr(self, "log", None) is not None:
+                d_ = _extract_json(raw) or {}
+                self.log.write({"judge": "consistency",
+                                "model": getattr(self.client, "model", "?"),
+                                "tag": tag or {},
+                                "video": Path(video).name,
+                                "refs": [r.get("kind") for r in refs],
+                                "checks": d_.get("checks"),
+                                "raw": raw[:2000], "error": err,
+                                "latency_s": round(time.time() - t0, 1)})
 
 
 # ── 合成 ──────────────────────────────────────────────────────────────

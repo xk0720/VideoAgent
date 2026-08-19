@@ -144,18 +144,18 @@ def test_collector_v3_overwrites_rewards(tmp_path):
     (run / "rl_steps.jsonl").write_text(json.dumps(g) + "\n")
 
     class _TJ:
-        def score(self, case):
+        def score(self, case, tag=None):
             assert case["junction"]["continuity_applicable"] is True
             return (0.9 if case["candidate_prompt"] == "p0" else 0.4,
                     {"scores": {}})
 
     class _RK:
-        def rank(self, dim, ctx, videos):
+        def rank(self, dim, ctx, videos, tag=None):
             return {"points": {0: 1.0, 1: 0.0}, "order": [0, 1],
                     "evidence": {}}
 
     class _CC:
-        def score(self, video, refs, ctx):
+        def score(self, video, refs, ctx, tag=None):
             return 0.8, {"checks": []}
 
     groups = W.collect_run(run, set(), judges={
@@ -203,3 +203,25 @@ def test_group_rank_lines_per_candidate():
     assert "c0 a/p/c=1.00/0.67/1.00 avg=0.89 con=0.85" in lines[0]
     assert "c1 a/p/c=0.00/--/0.50 avg=0.25" in lines[0]
     assert "c2" not in lines[0]               # 无排序分的候选不占行
+
+
+def test_judge_log_written(tmp_path):
+    """2026-08-19 用户令:每次评审结果留痕 JSONL(成败皆记)。"""
+    from reward.judges import JudgeLog, TextJudge
+    reply = json.dumps({"scores": {"script_faithfulness": 4,
+                                   "visual_specificity": 4,
+                                   "transition_continuity": None,
+                                   "character_consistency": 5},
+                        "rationale": {"script_faithfulness": "ok"}})
+    tj = TextJudge.__new__(TextJudge)
+    tj.client = _FakeChat(reply)
+    from reward.judges import _skill
+    tj.skill = _skill("prompt_review")
+    tj.log = JudgeLog(tmp_path / "judge_calls.jsonl")
+    tj.score({"candidate_prompt": "x"},
+             tag={"run": "movie_x", "label": "s1", "candidate": 0})
+    rec = json.loads((tmp_path / "judge_calls.jsonl").read_text())
+    assert rec["judge"] == "text" and rec["error"] == ""
+    assert rec["tag"]["label"] == "s1"
+    assert rec["scores"]["character_consistency"] == 5
+    assert "ts" in rec and rec["latency_s"] >= 0
