@@ -1,0 +1,97 @@
+skill_id: outdoor_narration
+kind: template
+name: 户外旁白段(动作放开 + 后期字幕)
+
+applies_to:
+  categories: [服装]
+  person_count: [1, 2, 3]
+  placement: body
+
+produces:
+  duration_s: 10
+  audio_mode: voiceover          # 不要求音画同步 → 动作可彻底放开
+  subtitle: burned_in_post       # 后期烧, 中文 100% 准确
+
+needs_background: false          # 外景写在 prompt 里; 若要预生成背景图见 background_prompt
+
+pipeline:
+  - id: vid
+    tool: seedance_t2v
+    params: {generate_audio: false, duration: 10, refs: [$hook]}
+  - id: vo
+    tool: minimax_tts
+    params: {voice_id: Lively_Girl, emotion: happy, text: "{narration}"}
+  - id: mix
+    tool: mix_audio
+    local: true
+    params: {video: "@vid", voice: "@vo", bgm: $bgm_slice,
+             voice_loudnorm: -18, bgm_volume: 0.20}
+  - id: sub
+    tool: burn_subtitle
+    local: true
+    params: {video: "@mix", text: "{narration}", engine: pillow,
+             y_frac: 0.83, size: 40, max_chars: 13}
+
+scene_by_color:                  # 按商品配色推导外景(实测成立)
+  pink: >-
+    under blooming cherry blossom trees in a spring park, soft warm sunlight
+    filtering through pink petals, gentle breeze
+  green: >-
+    on a grassy lawn beside a tree-lined path in a botanical garden,
+    dappled green light, blurred foliage in the background
+  blue_white: >-
+    on a white terrace overlooking the sea, clear blue sky and ocean horizon
+    behind her, bright natural daylight
+
+prompt_template: |
+  Handheld camera with a subtle natural sway, vertical 9:16 full-body shot,
+  {scene}. The woman from @Image1, wearing the {color} {garment}, is the only
+  person in frame. Over the 10 seconds, {action}. Her expressions are lively
+  and varied — she smiles, raises her eyebrows, and looks straight into the
+  lens. Cinematic natural light, shallow depth of field. Same woman and same
+  outfit throughout. No text, no captions, no subtitles, no extra people.
+
+background_prompt: |
+  Vertical 9:16 empty outdoor scene photograph, {scene}, no people in frame,
+  natural daylight, shallow depth of field, photorealistic.
+
+slots:
+  scene:
+    type: string
+    lang: en
+    auto_from: scene_by_color      # 由程序按配色查表注入
+    desc: "取自 scene_by_color, 按该 hook 的配色选"
+  color:
+    type: string
+    lang: en
+    auto_from: hook_color          # 由程序按 hook_index 注入, 不问模型
+    desc: "该 hook 对应的配色"
+  garment:
+    type: string
+    lang: en
+    desc: "商品英文描述"
+  action:
+    type: string
+    lang: en
+    desc: "一句话串起 3-4 个动作(走位+手势+微表情); 不必迁就说话节奏; 可从 action_library 取"
+  narration:
+    type: string
+    lang: zh
+    min_chars: 24
+    max_chars: 32
+    desc: "旁白全文; TTS 约 5 字/秒, 10 秒上限约 45 字, 留呼吸空间取 24-32"
+
+action_library:
+  - "she walks toward the camera and stops, tilts her head with a bright surprised smile, sweeps a strand of hair behind her ear, then spreads the hem with both hands and gives a small playful shrug"
+  - "she strolls a few steps along the path, turns back to the camera with a mischievous raised eyebrow, points at the contrast stitching on her cuff, then slips both hands into her pockets and rocks her shoulders"
+  - "she leans on the railing and looks out at the sea, turns around with wind in her hair, opens both arms wide to present the outfit, then makes a heart shape with her hands"
+
+measured:
+  verified: true
+  date: 2026-08-16
+  notes: >-
+    三段全成, 三个外景与配色匹配自然, 设计的动作逐个执行到位, 身份跨段一致。
+    相比 lipsync 路线的两个优势 —— 动作不受说话节奏约束; 字幕后期烧, 中文准确。
+  caveats:
+    - "TTS 与画面各自独立, 人物嘴不动; 需要真人开口感就改用 home_talking"
+    - "整体响度偏保守(-28~-31dB), 成片建议再做一次全片 loudnorm"

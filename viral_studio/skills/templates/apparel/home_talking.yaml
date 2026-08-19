@@ -1,0 +1,121 @@
+skill_id: home_talking
+kind: template
+name: 室内口播段(三动作 + 音画同步)
+
+applies_to:
+  categories: [服装]
+  person_count: [1, 2, 3]        # 一张 hook 一段, 天然做"分色/分卖点"叙述
+  placement: body
+
+produces:
+  duration_s: 10
+  audio_mode: lipsync            # seedance 原生音画同出, 人物真的在说话
+  shots: 3                       # 3+3+4 秒三动作
+
+needs_background: false          # 场景写在 prompt 里, 直接 t2v
+
+pipeline:
+  - id: vid
+    tool: seedance_t2v
+    params: {generate_audio: true, duration: 10, refs: [$hook]}
+  - id: voice                    # 模型会自配BGM(实测静默窗 -30dB) → 只留人声
+    tool: isolate_voice
+    local: true
+    params: {source: "@vid", engine: demucs, device: cpu}
+  - id: out
+    tool: mix_audio
+    local: true
+    params: {video: "@vid", voice: "@voice", bgm: $bgm_slice,
+             voice_loudnorm: -18, bgm_volume: 0.22}
+
+scene_default: >-
+  bright clean bedroom with a large window, soft daylight,
+  plain light-colored wall
+
+prompt_template: |
+  Locked-off static camera, vertical 9:16 full-body shot, {scene}. A 10-second
+  video in three shots, hard cut between shots. The same young woman from
+  @Image1, wearing the {color} {garment}, appears in every shot.
+  Shot 1 (0-3s): she {action1}, speaking to the camera in Mandarin Chinese, and says: "{line1}"
+  Shot 2 (3-6s): she {action2}, speaking to the camera in Mandarin Chinese, and says: "{line2}"
+  Shot 3 (6-10s): she {action3}, speaking to the camera in Mandarin Chinese, and says: "{line3}"
+  Same woman, same outfit, same room in all three shots. She speaks continuously
+  with natural, accurate lip sync in Mandarin Chinese; clear female voice,
+  upbeat and friendly, energetic performance.
+  AUDIO: her speaking voice ONLY — a clean dry studio voice recording. No
+  background music, no soundtrack, no instrumental, no ambient noise, no sound
+  effects.
+  SUBTITLES: burn in her spoken Chinese line as a caption at the bottom of the
+  frame, white bold sans-serif text with a thin dark outline, one line at a
+  time, changing with each shot, matching exactly what she is saying. No other
+  text or graphics, no extra people.
+
+slots:
+  scene:
+    type: string
+    lang: en
+    auto_from: scene_default       # 固定值, 程序注入以保证三段一致
+    desc: "室内场景描述; 三段必须一致"
+  color:
+    type: string
+    lang: en
+    auto_from: hook_color          # 由程序按 hook_index 注入, 不问模型(实测模型会猜错位)
+    desc: "该 hook 对应的配色, 如 pink / soft sage green"
+  garment:
+    type: string
+    lang: en
+    desc: "商品英文描述, 如 sweatshirt with a watercolor horse print"
+  action1:
+    type: string
+    lang: en
+    desc: "0-3s 建立动作(走入/亮相); 可从 action_library.entrance 取"
+  action2:
+    type: string
+    lang: en
+    desc: "3-6s 细节动作(抓衣摆/指印花/摸缝线); 可从 action_library.detail 取"
+  action3:
+    type: string
+    lang: en
+    desc: "6-10s 展示动作(甩袖/侧身/回眸); 可从 action_library.showcase 取; 禁 360 与 spin"
+  line1:
+    type: string
+    lang: zh
+    min_chars: 10
+    max_chars: 13
+    desc: "3秒句"
+  line2:
+    type: string
+    lang: zh
+    min_chars: 10
+    max_chars: 13
+    desc: "3秒句; 与 line1 语义必须拉开, 否则模型会连读成一段"
+  line3:
+    type: string
+    lang: zh
+    min_chars: 14
+    max_chars: 18
+    desc: "4秒句"
+
+action_library:
+  entrance:
+    - "walks in from the left edge and throws both arms open in a cheerful ta-da"
+    - "faces the camera with a bright surprised smile"
+  detail:
+    - "grabs the hem with both hands and swings it lightly left and right"
+    - "points at the print on her chest"
+    - "touches the contrast stitching along her collar and cuff"
+  showcase:
+    - "flicks one wide sleeve through the air then pivots about 45 degrees"
+    - "slides both hands into her pockets and rocks her shoulders playfully"
+    - "looks back over her shoulder and winks"
+
+measured:
+  verified: true
+  date: 2026-08-16
+  notes: >-
+    三段全成。台词 9/9 逐字准确(ASR复核), 口型同步, 身份与配色跨段稳定。
+    时段对齐: 台词按 3秒10-13字 配时最准(偏差<0.45s)。
+  caveats:
+    - "硬切做不到: 模型无视 hard cut, 用推拉/景别变化代替(帧差仅6-18)"
+    - "字幕不可控: 3段中1段自行烧了字, 且写错中文字形 → 想要准确字幕改用后期烧"
+    - "各段人声响度差可达11dB, 装配时必须 loudnorm 归一"

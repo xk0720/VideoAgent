@@ -1,0 +1,122 @@
+skill_id: sequential_reveal
+kind: closer
+name: 多人相继出镜(收尾)
+source_demo: demo_v01.py 段落A(原为开场, 现按裁决改作收尾)
+
+applies_to:
+  categories: [服装, 任何多SKU或多配色商品]
+  person_count: [2, 3]           # 1 人时整段跳过(见 skip_when)
+  placement: ending
+skip_when: "person_count < 2"
+
+produces:
+  audio_mode: music_only
+  variants:
+    "3": {duration_s: 6, beats: [2, 4, 6], windows: 3}
+    "2": {duration_s: 4, beats: [2, 4], windows: 2}
+
+needs_background: true           # 用背景参考图复刻拼贴质感; 无图时走 background_prompt
+
+pipeline:
+  - id: vid
+    tool: seedance_t2v
+    params: {generate_audio: false, duration: "$variant.duration_s",
+             refs: [$background, $hook_1, $hook_2, $hook_3]}
+  - id: music
+    tool: sonilo_text_to_music
+    params: {prompt: "{music_prompt}", duration: "$variant.duration_s + 2"}
+  - id: punch
+    tool: punch_up
+    local: true
+    params: {audio: "@music", beats: "$variant.beats", gain: 0.85,
+             trim_to: "$variant.duration_s + 0.5"}
+  - id: out
+    tool: mix_audio
+    local: true
+    params: {video: "@vid", audio: "@punch",
+             duration: "$variant.duration_s + 0.5"}
+
+# ── 3 人版 ────────────────────────────────────────────────────────
+prompt_3p: |
+  Locked-off static camera, vertical 9:16. The exact background from @Image1 —
+  a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
+  stays fixed and unchanged for the whole clip. A 6-second video.
+  0-2s: the woman from @Image2 pops into the center of the phone frame, landing
+  in a confident standing pose with one hand on her hip.
+  2-4s: the woman from @Image3 pops in and stands to her left; both stay on
+  screen holding their poses.
+  4-6s: the woman from @Image4 pops in and stands to her right; all three stand
+  in a row facing the camera, smiling.
+  All three women are rendered at exactly the SAME scale and the SAME distance
+  from the camera — their heads at the same height, their bodies the same size,
+  evenly spaced across the frame. None of them is larger, closer or further
+  back than the others; they are not photographs or cards, they are three
+  equally sized cut-out figures standing side by side.
+  Each woman keeps her own face, hairstyle and outfit exactly as in her
+  reference image. No morphing between people, no blending of faces, no extra
+  people. Cut-out sticker look with a thin white outline around each woman,
+  matching the reference background's collage style. No text, no captions, no
+  camera movement.
+
+# ── 2 人版 ────────────────────────────────────────────────────────
+prompt_2p: |
+  Locked-off static camera, vertical 9:16. The exact background from @Image1 —
+  a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
+  stays fixed and unchanged for the whole clip. A 4-second video.
+  0-2s: the woman from @Image2 pops into the frame slightly left of center,
+  landing in a confident standing pose with one hand on her hip.
+  2-4s: the woman from @Image3 pops in to her right; both stand side by side
+  facing the camera, smiling.
+  Both women are rendered at exactly the SAME scale and the SAME distance from
+  the camera — heads at the same height, bodies the same size, symmetrically
+  placed about the center. Neither is larger or closer than the other; they are
+  not photographs or cards, they are two equally sized cut-out figures.
+  Each woman keeps her own face, hairstyle and outfit exactly as in her
+  reference image. No morphing between people, no blending of faces, no extra
+  people. Cut-out sticker look with a thin white outline around each woman,
+  matching the reference background's collage style. No text, no captions, no
+  camera movement.
+
+background:
+  default_image: examples/bg/v01_opening_bg.jpg
+  background_prompt: |
+    Vertical 9:16 flat-lay graphic background, a smartphone frame centered on a
+    pastel pink-and-green sunburst pattern, white sparkle stickers scattered
+    around, small UI icons (comment, heart, share) at the bottom, bright and
+    clean, no people, no text.
+
+music_prompt: |
+  Upbeat fashion-haul intro, 120 BPM, punchy electronic drums, strong kick and
+  clap accents landing exactly on {beats_text}, short riser sweeps building
+  into each accent, bright synth plucks, crisp hi-hats, energetic and clean,
+  no vocals.
+
+title_overlay:                   # 后期烧, 不指望模型写中文
+  enabled: true
+  default_text: "夏日穿搭合集"
+  y_frac: 0.16
+  size: 76
+
+slots:
+  title:
+    type: string
+    lang: zh
+    min_chars: 4
+    max_chars: 10
+    desc: "收尾标题(后期烧), 默认 title_overlay.default_text"
+
+measured:
+  verified: true
+  date: 2026-08-16
+  notes: >-
+    3 人版实测: 时序精准(1s 一人 / 2.5s 两人 / 4.5s 三人), 背景完美复刻,
+    抠图白描边到位, 三人未串脸(记忆卡标注的高风险项被规避)。
+  fixed_in_this_card:
+    - "实测第2、3人以'照片卡片'形式且偏小 → prompt 已加同尺寸/同景深/等距约束"
+  caveats:
+    - "最后一击需 ~0.55s 衰减: 音乐要多生成 2s, 强化后裁到 段长+0.5s, 段落画面同步延长(末帧克隆=定格)"
+    - "否则拼接后该击被后段音频覆盖, 成片里等于消失(实测强度 0.00)"
+  audio_selection: >-
+    text-to-music 偏差 0.035s 优于 video-to-music 0.085s;
+    自造鼓点与"生成8s裁6s"均更差。生成音乐准而不狠, 必须叠 punch_up。
+  "2p_variant": {verified: false, note: "2 人版 prompt 已写死, 尚未实跑"}

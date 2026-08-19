@@ -32,14 +32,20 @@ def chat_json(system: str, user: str, model: str = None,
                 {"role": "user", "content": user}]
     last_err = ""
     for attempt in range(1, max_retries + 1):
-        r = _s().post(
-            f"{LLM_BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key()}",
-                     "Content-Type": "application/json"},
-            json={"model": model or LLM_MODEL, "messages": messages,
-                  "temperature": temperature,
-                  "response_format": {"type": "json_object"}},
-            timeout=300)
+        try:
+            r = _s().post(
+                f"{LLM_BASE_URL}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key()}",
+                         "Content-Type": "application/json"},
+                json={"model": model or LLM_MODEL, "messages": messages,
+                      "temperature": temperature,
+                      "response_format": {"type": "json_object"}},
+                timeout=300)
+        except requests.exceptions.RequestException as e:   # 连接被掐/超时 → 重试
+            last_err = f"网络异常: {type(e).__name__}: {e}"
+            log.warning("LLM 连接失败(第%d次): %s", attempt, str(e)[:100])
+            time.sleep(3 * attempt)
+            continue
         if r.status_code != 200:
             last_err = f"HTTP {r.status_code}: {r.text[:300]}"
             log.warning("LLM 调用失败(第%d次): %s", attempt, last_err)

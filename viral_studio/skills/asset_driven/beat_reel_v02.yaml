@@ -1,0 +1,43 @@
+skill_id: beat_reel_v02
+kind: asset_driven
+name: 海报卡点开场(爆款片段驱动)
+
+applies_to:
+  categories: [服装, 美妆, 任何可做海报视觉的商品]
+  person_count: [1, 2, 3]        # 只用第一张 hook 作参考图
+  placement: opening
+
+produces:
+  duration_s: 5
+  audio_mode: music_only
+  fps_note: wan-pro 原生 25fps(std 只有 15fps, 明显偏卡)
+
+needs_background: false          # animate 的背景来自 hook 参考图
+
+asset:                           # 核心资产: 驱动片段 + 它自带的 BGM
+  clip: memory/assets/media/v02_poster_beat_reel.mp4
+  bgm: memory/assets/media/v02_poster_beat_reel.m4a
+  bpm: 123
+  cuts_in_source: 6              # 原片 6 个硬切(每约 0.8s)
+
+pipeline:
+  - id: vid
+    tool: animate_move
+    params: {mode: wan-pro, ref: $hook_1, driving: $skill.asset.clip}
+  - id: mix
+    tool: mix_audio
+    local: true
+    params: {video: "@vid", audio: $skill.asset.bgm, bgm_volume: 1.0}
+
+prompt_template: ""              # animate 不吃文本, 一致性全靠参考图变体
+slots: {}
+
+measured:
+  verified: true
+  date: 2026-08-13
+  notes: >-
+    pro/std 两轮均成功。参考图若本身是营销海报(带排版文字),
+    生成画面会把排版一起带进来 —— 这条链路正好要这个海报感。
+  caveat: >-
+    animate 会抹平驱动片段的硬切(驱动 Δ108 → 生成 Δ19),
+    输出是"平滑换姿势"而非"卡点硬切"; 要硬切感需后期按拍点重剪。
