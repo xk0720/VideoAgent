@@ -252,3 +252,49 @@ def test_extra_body_merged_into_request(monkeypatch):
     assert c.chat("hi") == "ok"
     assert sent["enable_thinking"] is False
     assert sent["model"] == "m" and sent["messages"][0]["content"] == "hi"
+
+
+def test_video_b64_cached_across_concurrent_judges(tmp_path):
+    """2026-08-20 判官并发:同一段视频被 3 个排名维度 + 逐候选一致性
+    反复打包 —— base64 只该算一次(并发下 4 份大字符串同时在内存里
+    是真实的浪费),且缓存有上限、按内容失效。"""
+    import threading as _th
+    from reward import judges as J
+    v = tmp_path / "clip.mp4"
+    v.write_bytes(b"video-bytes-" * 100)
+    J._B64_CACHE.clear()
+    calls = {"n": 0}
+    real_read = Path.read_bytes
+
+    def counting_read(self):
+        if str(self).endswith(".mp4"):
+            calls["n"] += 1
+        return real_read(self)
+
+    Path.read_bytes = counting_read
+    try:
+        parts = []
+        threads = [_th.Thread(target=lambda: parts.append(
+            J._video_part(str(v)))) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len({p["video_url"]["url"] for p in parts}) == 1
+        assert calls["n"] <= 6            # 并发首访可能撞车,但不会更多
+        calls["n"] = 0
+        J._video_part(str(v))
+        assert calls["n"] == 0            # 之后全部命中缓存
+        # 内容变了 → 缓存按 (mtime, size) 自动失效
+        v.write_bytes(b"different-bytes-" * 100)
+        J._video_part(str(v))
+        assert calls["n"] == 1
+        # 上限封顶
+        for i in range(J._B64_CACHE_MAX + 3):
+            p2 = tmp_path / f"c{i}.mp4"
+            p2.write_bytes(bytes([i]) * 50)
+            J._video_part(str(p2))
+        assert len(J._B64_CACHE) <= J._B64_CACHE_MAX
+    finally:
+        Path.read_bytes = real_read
+        J._B64_CACHE.clear()

@@ -122,12 +122,42 @@ class OpenAICompatChat:
         return ""
 
 
+# base64 编码缓存(2026-08-20 判官并发):同一批视频原本要被编码 4 遍
+# (3 个排名维度 + 每候选一次一致性),并发时 4 份大字符串同时在内存
+# 里。按(路径, mtime, 大小)缓存,FIFO 封顶 —— 只留当前组用得到的那
+# 几条,镜头一换自然淘汰。
+_B64_CACHE: dict = {}
+_B64_CACHE_MAX = 8
+_B64_LOCK = threading.Lock()
+
+
+def _video_b64(path: str) -> str:
+    p = Path(path)
+    try:
+        st = p.stat()
+        key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None:
+        with _B64_LOCK:
+            hit = _B64_CACHE.get(key)
+        if hit is not None:
+            return hit
+    data = base64.b64encode(p.read_bytes()).decode()
+    if key is not None:
+        with _B64_LOCK:
+            _B64_CACHE[key] = data
+            while len(_B64_CACHE) > _B64_CACHE_MAX:
+                _B64_CACHE.pop(next(iter(_B64_CACHE)))
+    return data
+
+
 def _video_part(path: str) -> dict:
     """本地视频 → base64 data-URI 的 video_url 部件(dashscope omni
     兼容层原生视频通道;用户令:不抽帧)。"""
-    data = base64.b64encode(Path(path).read_bytes()).decode()
     return {"type": "video_url",
-            "video_url": {"url": f"data:video/mp4;base64,{data}"}}
+            "video_url": {"url":
+                          f"data:video/mp4;base64,{_video_b64(path)}"}}
 
 
 def _image_part(path: str) -> dict:
