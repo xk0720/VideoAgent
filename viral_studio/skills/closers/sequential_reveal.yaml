@@ -1,74 +1,90 @@
 skill_id: sequential_reveal
 kind: closer
 name: 多人相继出镜(收尾)
-source_demo: demo_v01.py 段落A(原为开场, 现按裁决改作收尾)
+source: demo_v01.py 段落 A(原为开场, 按裁决改作收尾)
 
 applies_to:
-  categories: [服装, 任何多SKU或多配色商品]
-  person_count: [2, 3]           # 1 人时整段跳过(见 skip_when)
+  categories: [服装]
+  person_count: [2, 3]        # 1 人整段跳过(同框才有"相继出镜"可言)
   placement: ending
-skip_when: "person_count < 2"
 
 produces:
+  durations: {"2": 4, "3": 6}         # 每人 2s
+  tail_s: 0.5                          # 尾部余量: 让最后一击响完(见 caveats)
   audio_mode: music_only
-  variants:
-    "3": {duration_s: 6, beats: [2, 4, 6], windows: 3}
-    "2": {duration_s: 4, beats: [2, 4], windows: 2}
 
 audio:
-  bgm_source: generated    # text-to-music 现生成
+  bgm_source: generated       # 现生成卡点音乐, 再用 punch_up 把落点砸实
 
-needs_background: true           # 用背景参考图复刻拼贴质感; 无图时走 background_prompt
-
-prompt_source:      # 视频调用的 prompt 正文取哪一段(按人数选版本)
+# 本卡 = 一次生成整段(多人同框, 非逐人拼接): 背景钉首帧 → 生成 → 配乐 → 强化 → 混音 → 烧标题
+prompt_source:
   "2": prompt_2p
   "3": prompt_3p
 
-pipelines:          # 人数不同 → 参考图数量/时长/卡点都不同; 1 人整段跳过
+pipelines:
   "2":
     - id: vid
       tool: kling_omni_video
-      params: {audio: false, duration: 4,
+      params: {prompt: $prompt, audio: false, duration: 4,
                first_frame: $background,      # 背景钉为首帧, 不占 <<<image_N>>> 编号
                refer: [$hook_1, $hook_2]}
     - id: music
       tool: sonilo_text_to_music
-      params: {prompt: "{music_prompt}", duration: 6}    # 段长+2, 给最后一击留衰减
+      params: {prompt: $skill.music_prompt, duration: 6}    # 段长+2, 给最后一击留衰减
     - id: punch
       tool: punch_up
       local: true
       params: {audio: "@music", beats: [2, 4], gain: 0.85, trim_to: 4.5}
-    - id: mix
+    - id: mixed
       tool: mix_audio
       local: true
-      params: {video: "@vid", audio: "@punch", duration: 4.5}
+      params: {video: "@vid", bgm: "@punch", duration: 4.5, bgm_volume: 1.0}
     - id: out
       tool: burn_text
       local: true
-      params: {video: "@mix", text: "{title}", y_frac: 0.16, size: 76}
+      params: {video: "@mixed", text: "{title}", y_frac: 0.16, size: 76}
   "3":
     - id: vid
       tool: kling_omni_video
-      params: {audio: false, duration: 6,
+      params: {prompt: $prompt, audio: false, duration: 6,
                first_frame: $background,
                refer: [$hook_1, $hook_2, $hook_3]}
     - id: music
       tool: sonilo_text_to_music
-      params: {prompt: "{music_prompt}", duration: 8}
+      params: {prompt: $skill.music_prompt, duration: 8}
     - id: punch
       tool: punch_up
       local: true
       params: {audio: "@music", beats: [2, 4, 6], gain: 0.85, trim_to: 6.5}
-    - id: mix
+    - id: mixed
       tool: mix_audio
       local: true
-      params: {video: "@vid", audio: "@punch", duration: 6.5}
+      params: {video: "@vid", bgm: "@punch", duration: 6.5, bgm_volume: 1.0}
     - id: out
       tool: burn_text
       local: true
-      params: {video: "@mix", text: "{title}", y_frac: 0.16, size: 76}
+      params: {video: "@mixed", text: "{title}", y_frac: 0.16, size: 76}
 
-# ── 3 人版 ────────────────────────────────────────────────────────
+# ── 2 人版: 0-2s 左, 2-4s 右 ─────────────────────────────────────
+prompt_2p: |
+  Locked-off static camera, vertical 9:16. The exact background of this shot —
+  a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
+  stays fixed and unchanged for the whole clip. A 4-second video.
+  0-2s: the woman from <<<image_1>>> pops into the frame slightly left of center,
+  landing in a confident standing pose with one hand on her hip.
+  2-4s: the woman from <<<image_2>>> pops in to her right; both stand side by side
+  facing the camera, smiling.
+  Both women are rendered at exactly the SAME scale and the SAME distance from
+  the camera — heads at the same height, bodies the same size, symmetrically
+  placed about the center. Neither is larger or closer than the other; they are
+  not photographs or cards, they are two equally sized cut-out figures.
+  Each woman keeps her own face, hairstyle and outfit exactly as in her
+  reference image. No morphing between people, no blending of faces, no extra
+  people. Cut-out sticker look with a thin white outline around each woman,
+  matching the reference background's collage style. No text, no captions, no
+  camera movement.
+
+# ── 3 人版: 0-2s 中, 2-4s 左, 4-6s 右 ────────────────────────────
 prompt_3p: |
   Locked-off static camera, vertical 9:16. The exact background of this shot —
   a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
@@ -90,27 +106,8 @@ prompt_3p: |
   matching the reference background's collage style. No text, no captions, no
   camera movement.
 
-# ── 2 人版 ────────────────────────────────────────────────────────
-prompt_2p: |
-  Locked-off static camera, vertical 9:16. The exact background of this shot —
-  a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
-  stays fixed and unchanged for the whole clip. A 4-second video.
-  0-2s: the woman from <<<image_1>>> pops into the frame slightly left of center,
-  landing in a confident standing pose with one hand on her hip.
-  2-4s: the woman from <<<image_2>>> pops in to her right; both stand side by side
-  facing the camera, smiling.
-  Both women are rendered at exactly the SAME scale and the SAME distance from
-  the camera — heads at the same height, bodies the same size, symmetrically
-  placed about the center. Neither is larger or closer than the other; they are
-  not photographs or cards, they are two equally sized cut-out figures.
-  Each woman keeps her own face, hairstyle and outfit exactly as in her
-  reference image. No morphing between people, no blending of faces, no extra
-  people. Cut-out sticker look with a thin white outline around each woman,
-  matching the reference background's collage style. No text, no captions, no
-  camera movement.
-
-background:
-  default_image: examples/bg/v01_opening_bg.jpg
+background:                   # 有现成图直接用; 想改成现生成, 把本行置空并在
+  default_image: examples/bg/v01_opening_bg.jpg   # pipeline 首位加一步 image_generation
   background_prompt: |
     Vertical 9:16 flat-lay graphic background, a smartphone frame centered on a
     pastel pink-and-green sunburst pattern, white sparkle stickers scattered
@@ -123,32 +120,16 @@ music_prompt: |
   into each accent, bright synth plucks, crisp hi-hats, energetic and clean,
   no vocals.
 
-title_overlay:                   # 后期烧, 不指望模型写中文
-  enabled: true
-  default_text: "夏日穿搭合集"
-  y_frac: 0.16
-  size: 76
-
-slots:
-  title:
-    type: string
-    lang: zh
-    min_chars: 4
-    max_chars: 10
-    desc: "收尾标题(pipeline 末尾 burn_text 用), 默认见 title_overlay.default_text"
+text_params:
+  title: {lang: zh, chars: [4, 10]}     # 收尾标题, 后期烧(不指望模型写中文)
 
 measured:
   verified: true
   date: 2026-08-16
-  notes: >-
-    3 人版实测: 时序精准(1s 一人 / 2.5s 两人 / 4.5s 三人), 背景完美复刻,
-    抠图白描边到位, 三人未串脸(记忆卡标注的高风险项被规避)。
-  fixed_in_this_card:
-    - "实测第2、3人以'照片卡片'形式且偏小 → prompt 已加同尺寸/同景深/等距约束"
+  notes: 3 人版实测时序精准(1s一人/2.5s两人/4.5s三人), 背景完美复刻, 三人未串脸
   caveats:
-    - "最后一击需 ~0.55s 衰减: 音乐要多生成 2s, 强化后裁到 段长+0.5s, 段落画面同步延长(末帧克隆=定格)"
-    - "否则拼接后该击被后段音频覆盖, 成片里等于消失(实测强度 0.00)"
-  audio_selection: >-
-    text-to-music 偏差 0.035s 优于 video-to-music 0.085s;
-    自造鼓点与"生成8s裁6s"均更差。生成音乐准而不狠, 必须叠 punch_up。
-  "2p_variant": {verified: false, note: "2 人版 prompt 已写死, 尚未实跑"}
+    - 实测第2、3人曾以"照片卡片"形式且偏小 → prompt 已加同尺寸/同景深/等距约束
+    - 最后一击需 ~0.55s 衰减 → 音乐多生成 2s、裁到 段长+0.5s、画面同步延长(末帧克隆=定格)
+    - 否则拼接后该击被后段音频覆盖, 成片里等于消失(实测强度 0.00)
+    - 配乐选型: text-to-music 偏差 0.035s 优于 video-to-music 0.085s; 生成音乐准而不狠, 必须叠 punch_up
+    - 2 人版 prompt 已写死但尚未实跑

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -33,6 +34,10 @@ def get_logger(name: str = "maestro", level: int = logging.INFO) -> logging.Logg
 # $MAESTRO_BRAIN_LOG 提供;未设置 = 只打终端 INFO,不落盘。绝不抛错。
 # ─────────────────────────────────────────────────────────────────────────
 _BRAIN_LOG_PATH: Optional[str] = None
+# 追加锁(2026-08-20 RL 组内并发):单条记录含完整 raw,轻松超过
+# PIPE_BUF(4096)—— 多线程无锁追加会把两行绞在一起,台账就烂了。
+# 生产目前单线程,拿这把锁零代价;两侧同一份代码(同构锁在岗)。
+_BRAIN_LOG_LOCK = threading.Lock()
 
 
 def set_brain_log(path) -> None:
@@ -68,10 +73,12 @@ def brain_log(stage: str, record: dict) -> str:
         from pathlib import Path
 
         p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"ts": time.time(), "stage": stage, **record},
-                               ensure_ascii=False, default=str) + "\n")
+        line = json.dumps({"ts": time.time(), "stage": stage, **record},
+                          ensure_ascii=False, default=str) + "\n"
+        with _BRAIN_LOG_LOCK:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(line)
     except OSError as exc:
         log.warning("brain_log write failed (%s): %s", path, exc)
     return record["decision_id"]

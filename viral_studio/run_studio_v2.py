@@ -130,7 +130,7 @@ def main() -> int:
               + (f" v{s.variant}" if s.variant else "")
               + (f" hook#{s.hook_index}" if s.hook_index else ""))
         print(f"        {s.t0}–{s.t1}s  " + " → ".join(c["tool"] for c in s.pipeline))
-        for k, v in s.fills.items():
+        for k, v in s.texts.items():
             print(f"        {k:10s} = {_short(v, 84)}")
     print(f"  校验: {'通过' if rep.ok else '未通过'} "
           f"(阻断 {len(rep.errors)} / 警告 {len(rep.warnings)})")
@@ -141,8 +141,6 @@ def main() -> int:
     if not rep.ok:
         log.error("分镜校验未通过, 停止(产物已落盘供检查)")
         return 1
-
-    exit(0)
 
     # ── ② Act ────────────────────────────────────────────
     log.info("② Act 编译调用计划")

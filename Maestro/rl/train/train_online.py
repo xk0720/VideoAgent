@@ -266,6 +266,7 @@ def main() -> int:
             pending[args.batch_groups:]
         opt.zero_grad()
         total, n = 0.0, 0
+        _t0 = time.time()
         for g in batch:
             prompt = build_prompt(g)
             for s in g["samples"]:
@@ -279,6 +280,20 @@ def main() -> int:
                 out = model(ids).logits[:, ids_p.shape[1] - 1:-1]
                 logp = torch.log_softmax(out, dim=-1).gather(
                     -1, ids_c.unsqueeze(-1)).squeeze(-1).sum()
+                if step == 0 and n == 0:
+                    # 张量形状逐条自证(2026-08-20 用户令):GPU 上的
+                    # batch 恒为 1;logits 一行吃掉 [1, 全长, 词表] 的
+                    # 显存,这是 batch 上不去的真正原因,数字直接看得见
+                    _vocab = out.shape[-1]
+                    _full = ids.shape[1] * _vocab * 2 / 1e9
+                    print(f"[trainer] shapes: prompt={tuple(ids_p.shape)}"
+                          f" completion={tuple(ids_c.shape)}"
+                          f" concat={tuple(ids.shape)}"
+                          f" sliced_logits={tuple(out.shape)}"
+                          f" vocab={_vocab}"
+                          f" logp={tuple(logp.shape)}(标量)"
+                          f" | 全长 logits 若不切片 ≈{_full:.1f}GB/条"
+                          f"(log_softmax 再翻一倍)", flush=True)
                 loss = -float(s["advantage"]) * logp \
                     / max(1, ids_c.shape[1])
                 (loss / args.batch_groups).backward()
@@ -290,7 +305,11 @@ def main() -> int:
         met = batch_metrics(batch)
         met["train/loss"] = round(total / max(1, n), 4)
         met["train/policy_version"] = version
-        print(f"[trainer] step={step} loss={met['train/loss']} "
+        # 每步耗时(2026-08-20):训练侧到底占循环多少 —— 拿数据决定
+        # 要不要上 FSDP,不靠拍脑袋
+        met["train/step_s"] = round(time.time() - _t0, 1)
+        print(f"[trainer] step={step} ({met['train/step_s']}s) "
+              f"loss={met['train/loss']} "
               f"reward={met['reward/mean']} "
               f"(fmt={met['reward/format']} text={met['reward/text']} "
               f"video={met['reward/video']}) "

@@ -43,6 +43,23 @@ from env.storyboard import StoryboardMemory                   # noqa: E402
 
 log = get_logger("maestro.rl_env")
 
+# 组内并发上限(2026-08-20 用户令"轴 A"):三段网络等待各自的并发度。
+# 可灵账号的并发配额未知 —— 环境变量可随时收紧,不用改代码。
+_GEN_CONCURRENCY = int(os.environ.get("RL_GEN_CONCURRENCY", "4"))
+_JUDGE_CONCURRENCY = int(os.environ.get("RL_JUDGE_CONCURRENCY", "6"))
+_POLICY_CONCURRENCY = int(os.environ.get("RL_POLICY_CONCURRENCY", "4"))
+
+
+def _run_concurrent(fn, items: list, workers: int) -> list:
+    """并发映射,结果【按输入顺序】返回(顺序即候选下标,绝不能乱)。
+    workers<=1 或只有一项 → 直接串行(测试/降级路径行为完全一致)。
+    单项抛异常 → 原样上抛(调用方的 try 阶梯照旧生效)。"""
+    if workers <= 1 or len(items) <= 1:
+        return [fn(it) for it in items]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as ex:
+        return list(ex.map(fn, items))
+
 
 @dataclass
 class ShotSpec:
@@ -154,9 +171,11 @@ def judge_group(judges, context: dict, entry, storyboard,
     kind = jm.get("kind")
     continuity = bool(kind == "continue"
                       or (kind == "derive" and jm.get("space_view")))
-    text_scores: list = []
     details: list[dict] = [{} for _ in range(n)]
-    for i, v in enumerate(variants):
+
+    # 文本判官:逐候选独立 → 并发(2026-08-20 轴 A;结果按下标回填)
+    def _text_one(iv):
+        i, v = iv
         try:
             case = {
                 "shot_script": entry.description,
@@ -178,12 +197,16 @@ def judge_group(judges, context: dict, entry, storyboard,
                 case, tag={"run": run, "label": entry.label,
                            "candidate": i,
                            "decision_id": v.get("decision_id")})
-            details[i]["judge_text"] = detail
-            text_scores.append(score)
+            return score, detail
         except Exception as exc:
             print(f"[judge] text failed ({str(exc)[:120]})", flush=True)
-            details[i]["judge_text"] = {"error": str(exc)[:120]}
-            text_scores.append(None)
+            return None, {"error": str(exc)[:120]}
+
+    _text = _run_concurrent(_text_one, list(enumerate(variants)),
+                            _JUDGE_CONCURRENCY)
+    text_scores = [t[0] for t in _text]
+    for i, t in enumerate(_text):
+        details[i]["judge_text"] = t[1]
 
     video_parts: dict = {"action": None, "physics": None,
                          "camera": None, "consistency": None}
@@ -193,18 +216,27 @@ def judge_group(judges, context: dict, entry, storyboard,
         rank_ctx = {"shot_script": entry.description,
                     "camera_facing": getattr(entry, "camera_facing", ""),
                     "cast_canon": context.get("cast") or {}}
-        for dim in ("action", "physics", "camera"):
+        # 三个排序维度互相独立 → 并发(每次调用自带整组视频)
+        def _rank_one(dim):
             try:
                 res = judges["ranker"].rank(
                     dim, rank_ctx, [str(v) for v in videos],
                     tag={"run": run, "label": entry.label})
-                video_parts[dim] = res["points"]
-                judge_video[dim] = {"evidence": res.get("evidence"),
-                                    "order": res.get("order")}
+                return dim, res, None
             except Exception as exc:
                 print(f"[judge] rank {dim} failed ({str(exc)[:120]})",
                       flush=True)
-                judge_video[dim] = {"error": str(exc)[:120]}
+                return dim, None, str(exc)[:120]
+
+        for dim, res, err in _run_concurrent(
+                _rank_one, ["action", "physics", "camera"],
+                _JUDGE_CONCURRENCY):
+            if err is None:
+                video_parts[dim] = res["points"]
+                judge_video[dim] = {"evidence": res.get("evidence"),
+                                    "order": res.get("order")}
+            else:
+                judge_video[dim] = {"error": err}
         refs = []
         portraits = storyboard.portraits or {}
         for name in (context.get("cast_in_shot") or []):
@@ -219,21 +251,28 @@ def judge_group(judges, context: dict, entry, storyboard,
             refs.append({"kind": "space_view", "path": sv["path"],
                          "note": (sv.get("caption") or "")[:200]})
         if refs:
-            cons: dict = {}
-            for i, v in enumerate(videos):
+            # 一致性对照:逐候选独立 → 并发
+            def _cons_one(iv):
+                i, v = iv
                 try:
                     sc, detail = judges["consistency"].score(
                         str(v), refs,
                         {"shot_script": entry.description},
                         tag={"run": run, "label": entry.label,
                              "candidate": i})
-                    cons[i] = sc
-                    details[i]["judge_consistency"] = detail
+                    return i, sc, detail
                 except Exception as exc:
                     print(f"[judge] consistency failed "
                           f"({str(exc)[:120]})", flush=True)
-                    details[i]["judge_consistency"] = {
-                        "error": str(exc)[:120]}
+                    return i, None, {"error": str(exc)[:120]}
+
+            cons: dict = {}
+            for i, sc, detail in _run_concurrent(
+                    _cons_one, list(enumerate(videos)),
+                    _JUDGE_CONCURRENCY):
+                details[i]["judge_consistency"] = detail
+                if sc is not None:
+                    cons[i] = sc
             video_parts["consistency"] = cons or None
     composed = compose_rewards(fmt, text_scores, video_parts, n)
     for i in range(n):
@@ -639,20 +678,20 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
             "slots_by_strategy": slots_by_strategy,
             "storyboard": storyboard.to_brain_json(),
             "episode_guidance": guidance}
-        d = W._decide(
-            llm_video_brain, "generation-condition", menu, _cond_context,
-            replay_hint=replay_cond.get(entry.label),
-            priority=W._CONDITION_PRIORITY)
-        # RL 组采样(生产 2026-08-10 版原文,唯一保留的 RL 差异①):
-        # 同 state 带温度再采 K-1 个;组记录自包含
-        rl_variants = [d]
-        for _rlk in range(max(0, group - 1)):
-            rl_variants.append(W._decide(
+        # RL 组采样(生产 2026-08-10 版语义原样:v0 默认温度、其余带
+        # rl_temperature)。2026-08-20 组内并发:K 个请求【同时】发给
+        # vLLM —— 同 state 意味着 prompt 逐字相同,continuous batching
+        # 会自动复用前缀 KV,4 路几乎等于 1 路的时间。
+        rl_variants = _run_concurrent(
+            lambda t: W._decide(
                 llm_video_brain, "generation-condition", menu,
                 _cond_context,
                 replay_hint=replay_cond.get(entry.label),
                 priority=W._CONDITION_PRIORITY,
-                temperature=rl_temperature))
+                temperature=t),
+            [None] + [rl_temperature] * max(0, group - 1),
+            _POLICY_CONCURRENCY)
+        d = rl_variants[0]
         rl_state = {"menu": [dict(m) for m in menu],
                     "context": _cond_context}
         decisions.append({"stage": "condition", "label": entry.label,
@@ -793,18 +832,28 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
             return brain_prompt, slots, use_tail, want_audio
 
         # ── 生成:K 个变体各走同一条链(生产 _gen_plan 原文)────────
-        videos: list = []
-        seed_conds: list = []
-        for s, _rl_d in enumerate(rl_variants):
-            d = _rl_d
-            brain_prompt, slots, use_tail, want_audio = _prompt_chain(d)
-            _old_ga = getattr(video_gen, "generate_audio", False)
+        # 组内并发(2026-08-20 用户令):出门链【串行】跑完(纯字符串
+        # 处理,不耗时;decisions 顺序与 brain_log 因此保持确定),只把
+        # 网络等待为主的条件执行丢进线程池。三处隔离:
+        #   ①每候选一个客户端副本 → generate_audio 开关线程私有;
+        #   ②每候选一个工作目录 shotNNN/cK → 中间产物(上镜尾帧、
+        #     尾段裁片)同名不再互相覆盖;
+        #   ③结果按下标回填 → 顺序与串行版逐位一致。
+        chains = [(_i, _v) + _prompt_chain(_v)
+                  for _i, _v in enumerate(rl_variants)]
+
+        def _gen_one(item):
+            s, _rl_d, brain_prompt, slots, use_tail, want_audio = item
+            vg = (video_gen.clone() if hasattr(video_gen, "clone")
+                  else video_gen)
+            cand_dir = shot_dir / f"c{s}"
+            _old_ga = getattr(vg, "generate_audio", False)
             if want_audio:
-                video_gen.generate_audio = True
+                vg.generate_audio = True
             try:
                 video_path, cond = W._generate_with_condition(
-                    d["strategy"], entry, prev, spec, video_gen,
-                    shot_dir, seed=s, fps=fps,
+                    _rl_d["strategy"], entry, prev, spec, vg,
+                    cand_dir, seed=s, fps=fps,
                     window_tail_s=window_tail_s,
                     brain_prompt=brain_prompt,
                     use_prev_tail_video=use_tail,
@@ -813,11 +862,11 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
             except Exception as exc:
                 log.warning("window: conditioned generation failed (%s): "
                             "%s — retrying the SAME strategy once",
-                            d["strategy"], exc)
+                            _rl_d["strategy"], exc)
                 try:
                     video_path, cond = W._generate_with_condition(
-                        d["strategy"], entry, prev, spec, video_gen,
-                        shot_dir, seed=s, fps=fps,
+                        _rl_d["strategy"], entry, prev, spec, vg,
+                        cand_dir, seed=s, fps=fps,
                         window_tail_s=window_tail_s,
                         brain_prompt=brain_prompt,
                         use_prev_tail_video=use_tail,
@@ -827,13 +876,13 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                 except Exception as exc2:
                     try:
                         video_path, cond = W._generate_with_condition(
-                            "t2v", entry, prev, spec, video_gen,
-                            shot_dir, seed=s, fps=fps,
+                            "t2v", entry, prev, spec, vg,
+                            cand_dir, seed=s, fps=fps,
                             window_tail_s=window_tail_s,
                             brain_prompt=(W._with_dialogue(
                                 spec.prompt, entry, storyboard.cast)
                                 if want_audio else ""))
-                        cond["degraded_from"] = d["strategy"]
+                        cond["degraded_from"] = _rl_d["strategy"]
                         cond["degraded_reason"] = \
                             f"exception: {exc2}"[:200]
                     except Exception as exc3:
@@ -841,12 +890,12 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                                     "(%s)", entry.label, s,
                                     str(exc3)[:160])
                         video_path, cond = None, {
-                            "strategy": d["strategy"],
-                            "degraded_from": d["strategy"],
+                            "strategy": _rl_d["strategy"],
+                            "degraded_from": _rl_d["strategy"],
                             "degraded_reason":
                                 f"all routes failed: {exc3}"[:200]}
             finally:
-                video_gen.generate_audio = _old_ga
+                vg.generate_audio = _old_ga
             if want_audio:
                 cond["generate_audio"] = True
             cond["seed"] = s
@@ -855,8 +904,11 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                           "strategy": _rl_d.get("strategy")}
             cond["final_prompt"] = brain_prompt or cond.get(
                 "final_prompt", "")
-            seed_conds.append(cond)
-            videos.append(video_path)
+            return s, video_path, cond
+
+        results = _run_concurrent(_gen_one, chains, _GEN_CONCURRENCY)
+        videos = [r[1] for r in results]
+        seed_conds = [r[2] for r in results]
 
         # ── 差异②:skill 判官择主干(评审板/锦标赛不存在)─────────
         rewards, judge_video = judge_group(

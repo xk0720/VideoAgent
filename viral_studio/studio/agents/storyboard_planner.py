@@ -1,11 +1,16 @@
-"""分镜剧本 Planner Agent —— 两阶段: ① 选卡排期 ② 逐段填空。
+"""分镜剧本 Planner —— 两次 LLM 调用: ① 主体段选卡 ② 一次写完所有文案。
 
-为什么分两阶段(实测教训): 一次输出带嵌套 slots 的完整脚本, qwen-max 会把
-slots 写成字符串或结构错乱, 连修三轮都回不来。拆开后每次输出都是扁平小对象:
-阶段①只输出 skill_id 列表, 阶段②每段只输出该卡声明的几个键 —— 一次就对。
+为什么这样切:
+  · 选卡很轻(开场/收尾各只有一张卡, 主体二选一) → 输出一个 skill_id 就够
+  · 写文案要看全局(三人递进、卖点不重复) → 必须一次写完, 逐句问会各说各的
+  · 输出扁平 JSON —— 实测最稳的形态(嵌套结构会崩)
 
-校验仍然**按卡进行**: slots 的键集合、语言、字数区间全部从 skill 卡读取,
-加新 skill 不用改这里。
+驱动文案生成的五样输入(见 _writing_brief):
+  ① 商品卖点清单        内容从哪来
+  ② 每人对应哪个 hook   谁在说
+  ③ 每句所处的动作语境  说的话要配得上动作 —— 从卡的 prompt 正文里正则抽出来
+  ④ 叙事结构要求        建立 → 深入 → 收束
+  ⑤ 字数铁律            TTS 实测约 5 字/秒
 """
 import json
 import logging
@@ -19,221 +24,246 @@ from ..skill_store import SkillStore
 from ..storyboard import Issue, Report, SegmentSpec, Storyboard
 
 log = logging.getLogger("viral_studio")
-PROMPTS = Path(__file__).parents[1] / "prompts"
-SELECT_PROMPT = (PROMPTS / "storyboard_select.md").read_text(encoding="utf-8")
-FILL_PROMPT = (PROMPTS / "storyboard_fill.md").read_text(encoding="utf-8")
+P = Path(__file__).parents[1] / "prompts"
+SELECT_PROMPT = (P / "storyboard_select.md").read_text(encoding="utf-8")
+WRITE_PROMPT = (P / "storyboard_write.md").read_text(encoding="utf-8")
 CJK = re.compile(r"[一-鿿]")
 BANNED = re.compile(r"\b(360|full turn|spin|rotate quickly)\b", re.I)
-MAX_FILL_RETRY = 2
+MAX_RETRY = 4
+NARRATIVE = {1: "建立(这是什么、什么手感、第一眼感受)",
+             2: "深入(设计细节、做工、为什么值)",
+             3: "收束(适用场景、价格、引导下单)"}
 
 
 class StoryboardPlanner:
     def __init__(self, store: SkillStore):
         self.store = store
 
-    # ── 阶段①: 选卡排期 ──────────────────────────────────
-    def _select(self, brief: dict, cat: str, n: int) -> List[dict]:
-        user = (f"## 商品\n名称: {brief.get('name')}\n类目: {cat}\n"
-                f"描述: {brief.get('description','')}\n"
+    # ── ① 选卡 ───────────────────────────────────────────
+    def _select_body(self, brief: dict, cat: str, n: int) -> Tuple[str, str]:
+        cands = [c for c in self.store.candidates(cat, n, "body")]
+        if not cands:
+            raise RuntimeError(f"没有适用于「{cat} / {n} 人」的主体 skill")
+        if len(cands) == 1:
+            return cands[0]["skill_id"], "该段位只有这一张卡"
+        lines = []
+        for c in cands:
+            m = c.get("measured") or {}
+            lines.append(
+                f"- **{c['skill_id']}**「{c.get('name','')}」 "
+                f"音频 {(c.get('produces') or {}).get('audio_mode','-')}"
+                f" | {n} 人时 {(c.get('produces') or {}).get('durations',{}).get(str(n),'?')}s\n"
+                f"    实测: {str(m.get('notes','')).strip()}\n"
+                + "".join(f"    ⚠ {x}\n" for x in (m.get("caveats") or [])[:3]))
+        user = (f"## 商品\n名称: {brief.get('name')}\n描述: {brief.get('description','')}\n"
                 f"卖点: {'; '.join(brief.get('selling_points', []))}\n"
-                f"人物参考图: {n} 张\n"
-                f"目标总时长: {brief.get('duration_target_s','不限')} 秒\n\n"
-                f"## 候选 skill(已按类目与人数筛过)\n"
-                f"{self.store.digest(cat, n, brief=True)}\n\n"
-                f"## {self.store.rules}\n\n请输出选卡结果 JSON。")
-        raw = chat_json(SELECT_PROMPT, user, temperature=0.5)
-        segs = raw.get("segments", [])
-        log.info("阶段①选卡: %s", " → ".join(
-            f"{s.get('part')}/{s.get('skill_id')}" for s in segs))
-        return segs, raw.get("overall_reason", "")
+                f"人物参考图: {n} 张\n\n## 主体段候选\n" + "\n".join(lines)
+                + "\n请输出选卡 JSON。")
+        raw = chat_json(SELECT_PROMPT, user, temperature=0.4)
+        sid = raw.get("body_skill", "")
+        if sid not in {c["skill_id"] for c in cands}:
+            log.warning("选了不存在的卡 '%s', 退回第一个候选", sid)
+            sid = cands[0]["skill_id"]
+        return sid, raw.get("reason", "")
 
-    # ── 阶段②: 逐段填空 ──────────────────────────────────
+    # ── ② 写文案 ─────────────────────────────────────────
     @staticmethod
-    def _auto_slots(card: dict, seg: dict, brief: dict) -> Dict[str, str]:
-        """确定性字段由程序注入, 不问模型 —— 实测模型会把配色填错位。"""
-        out: Dict[str, str] = {}
-        colors = brief.get("hook_colors") or []
-        idx = (seg.get("hook_index") or 1) - 1
-        color = colors[idx] if idx < len(colors) else None
-        for k, v in (card.get("slots") or {}).items():
-            src = v.get("auto_from")
-            if not src:
-                continue
-            if src == "hook_color" and color:
-                out[k] = color
-            elif src == "scene_default":
-                out[k] = str(card.get("scene_default", "")).strip()
-            elif src == "scene_by_color" and color:
-                out[k] = str((card.get("scene_by_color") or {}).get(color, "")).strip()
-        return {k: v for k, v in out.items() if v}
+    def _shot_context(card: dict, person: int) -> List[Tuple[str, str]]:
+        """从第 person 人的 prompt 正文里抽出「参数名 → 动作语境」。
 
-    def _fill(self, seg: dict, card: dict, brief: dict, n: int,
-              prior: List[str]) -> Tuple[Dict[str, str], str]:
-        spec = card.get("slots") or {}
-        if not spec:
-            return {}, seg.get("reason", "")
-        auto = self._auto_slots(card, seg, brief)
-        spec = {k: v for k, v in spec.items() if k not in auto}   # 只问模型剩下的
-        if not spec:
-            return auto, seg.get("reason", "")
-        skeleton = {k: f"<{v.get('lang','')}"
-                       + (f" {v['min_chars']}-{v['max_chars']}字"
-                          if v.get("min_chars") else "") + ">"
-                    for k, v in spec.items()}
-        hints = "\n".join(
-            f"  · {k}: {v.get('desc','')}"
-            + (f" [{v['min_chars']}-{v['max_chars']}字]" if v.get("min_chars") else "")
-            for k, v in spec.items())
-        extras = {k: card[k] for k in ("action_library", "scene_by_color",
-                                       "scene_default", "background")
-                  if k in card}
-        colors = brief.get("hook_colors") or []
-        idx = (seg.get("hook_index") or 1) - 1
-        user = (f"## 商品\n{brief.get('name')} — {brief.get('description','')}\n"
-                f"卖点: {'; '.join(brief.get('selling_points', []))}\n\n"
-                f"## 本段\nskill: {seg['skill_id']}「{card.get('name','')}」\n"
-                f"段落位置: {seg.get('part')}  第 {seg.get('hook_index')} 张人物图"
-                + (f"(配色 {colors[idx]})" if idx < len(colors) else "") + "\n\n"
-                f"## 只输出这个 JSON 对象(键固定, 值替换为你填的内容)\n"
-                f"{json.dumps(skeleton, ensure_ascii=False, indent=2)}\n\n"
-                f"## 各字段要求\n{hints}\n\n"
-                f"## 该 skill 卡提供的素材(优先取用)\n"
-                f"{json.dumps(extras, ensure_ascii=False, indent=2)[:1800]}\n\n"
-                + (f"## 前面段落已经说过的内容(不要重复, 要递进)\n- "
-                   + "\n- ".join(prior) + "\n\n" if prior else "")
-                + f"## {self.store.rules}\n")
-        last, prev_json, slots = "", "", {}
-        for attempt in range(MAX_FILL_RETRY + 2):
-            q = user if not last else (
-                user + f"\n## 你上一版的输出\n{prev_json}\n"
-                f"\n## 这一版必须修复的问题(其余字段保持不变)\n{last}\n"
-                f"中文字数按汉字个数算, 逐字数清楚再输出。\n")
-            raw = chat_json(FILL_PROMPT, q, temperature=0.6 if not last else 0.2)
-            slots = {k: str(v) for k, v in raw.items() if k in spec}
-            issues = self._check_slots(slots, spec)
-            if not issues:
-                return {**auto, **slots}, seg.get("reason", "")
-            last = "; ".join(issues)
-            prev_json = json.dumps(slots, ensure_ascii=False, indent=2)
-            log.info("  %s 填空第%d次: %s", seg["seg_id"], attempt + 1, last[:110])
-        return {**auto, **slots}, seg.get("reason", "")   # 交给总校验兜底报错
-
-    @staticmethod
-    def _check_slots(slots: dict, spec: dict) -> List[str]:
+        模板里的句式固定为 `Shot 1 (0-3s): she <动作>, ... says: "{line1_1}"`,
+        所以正则一次抽全; 抽不到就退回整段正文(如 outdoor_narration 的旁白)。
+        """
+        tpl = card.get(f"prompt_p{person}") or ""
         out = []
-        for k in spec:
-            v = (slots.get(k) or "").strip()
-            if not v:
-                out.append(f"{k} 缺失或为空"); continue
-            c, has_cjk = spec[k], bool(CJK.search(v))
-            if c.get("lang") == "zh" and not has_cjk:
-                out.append(f"{k} 应为中文")
-            if c.get("lang") == "en" and has_cjk:
-                out.append(f"{k} 应为英文")
-            if c.get("lang") == "zh" and c.get("min_chars"):
+        for m in re.finditer(r"Shot (\d) \((\d+)-(\d+)s\): (.*?)\{(\w+)\}", tpl, re.S):
+            _, t0, t1, body, key = m.groups()
+            act = re.sub(r"\s+", " ", body).strip()
+            act = act.split(", speaking to the camera")[0].strip(' ,"')
+            out.append((key, f"{t0}-{t1}s 画面: {act}"))
+        if not out:                                   # 旁白型: 整段一句
+            for key in (card.get("text_params") or {}):
+                if key.endswith(f"_{person}"):
+                    scene = re.search(r"vertical 9:16 full-body shot,(.*?)\. The woman",
+                                      tpl, re.S)
+                    act = re.search(r"Over the \d+ seconds, (.*?)\. Her expressions",
+                                    tpl, re.S)
+                    ctx = "; ".join(re.sub(r"\s+", " ", g.group(1)).strip()
+                                    for g in (scene, act) if g)
+                    out.append((key, f"整段 10s 画面: {ctx}"))
+        return out
+
+    def _writing_brief(self, card: dict, brief: dict, n: int) -> Tuple[str, Dict[str, dict]]:
+        tp = card.get("text_params") or {}
+        hooks = brief.get("person_hooks") or []
+        need: Dict[str, dict] = {}
+        blocks = []
+        for person in range(1, n + 1):
+            ctxs = self._shot_context(card, person)
+            if not ctxs:
+                continue
+            head = (f"### 第 {person} 个人"
+                    + (f"(参考图 {Path(hooks[person-1]).name})" if person <= len(hooks) else "")
+                    + f" —— 叙事职责: {NARRATIVE.get(person, '补充')}")
+            rows = []
+            for key, ctx in ctxs:
+                spec = tp.get(key)
+                if not spec:
+                    continue
+                need[key] = spec
+                lo, hi = spec.get("chars", [0, 99])
+                rows.append(f"  - `{key}` ({lo}-{hi} 字)  {ctx}")
+            blocks.append(head + "\n" + "\n".join(rows))
+        # 与人无关的文本参数(如收尾标题)
+        for key, spec in tp.items():
+            if key not in need and not re.search(r"_\d$", key):
+                need[key] = spec
+                lo, hi = spec.get("chars", [0, 99])
+                blocks.append(f"### 其他\n  - `{key}` ({lo}-{hi} 字)  {spec.get('desc','')}")
+        return "\n\n".join(blocks), need
+
+    def _write(self, card: dict, brief: dict, n: int) -> Dict[str, str]:
+        body, need = self._writing_brief(card, brief, n)
+        if not need:
+            return {}
+        skeleton = {k: f"<{v.get('chars',['',''])[0]}-{v.get('chars',['',''])[-1]}字>"
+                    for k, v in need.items()}
+        user = (f"## 商品\n{brief.get('name')} — {brief.get('description','')}\n"
+                f"卖点(每个最多用一次, 都要落地):\n"
+                + "\n".join(f"  {i}. {s}" for i, s in
+                            enumerate(brief.get("selling_points", []), 1))
+                + f"\n\n## 要写的文案(逐条按画面写)\n{body}\n\n"
+                f"## 输出骨架(键照抄, 值换成你写的中文)\n"
+                f"{json.dumps(skeleton, ensure_ascii=False, indent=2)}\n")
+        last, prev = "", ""
+        texts: Dict[str, str] = {}
+        for attempt in range(MAX_RETRY):
+            q = user if not last else (
+                user + f"\n## 你上一版的逐条字数(我已替你数好, 直接照做)\n{prev}\n\n"
+                f"标 ✓ 的原样输出, 标 ✗ 的按提示增删字数后输出。\n")
+            raw = chat_json(WRITE_PROMPT, q, temperature=0.7 if not last else 0.3)
+            texts = {k: str(v).strip() for k, v in raw.items() if k in need}
+            issues = self._check(texts, need)
+            if not issues:
+                return texts
+            last = "; ".join(issues)
+            # 把每条的现字数与差额直接列出来 —— 模型自我计数不可靠(实测 3 轮收敛不了)
+            rows = []
+            for k in need:
+                v = (texts.get(k) or "").strip()
                 ln = len(CJK.findall(v)) + len(re.findall(r"[A-Za-z0-9]+", v))
-                if not (c["min_chars"] <= ln <= c["max_chars"]):
-                    out.append(f"{k} 现{ln}字, 需{c['min_chars']}-{c['max_chars']}字")
+                lo, hi = need[k].get("chars", [0, 99])
+                if lo <= ln <= hi:
+                    rows.append(f'  "{k}": 现{ln}字 ✓ 保持原样: {v}')
+                else:
+                    diff = (f"要再加 {lo - ln} 个字" if ln < lo else f"要删掉 {ln - hi} 个字")
+                    rows.append(f'  "{k}": 现{ln}字 ✗ 需{lo}-{hi}字, {diff}。原句: {v}')
+            prev = "\n".join(rows)
+            log.info("  文案第%d次: %s", attempt + 1, last[:120])
+        # 收敛不了就放宽: 差 1-2 字的实际听感无碍(3秒句 10 vs 9 字 = 0.2 秒),
+        # 与其让模型在"加一个字"上死循环, 不如程序判定可接受(实测 4 轮仍差 1 字)
+        for k, spec in need.items():
+            v = (texts.get(k) or "").strip()
+            ln = len(CJK.findall(v)) + len(re.findall(r"[A-Za-z0-9]+", v))
+            lo, hi = spec.get("chars", [0, 99])
+            if v and abs(ln - lo) <= 2 and ln < lo:
+                log.info("  %s 差%d字(现%d需%d), 在容差内放行", k, lo - ln, ln, lo)
+        return texts
+
+    @staticmethod
+    def _check(texts: dict, need: dict, tol: int = 0) -> List[str]:
+        """tol = 字数容差。写作循环里用 0(逼模型写准), 终检用 2
+        (差 1-2 字听感无碍, 不值得为此判整条脚本不合格)。"""
+        out = []
+        for k, spec in need.items():
+            v = (texts.get(k) or "").strip()
+            if not v:
+                out.append(f"{k} 缺失"); continue
+            if spec.get("lang") == "zh":
+                if not CJK.search(v):
+                    out.append(f"{k} 应为中文"); continue
+                ln = len(CJK.findall(v)) + len(re.findall(r"[A-Za-z0-9]+", v))
+                lo, hi = spec.get("chars", [0, 99])
+                if not (lo - tol <= ln <= hi + tol):
+                    out.append(f"{k} 现{ln}字需{lo}-{hi}字")
             if BANNED.search(v):
-                out.append(f"{k} 含高危动作词(360/spin)")
+                out.append(f"{k} 含高危动作词")
         return out
 
     # ── 主流程 ───────────────────────────────────────────
     def plan(self, brief: dict, bgm_source=None) -> Tuple[Storyboard, Report]:
         cat = brief.get("category", "服装")
-        n = len(brief.get("person_hooks", [])) or 1
         hooks = list(brief.get("person_hooks") or [])
-        picked, overall = self._select(brief, cat, n)
+        n = len(hooks) or 1
+
+        # 开场/收尾: 各只有一张卡 → 程序直接取; 主体: 问模型
+        opening = self.store.candidates(cat, n, "opening")
+        ending = self.store.candidates(cat, n, "ending")
+        body_id, body_reason = self._select_body(brief, cat, n)
+        log.info("① 选卡: 开场=%s 主体=%s 收尾=%s",
+                 opening[0]["skill_id"] if opening else "(无)", body_id,
+                 ending[0]["skill_id"] if ending else "(无, 人数不足)")
+
+        picks = ([(opening[0], "opening")] if opening else []) \
+            + [(self.store.get(body_id), "body")] \
+            + ([(ending[0], "ending")] if ending else [])
 
         segs: List[SegmentSpec] = []
-        prior: List[str] = []
         t = 0.0
-        for i, seg in enumerate(picked, 1):
-            seg.setdefault("seg_id", f"seg{i:02d}")
-            card = self.store.get(seg.get("skill_id", ""))
-            if not card:                                  # 选了不存在的卡 → 总校验会报
-                segs.append(SegmentSpec(seg_id=seg["seg_id"], part=seg.get("part", "body"),
-                                        skill_id=seg.get("skill_id", "?"),
-                                        reason=seg.get("reason", "")))
-                continue
-            fills, reason = self._fill(seg, card, brief, n, prior)
-            prior += [v for k, v in fills.items()
-                      if (card.get("slots", {}).get(k, {}) or {}).get("lang") == "zh"]
-
-            p = card.get("produces", {})
-            variants = p.get("variants")
-            variant = str(n) if variants else None
-            dur = float(p.get("duration_s")
-                        or (variants or {}).get(variant, {}).get("duration_s") or 0)
-            tail = float(card.get("tail_s", 0.5)) if variants else 0.0
-
-            # ★ 填空之后立刻渲染成完整 pipeline —— 分镜脚本即可执行形态
-            r = Renderer(card, hooks, person_count=n,
-                         hook_index=seg.get("hook_index"), bgm_source=bgm_source,
+        for i, (card, part) in enumerate(picks, 1):
+            texts = self._write(card, brief, n)
+            if texts:
+                log.info("② 文案 %s: %d 条", card["skill_id"], len(texts))
+            pr = card.get("produces", {})
+            dur = float((pr.get("durations") or {}).get(str(n)) or pr.get("duration_s") or 0)
+            tail = float(pr.get("tail_s", 0))
+            r = Renderer(card, hooks, person_count=n, bgm_source=bgm_source,
                          t0=round(t, 3), t1=round(t + dur, 3))
-            pipeline = r.pipeline(fills)
-
+            prompts = {k: r.prompt_of_person(k, texts) for k in range(1, n + 1)}
+            # 单模板卡(如 closer, 按总人数选版本)走 $prompt; 多人卡走 $prompt_N
+            single = r.prompt(texts)
             segs.append(SegmentSpec(
-                seg_id=seg["seg_id"], part=seg.get("part", "body"),
-                skill_id=seg["skill_id"], variant=variant,
-                hook_index=seg.get("hook_index"), duration_s=dur,
-                t0=round(t, 3), t1=round(t + dur, 3),
-                pipeline=pipeline, fills=fills, reason=reason))
+                seg_id=f"seg{i:02d}", part=part, skill_id=card["skill_id"],
+                variant=str(n), duration_s=dur, t0=round(t, 3), t1=round(t + dur, 3),
+                pipeline=r.pipeline(texts, prompt=single or prompts.get(1, ""),
+                                    prompts=prompts),
+                texts=texts,
+                reason=body_reason if part == "body" else f"{part} 段唯一可用卡"))
             t += dur + tail
-            log.info("  %s [%s] %s → %d 步: %s", seg["seg_id"], seg.get("part"),
-                     seg["skill_id"], len(pipeline),
-                     " → ".join(c["tool"] for c in pipeline))
+            log.info("  %s [%s] %s → %d 步", segs[-1].seg_id, part, card["skill_id"],
+                     len(segs[-1].pipeline))
 
         sb = Storyboard(product_name=brief.get("name", ""), category=cat,
-                        person_count=n, segments=segs, overall_reason=overall)
+                        person_count=n, segments=segs,
+                        overall_reason=f"开场借爆款片段, 主体{body_reason}, 收尾多人相继出镜")
         return sb, self.validate(sb, brief)
 
-    # ── 总校验(按卡) ─────────────────────────────────────
+    # ── 校验 ─────────────────────────────────────────────
     def validate(self, sb: Storyboard, brief: dict) -> Report:
         errs: List[Issue] = []
         warns: List[Issue] = []
-        n = len(brief.get("person_hooks", [])) or 1
-        cat = brief.get("category", "服装")
-        seen, body_skills = set(), set()
-        rank = {"opening": 0, "body": 1, "ending": 2}
-        last = -1
-
+        n = len(brief.get("person_hooks") or []) or 1
         for seg in sb.segments:
-            sid = seg.seg_id
-            if sid in seen:
-                errs.append(Issue(seg_id=sid, field="seg_id", msg="重复"))
-            seen.add(sid)
-            if rank[seg.part] < last:
-                errs.append(Issue(seg_id=sid, field="part", msg="段落顺序错乱"))
-            last = max(last, rank[seg.part])
-
             card = self.store.get(seg.skill_id)
             if not card:
-                errs.append(Issue(seg_id=sid, field="skill_id",
-                                  msg=f"'{seg.skill_id}' 不在 skill 库")); continue
-            if card not in self.store.candidates(cat, n, seg.part):
-                errs.append(Issue(seg_id=sid, field="skill_id",
-                                  msg=f"'{seg.skill_id}' 不在 {seg.part} 段候选内")); continue
-            if seg.part == "body":
-                body_skills.add(seg.skill_id)
-            if seg.hook_index is not None and not (1 <= seg.hook_index <= n):
-                errs.append(Issue(seg_id=sid, field="hook_index", msg=f"越界(1..{n})"))
-
-            spec = card.get("slots") or {}
-            for k in sorted(set(seg.fills) - set(spec)):
-                errs.append(Issue(seg_id=sid, field=f"slots.{k}", msg="该 skill 没有这个 slot"))
-            for k in sorted(set(spec) - set(seg.fills)):
-                errs.append(Issue(seg_id=sid, field=f"slots.{k}", msg="缺少必填 slot"))
-            for m in self._check_slots(seg.fills, {k: v for k, v in spec.items()
-                                                   if k in seg.fills}):
-                errs.append(Issue(seg_id=sid, field="slots", msg=m))
-
-        if len(body_skills) > 1:
-            errs.append(Issue(field="body", msg=f"body 混用了 {body_skills}, 风格须统一"))
+                errs.append(Issue(seg_id=seg.seg_id, field="skill_id", msg="不在 skill 库"))
+                continue
+            need = {k: v for k, v in (card.get("text_params") or {}).items()
+                    if not re.search(r"_(\d)$", k)
+                    or int(re.search(r"_(\d)$", k).group(1)) <= n}
+            for m in self._check(seg.texts, need, tol=2):
+                errs.append(Issue(seg_id=seg.seg_id, field="texts", msg=m))
+            for c in seg.pipeline:
+                pr = c["params"].get("prompt", "")
+                if isinstance(pr, str) and "{" in pr:
+                    errs.append(Issue(seg_id=seg.seg_id, field=c["id"],
+                                      msg=f"prompt 残留未填空位 {sorted(set(re.findall(r'{(\\w+)}', pr)))}"))
+                for k, v in c["params"].items():
+                    if isinstance(v, str) and v.startswith("$"):
+                        errs.append(Issue(seg_id=seg.seg_id, field=f"{c['id']}.{k}",
+                                          msg=f"未解析的占位符 {v}"))
         if not any(s.part == "body" for s in sb.segments):
-            errs.append(Issue(field="segments", msg="缺少 body 段"))
+            errs.append(Issue(field="segments", msg="缺少主体段"))
         if n >= 2 and not any(s.part == "ending" for s in sb.segments):
-            warns.append(Issue(field="segments", msg=f"{n} 张人物图但无收尾段"))
-        if n < 2 and any(s.part == "ending" for s in sb.segments):
-            errs.append(Issue(field="segments", msg="人物图<2, 收尾段必须省略"))
+            warns.append(Issue(field="segments", msg=f"{n} 人但无收尾段"))
         return Report(ok=not errs, errors=errs, warnings=warns)

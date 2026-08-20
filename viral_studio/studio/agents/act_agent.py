@@ -26,9 +26,12 @@ TOOL_SPECS: Dict[str, dict] = {
     "sonilo_text_to_music": {"required": ["prompt", "duration"],     "remote": True},
     "image_generation":     {"required": ["prompt"],                 "remote": True},
     "punch_up":             {"required": ["audio", "beats"],         "remote": False},
+    "trim_audio":           {"required": ["audio", "duration"],      "remote": False},
     "isolate_voice":        {"required": ["source"],                 "remote": False},
     "mix_audio":            {"required": ["video"],                  "remote": False},
-    "burn_subtitle":        {"required": ["video", "text"],          "remote": False},
+    "concat_av":            {"required": ["videos"],                 "remote": False},
+    "concat_audio":         {"required": ["audios"],                 "remote": False},
+    "burn_subtitle":        {"required": ["video"],                  "remote": False},
     "burn_text":            {"required": ["video", "text"],          "remote": False},
 }
 

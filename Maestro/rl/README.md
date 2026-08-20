@@ -43,6 +43,18 @@ tests/unit/test_rl_env_parity.py 在 CI 锁两边不漂移(行为锁+源文锁)�
 - data_gen/build_trainset.py 训练集构建器(100 条,ViMax benchgen 法)
 - configs/server_bailian_qwen.yaml  服务器 RL 配置(唯一被引用的配置)
 
+**组内并发(2026-08-20 用户令"轴 A")**:一个镜头内部的三段网络等待
+全部并发 —— K 个策略决策同时发给 vLLM(同 state 同 prompt,前缀 KV
+被 continuous batching 自动复用)、K 个候选同时生成(各自客户端副本 +
+各自工作目录 shotNNN/cK)、判官三段(文本 K / 排名 3 / 一致性 K)同时
+评。出门链与决策记录仍串行,顺序与台账不受影响。并发度旋钮(环境
+变量,可灵配额未知时随时收紧):`RL_POLICY_CONCURRENCY`(默认 4)、
+`RL_GEN_CONCURRENCY`(4)、`RL_JUDGE_CONCURRENCY`(6)。
+
+**训练节奏**:`--batch-groups 1`(一镜一更新,不攒批)、`--save-every 8`
+(8 步换脑 ≈40 分钟一版)、`--lr 3e-6`(补偿更新频率)、
+`--staleness-max 5`。
+
 要点:评审在【采样端】——每镜 K=4 个候选由 skill 判官(文本判官 +
 action/physics/camera 排名 + 一致性对照)打分,argmax 即主干,reward
 写进组记录;无修复(生产的评审板/critic/修复循环不进 RL 环境);

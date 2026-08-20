@@ -1,6 +1,7 @@
 skill_id: outdoor_narration
 kind: template
 name: 户外旁白段(动作放开 + 后期字幕)
+source: demo_v01.py 段落 B1/B2/B3(场景与动作原样搬来)
 
 applies_to:
   categories: [服装]
@@ -8,101 +9,175 @@ applies_to:
   placement: body
 
 produces:
-  duration_s: 10
-  audio_mode: voiceover          # 不要求音画同步 → 动作可彻底放开
-  subtitle: burned_in_post       # 后期烧, 中文 100% 准确
+  duration_per_person_s: 10   # 每人 10s; 本卡产出 = 人数 × 10s 的整个主体部分
+  durations: {"1": 10, "2": 20, "3": 30}
+  audio_mode: voiceover       # 画面无声, 旁白单独 TTS → 动作不受说话节奏约束
+  subtitle: burned_in_post    # 后期用 Pillow 烧, 中文 100% 准确
 
 audio:
-  bgm_source: shared       # 整片共享音轨切片, 源由 Planner 决定
+  bgm_source: generated       # 合并后现生成一条 BGM, 裁到与合并视频等长
 
-needs_background: false          # 外景写在 prompt 里; 若要预生成背景图见 background_prompt
+# kling audio: false → 画面纯净无声, 不需要 isolate_voice 这一步
+prompt_source:                # 第 N 个人用第 N 套模板(外景与动作各不相同)
+  "1": prompt_p1
+  "2": prompt_p2
+  "3": prompt_p3
 
-prompt_source:
-  "1": prompt_template
-  "2": prompt_template
-  "3": prompt_template
-
-pipelines:          # 一人一段: 每段只挂本段对应的那张 hook
-  "1": &narr_pipe
-    - id: vid
+# 本卡 = 整个主体部分: 逐人生成 → 合并 → 逐句 TTS → 生成等长 BGM → 混音 → 烧字幕
+pipelines:
+  "1":
+    - id: vid1
       tool: kling_omni_video
-      params: {audio: false, duration: 10, refer: [$hook]}
-    - id: vo
+      params: {prompt: $prompt_1, audio: false, duration: 10, refer: [$hook_1]}
+    - id: vo1
       tool: minimax_tts
-      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration}"}
-    - id: mix
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration_1}"}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: $skill.music_prompt, duration: 12}    # 多生成 2s, 混音时裁齐
+    - id: mixed
       tool: mix_audio
       local: true
-      params: {video: "@vid", voice: "@vo", bgm: $bgm_slice,
-               voice_loudnorm: -18, bgm_volume: 0.20}
+      params: {video: "@vid1", voice: "@vo1", bgm: "@music",
+               duration: 10, voice_loudnorm: -18, bgm_volume: 0.20}
     - id: out
       tool: burn_subtitle
       local: true
-      params: {video: "@mix", text: "{narration}", engine: pillow,
-               y_frac: 0.83, size: 40, max_chars: 13}
-  "2": *narr_pipe
-  "3": *narr_pipe
+      params: {video: "@mixed", segments: [{t0: 0, t1: 10, text: "{narration_1}"}],
+               engine: pillow, y_frac: 0.83, size: 40, max_chars: 13}
+  "2":
+    - id: vid1
+      tool: kling_omni_video
+      params: {prompt: $prompt_1, audio: false, duration: 10, refer: [$hook_1]}
+    - id: vid2
+      tool: kling_omni_video
+      params: {prompt: $prompt_2, audio: false, duration: 10, refer: [$hook_2]}
+    - id: joined
+      tool: concat_av
+      local: true
+      params: {videos: ["@vid1", "@vid2"]}
+    - id: vo1
+      tool: minimax_tts
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration_1}"}
+    - id: vo2
+      tool: minimax_tts
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration_2}"}
+    - id: vo
+      tool: concat_audio
+      local: true
+      params: {audios: ["@vo1", "@vo2"], slots: [{t0: 0}, {t0: 10}], duration: 20}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: $skill.music_prompt, duration: 22}
+    - id: mixed
+      tool: mix_audio
+      local: true
+      params: {video: "@joined", voice: "@vo", bgm: "@music",
+               duration: 20, voice_loudnorm: -18, bgm_volume: 0.20}
+    - id: out
+      tool: burn_subtitle
+      local: true
+      params: {video: "@mixed",
+               segments: [{t0: 0, t1: 10, text: "{narration_1}"},
+                          {t0: 10, t1: 20, text: "{narration_2}"}],
+               engine: pillow, y_frac: 0.83, size: 40, max_chars: 13}
+  "3":
+    - id: vid1
+      tool: kling_omni_video
+      params: {prompt: $prompt_1, audio: false, duration: 10, refer: [$hook_1]}
+    - id: vid2
+      tool: kling_omni_video
+      params: {prompt: $prompt_2, audio: false, duration: 10, refer: [$hook_2]}
+    - id: vid3
+      tool: kling_omni_video
+      params: {prompt: $prompt_3, audio: false, duration: 10, refer: [$hook_3]}
+    - id: joined
+      tool: concat_av
+      local: true
+      params: {videos: ["@vid1", "@vid2", "@vid3"]}
+    - id: vo1
+      tool: minimax_tts
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration_1}"}
+    - id: vo2
+      tool: minimax_tts
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration_2}"}
+    - id: vo3
+      tool: minimax_tts
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration_3}"}
+    - id: vo
+      tool: concat_audio
+      local: true
+      params: {audios: ["@vo1", "@vo2", "@vo3"],
+               slots: [{t0: 0}, {t0: 10}, {t0: 20}], duration: 30}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: $skill.music_prompt, duration: 32}
+    - id: mixed
+      tool: mix_audio
+      local: true
+      params: {video: "@joined", voice: "@vo", bgm: "@music",
+               duration: 30, voice_loudnorm: -18, bgm_volume: 0.20}
+    - id: out
+      tool: burn_subtitle
+      local: true
+      params: {video: "@mixed",
+               segments: [{t0: 0, t1: 10, text: "{narration_1}"},
+                          {t0: 10, t1: 20, text: "{narration_2}"},
+                          {t0: 20, t1: 30, text: "{narration_3}"}],
+               engine: pillow, y_frac: 0.83, size: 40, max_chars: 13}
 
-scene_by_color:                  # 按商品配色推导外景(实测成立)
-  pink: >-
-    under blooming cherry blossom trees in a spring park, soft warm sunlight
-    filtering through pink petals, gentle breeze
-  green: >-
-    on a grassy lawn beside a tree-lined path in a botanical garden,
-    dappled green light, blurred foliage in the background
-  blue_white: >-
-    on a white terrace overlooking the sea, clear blue sky and ocean horizon
-    behind her, bright natural daylight
-
-prompt_template: |
+# ── 第 1 人: 樱花外景 ────────────────────────────────────────────
+prompt_p1: |
   Handheld camera with a subtle natural sway, vertical 9:16 full-body shot,
-  {scene}. The woman from <<<image_1>>>, wearing the {color} {garment}, is the only
-  person in frame. Over the 10 seconds, {action}. Her expressions are lively
-  and varied — she smiles, raises her eyebrows, and looks straight into the
-  lens. Cinematic natural light, shallow depth of field. Same woman and same
-  outfit throughout. No text, no captions, no subtitles, no extra people.
+  under blooming cherry blossom trees in a spring park, soft warm sunlight
+  filtering through pink petals, gentle breeze. The woman from <<<image_1>>> is the only person in frame. Over the 10
+  seconds, she walks toward the camera and stops, tilts her head with a bright
+  surprised smile, sweeps a strand of hair behind her ear, then spreads the hem
+  of the sweatshirt with both hands and gives a small playful shrug. Her
+  expressions are lively and varied — she smiles, raises her eyebrows, and
+  looks straight into the lens. Cinematic natural light, shallow depth of
+  field. Same woman and same outfit throughout. No text, no captions, no
+  subtitles, no extra people.
 
-background_prompt: |
-  Vertical 9:16 empty outdoor scene photograph, {scene}, no people in frame,
-  natural daylight, shallow depth of field, photorealistic.
+# ── 第 2 人: 植物园草地 ──────────────────────────────────────────
+prompt_p2: |
+  Handheld camera with a subtle natural sway, vertical 9:16 full-body shot, on
+  a grassy lawn beside a tree-lined path in a botanical garden, dappled green
+  light, blurred foliage in the background. The woman from <<<image_1>>> is the only person in frame. Over the 10
+  seconds, she strolls a few steps along the path, turns back to the camera
+  with a mischievous raised eyebrow, points at the contrast stitching on her
+  cuff, then slips both hands into her pockets and rocks her shoulders. Her
+  expressions are lively and varied — she smiles, raises her eyebrows, and
+  looks straight into the lens. Cinematic natural light, shallow depth of
+  field. Same woman and same outfit throughout. No text, no captions, no
+  subtitles, no extra people.
 
-slots:              # prompt_template 里 {} 的空位; auto_from 的由程序注入
-  scene:
-    type: string
-    lang: en
-    auto_from: scene_by_color
-    desc: "按该 hook 的配色从 scene_by_color 查表"
-  color:
-    type: string
-    lang: en
-    auto_from: hook_color
-    desc: "该 hook 对应的配色"
-  garment:
-    type: string
-    lang: en
-    desc: "商品英文描述"
-  action:
-    type: string
-    lang: en
-    desc: "一句话串起 3-4 个动作(走位+手势+微表情); 不必迁就说话节奏; 可从 action_library 取"
-  narration:
-    type: string
-    lang: zh
-    min_chars: 24
-    max_chars: 32
-    desc: "旁白全文; TTS 约 5 字/秒, 10 秒上限约 45 字, 留呼吸空间取 24-32"
+# ── 第 3 人: 海边露台(收束到 CTA) ────────────────────────────────
+prompt_p3: |
+  Handheld camera with a subtle natural sway, vertical 9:16 full-body shot, on
+  a white terrace overlooking the sea, clear blue sky and ocean horizon behind
+  her, bright natural daylight. The woman from <<<image_1>>> is the only person in frame. 
+  Over the 10 seconds, she leans on the railing and looks out at the sea, turns around with wind in her
+  hair, opens both arms wide to present the outfit, then makes a heart shape
+  with her hands. Her expressions are lively and varied — she smiles, raises
+  her eyebrows, and looks straight into the lens. Cinematic natural light,
+  shallow depth of field. Same woman and same outfit throughout. No text, no
+  captions, no subtitles, no extra people.
 
-action_library:
-  - "she walks toward the camera and stops, tilts her head with a bright surprised smile, sweeps a strand of hair behind her ear, then spreads the hem with both hands and gives a small playful shrug"
-  - "she strolls a few steps along the path, turns back to the camera with a mischievous raised eyebrow, points at the contrast stitching on her cuff, then slips both hands into her pockets and rocks her shoulders"
-  - "she leans on the railing and looks out at the sea, turns around with wind in her hair, opens both arms wide to present the outfit, then makes a heart shape with her hands"
+music_prompt: |
+  Soft upbeat background music for an outdoor fashion try-on video, warm and
+  airy, light percussion and mellow synth pads, steady and unobtrusive so a
+  narration can sit on top, no vocals, no sudden drops.
+
+text_params:
+  narration_1: {lang: zh, chars: [24, 32]}  # TTS 约 5 字/秒, 10s 上限约 45 字
+  narration_2: {lang: zh, chars: [24, 32]}
+  narration_3: {lang: zh, chars: [24, 32]}
 
 measured:
   verified: true
   date: 2026-08-16
-  notes: >-
-    三段全成, 三个外景与配色匹配自然, 设计的动作逐个执行到位, 身份跨段一致。
-    相比 lipsync 路线的两个优势 —— 动作不受说话节奏约束; 字幕后期烧, 中文准确。
+  notes: 三段全成; 外景与配色匹配自然, 动作逐个执行到位, 身份跨段一致
   caveats:
-    - "TTS 与画面各自独立, 人物嘴不动; 需要真人开口感就改用 home_talking"
-    - "整体响度偏保守(-28~-31dB), 成片建议再做一次全片 loudnorm"
+    - TTS 与画面各自独立, 人物嘴不动; 要真人开口感就改用 home_talking
+    - 生成物整体响度偏保守(-28~-31dB), 成片建议再做一次全片 loudnorm

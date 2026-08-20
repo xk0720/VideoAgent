@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -33,20 +34,25 @@ def _content_text(c):
 
 
 class CallLog:
-    """env 级调用台账(一行一事件;记录失败不打断正流程)。"""
+    """env 级调用台账(一行一事件;记录失败不打断正流程)。
+
+    2026-08-20 组内并发:单行可能超过 PIPE_BUF(4096),多线程无锁
+    追加会把两行绞在一起 —— 上锁,台账宁可慢一点也不能烂。"""
 
     def __init__(self, path: Path | None):
         self.path = Path(path) if path else None
+        self._lock = threading.Lock()
 
     def write(self, kind: str, **fields):
         if self.path is None:
             return
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "a") as f:
-                f.write(json.dumps({"ts": time.time(), "kind": kind,
-                                    **fields}, ensure_ascii=False,
-                                   default=str) + "\n")
+            line = json.dumps({"ts": time.time(), "kind": kind, **fields},
+                              ensure_ascii=False, default=str) + "\n"
+            with self._lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.path, "a") as f:
+                    f.write(line)
         except Exception:
             pass
 
@@ -132,6 +138,20 @@ class KlingClient:
         self.session = requests.Session()
         self.session.trust_env = False
         self._upload_cache: dict = {}
+
+    def clone(self) -> "KlingClient":
+        """线程私有副本(2026-08-20 组内并发):generate_audio 是【实例
+        属性】,driver 逐候选翻转它 —— 四个线程共用一个客户端会互相
+        踩(A 候选开了音频,B 候选把它还原)。每个 worker 一个副本 =
+        开关线程私有;HTTP 会话各自独立(连接池不共享更稳);上传
+        缓存【共享】(同一张肖像只传一次,省钱)。"""
+        c = KlingClient(self.api_key, mode=self.mode,
+                        aspect_ratio=self.aspect_ratio,
+                        poll_interval=self.poll_interval,
+                        timeout=self.timeout, log=self.log, t2i=self._t2i)
+        c._upload_cache = self._upload_cache      # 有意共享(去重)
+        c.generate_audio = self.generate_audio
+        return c
 
     def capabilities(self) -> set:
         """与生产 BailianKlingClient 同款能力申报(菜单门控依据)。"""

@@ -45,13 +45,34 @@ class Renderer:
 
     # ── prompt 正文: 按人数选版本, 再灌入可变内容 ──────────
     def prompt(self, fills: Dict[str, str]) -> str:
-        """prompt 正文取哪一段, 由卡上的 prompt_source 按人数声明(不在代码里猜)。"""
+        """prompt 正文取哪一段, 由卡上的 prompt_source 声明(不在代码里猜)。
+
+        索引口径按卡的 kind 分:
+          · template 类(一人一段) → 用 **本段是第几个人**(hook_index): 第 N 人
+            有自己的一套动作, 逐段递进
+          · 其余(多人同框, 如 closer) → 用 **总人数**: 2 人版与 3 人版画面不同
+        """
+        if self.card.get("kind") == "template":
+            return ""            # 多人卡: 每人一套模板 → 走 prompt_of_person()
         key = (self.card.get("prompt_source") or {}).get(str(self.n))
         if key is None and "prompt_source" in self.card:
             return ""                                   # 卡明确声明该人数无 prompt
         tpl = self.card.get(key) if key else (
             self.card.get(f"prompt_{self.n}p") or self.card.get("prompt_template") or "")
         return self._fill_text(tpl or "", fills).strip()
+
+    def prompt_of_person(self, person: int, texts: Dict[str, str]) -> str:
+        """第 person 人的完整 prompt: 取 prompt_source[person] 指向的模板, 填其台词。
+
+        多人卡里每人一套模板(动作各异)、每人一组文案(键带 _N 后缀), 所以按人渲染。
+        取不到该人的模板时返回空串(如 1 人场景问第 2 人)。
+        """
+        src = self.card.get("prompt_source") or {}
+        key = src.get(str(person))
+        if key is None:
+            return ""
+        tpl = self.card.get(key) or ""
+        return self._fill_text(tpl, texts).strip()
 
     def _fill_text(self, text: str, fills: Dict[str, str]) -> str:
         if not text:
@@ -89,14 +110,17 @@ class Renderer:
         return copy.deepcopy(pls.get(str(self.n)) or [])
 
     # ── 完整 pipeline ────────────────────────────────────
-    def pipeline(self, fills: Dict[str, str]) -> List[dict]:
-        prompt = self.prompt(fills)
+    def pipeline(self, texts: Dict[str, str], prompt: str = "",
+                 prompts: Optional[Dict[int, str]] = None) -> List[dict]:
+        """texts   = pipeline 里 {文本参数} 的值
+        prompt  = 单模板卡的完整正文($prompt)
+        prompts = 多人卡里第 N 人各自的正文($prompt_N), 键为 1-based 序号"""
+        self._prompts = prompts or {}
+        self._prompt = prompt          # 供 $prompt 解析
         out: List[dict] = []
         for step in self.pipeline_steps():
-            params = self._resolve(step.get("params") or {}, fills)
+            params = self._resolve(step.get("params") or {}, texts)
             tool = step["tool"]
-            if tool in ("kling_omni_video", "seedance_t2v", "animate_move") and prompt:
-                params.setdefault("prompt", prompt)
             if tool == "kling_omni_video" and not params.get("first_frame") \
                     and not params.get("refer"):
                 params.setdefault("aspect_ratio", "9:16")   # 纯文生视频: 可灵硬性要求
@@ -123,6 +147,11 @@ class Renderer:
         return self._lookup(s)
 
     def _lookup(self, expr: str) -> Any:
+        if expr == "$prompt":              # 单模板卡: 本段完整 prompt 正文
+            return getattr(self, "_prompt", "")
+        m = re.match(r"^\$prompt_(\d+)$", expr)
+        if m:                              # 多人卡: 第 N 人有自己的模板与台词
+            return (getattr(self, "_prompts", {}) or {}).get(int(m.group(1)), "")
         if expr == "$hook":
             i = (self.hook_index or 1) - 1
             return self.hooks[i] if i < len(self.hooks) else None
@@ -146,6 +175,8 @@ class Renderer:
             cur: Any = self.card
             for part in expr[len("$skill."):].split("."):
                 cur = (cur or {}).get(part)
+            if isinstance(cur, str) and "{" in cur:      # 卡内文本(如 music_prompt)先填派生量
+                cur = self._fill_text(cur, {})
             return abs_path(cur) or cur
         log.warning("未知占位符 %s(原样保留)", expr)
         return expr

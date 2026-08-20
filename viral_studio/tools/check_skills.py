@@ -3,8 +3,9 @@
 
 查五件事(都是踩过的坑):
   1. YAML 能否解析(中文"冒号+空格"会被当成映射键)
-  2. prompt 正文里的每个 {空位} 是否都在 slots 里声明了 —— 漏声明会导致
-     Planner 不填、prompt 带着 {} 原样发出去, 而校验器还报"通过"
+  2. prompt 正文里的每个 {空位} 是否都在 fill_guide 里给了指导, pipeline 里的
+     {文本参数} 是否都在 text_params 里声明了 —— 漏了会导致 Planner 不填、
+     带着 {} 原样发出去, 而校验器还报"通过"(踩过)
   3. pipelines 是否覆盖了 applies_to.person_count 声明的每种人数
   4. prompt_source 指向的字段是否存在
   5. pipeline 里的 @引用 是否指向本段前面已出现的 id
@@ -17,6 +18,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DERIVED = {"beats_text", "music_prompt", "background_prompt"}
+# $prompt / $prompt_N 由渲染器注入, 不需要在 text_params 声明
 
 
 def main() -> int:
@@ -31,16 +33,22 @@ def main() -> int:
 
         sid, errs = d.get("skill_id", "?"), []
         pls = d.get("pipelines") or {}
-        slots = set((d.get("slots") or {}).keys())
+        guide = str(d.get("fill_guide") or "")
+        tparams = set((d.get("text_params") or {}).keys())
 
-        # ② prompt 空位 vs slots 声明
-        used = set()
+        # ② prompt 里的空位要在 fill_guide 有指导
+        in_prompt = set()
         for key in ("prompt_template", "prompt_2p", "prompt_3p"):
-            used |= set(re.findall(r"\{(\w+)\}", str(d.get(key, ""))))
-        for steps in pls.values():                              # pipeline 里的 {} 也算
-            used |= set(re.findall(r"\{(\w+)\}", yaml.safe_dump(steps, allow_unicode=True)))
-        for miss in sorted(used - DERIVED - slots):
-            errs.append(f"prompt/pipeline 用到 {{{miss}}} 但 slots 未声明")
+            in_prompt |= set(re.findall(r"\{(\w+)\}", str(d.get(key, ""))))
+        for miss in sorted(in_prompt - DERIVED):
+            if "{" + miss + "}" not in guide:
+                errs.append(f"prompt 用到 {{{miss}}} 但 fill_guide 未给指导")
+        # pipeline 里的 {文本参数} 要在 text_params 声明
+        in_pipe = set()
+        for steps in pls.values():
+            in_pipe |= set(re.findall(r"\{(\w+)\}", yaml.safe_dump(steps, allow_unicode=True)))
+        for miss in sorted(in_pipe - DERIVED - tparams):
+            errs.append(f"pipeline 用到 {{{miss}}} 但 text_params 未声明")
 
         # ③ 人数覆盖
         for n in (d.get("applies_to") or {}).get("person_count") or []:
@@ -67,7 +75,7 @@ def main() -> int:
             for e in errs:
                 print(f"    - {e}")
         else:
-            print(f"✓ {sid:20s} pipelines={sorted(pls)} slots={len(slots)}")
+            print(f"✓ {sid:20s} pipelines={sorted(pls)} text_params={sorted(tparams) or '-'}")
     print("\n全部通过 ✅" if not bad else f"\n{bad} 张卡有问题 ❌")
     return 0 if not bad else 1
 

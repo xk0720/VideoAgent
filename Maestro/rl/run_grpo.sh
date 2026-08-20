@@ -224,9 +224,15 @@ echo "== vLLM 就绪"
 # reward,收集器只聚合,不再 --judge)
 python rl/collect/watch_online.py > $LOGS/collector.log 2>&1 &
 PIDS+=($!)
+# 训练节奏(2026-08-20 用户令):逐镜更新、8 步换脑。
+#   --batch-groups 1 :一个组(一镜 4 候选)到手立刻更新,不再攒 8 组等 2 小时
+#   --save-every 8   :8 步存 adapter 并热载进 vLLM(组内并发后 ≈40 分钟一版)
+#   --lr 3e-6        :更新频率 ×8,学习率同比例下调防震荡
+#   --staleness-max 5:收集器/训练器各自轮询,给管道排队留余量
 CUDA_VISIBLE_DEVICES=$TRAIN_GPUS \
 python rl/train/train_online.py --model "$BASE_MODEL" \
   --vllm-url "http://localhost:$VLLM_PORT" --wandb \
+  --batch-groups 1 --save-every 8 --lr 3e-6 --staleness-max 5 \
   > $LOGS/trainer.log 2>&1 &
 PIDS+=($!)
 echo "== 收集器/trainer 已起(logs: $LOGS)"

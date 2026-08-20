@@ -1,0 +1,60 @@
+skill_id: beat_reel
+kind: asset_driven
+name: 海报卡点开场(爆款片段驱动)
+
+applies_to:
+  categories: [服装, 美妆]
+  person_count: [1, 2, 3]     # 只用第 1 张 hook, 与总人数无关
+  placement: opening
+
+produces:
+  durations: {"1": 5, "2": 5, "3": 5}   # 与人数无关, 恒为 5s
+  audio_mode: music_only
+
+audio:
+  bgm_source: asset           # BGM 随驱动片段带走, 不用整片音轨
+
+asset:                        # 本卡的核心: 一段真拍的驱动素材 + 它自带的 BGM
+  clip: memory/assets/media/v02_poster_beat_reel.mp4
+  bgm: memory/assets/media/v02_poster_beat_reel.m4a
+  bpm: 123
+
+# animate 只吃「参考图 + 驱动视频」, 不吃文本 → 三种人数都无 prompt
+prompt_source: {"1": null, "2": null, "3": null}
+
+text_params: {}               # 无需 Planner 填任何内容
+
+pipelines:                    # 三种人数相同: 都只挂第 1 张 hook
+  "1":
+    - id: vid
+      tool: animate_move
+      params: {mode: wan-pro, ref: $hook_1, driving: $skill.asset.clip}
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", bgm: $skill.asset.bgm, duration: 5, bgm_volume: 1.0}
+  "2":
+    - id: vid
+      tool: animate_move
+      params: {mode: wan-pro, ref: $hook_1, driving: $skill.asset.clip}
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", bgm: $skill.asset.bgm, duration: 5, bgm_volume: 1.0}
+  "3":
+    - id: vid
+      tool: animate_move
+      params: {mode: wan-pro, ref: $hook_1, driving: $skill.asset.clip}
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", bgm: $skill.asset.bgm, duration: 5, bgm_volume: 1.0}
+
+measured:                     # 选卡时的权衡依据
+  verified: true
+  date: 2026-08-13
+  notes: pro/std 两轮均成功; 动作来自真实拍摄, 比生成的自然
+  caveats:
+    - wan-pro 原生 25fps, std 只有 15fps 明显偏卡 → 用 pro
+    - hook 图若本身是营销海报(带排版文字), 生成画面会连排版一起带进来
+    - animate 会抹平驱动片段的硬切(Δ108→Δ19), 产出是"平滑换姿势"而非"卡点硬切"

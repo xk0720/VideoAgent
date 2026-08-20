@@ -1,55 +1,125 @@
 skill_id: home_talking
 kind: template
 name: 室内口播段(三动作 + 音画同步)
+source: demo_v02.py 段落 B1/B2/B3(动作与结构原样搬来)
 
 applies_to:
   categories: [服装]
-  person_count: [1, 2, 3]        # 一张 hook 一段, 天然做"分色/分卖点"叙述
+  person_count: [1, 2, 3]
   placement: body
 
 produces:
-  duration_s: 10
-  audio_mode: lipsync            # seedance 原生音画同出, 人物真的在说话
-  shots: 3                       # 3+3+4 秒三动作
+  duration_per_person_s: 10   # 每人 10s; 本卡产出 = 人数 × 10s 的整个主体部分
+  durations: {"1": 10, "2": 20, "3": 30}
+  audio_mode: lipsync         # kling 原生音画同出, 人物真的在说话
 
 audio:
-  bgm_source: shared       # 整片共享音轨切片, 源由 Planner 决定
+  bgm_source: generated   # 本段整体现生成一条 BGM, 裁到与合并后的视频等长
 
-needs_background: false          # 场景写在 prompt 里, 直接 t2v
+# kling audio: true → 音画同出, 但模型会同时自配背景音乐(实测静默窗 -30dB) →
+# 每段先 isolate_voice 只留人声, 合并后再铺我们生成的 BGM
 
-prompt_source:      # 三种人数共用一个模板(每段只出现一个人)
-  "1": prompt_template
-  "2": prompt_template
-  "3": prompt_template
+prompt_source:            # 第 N 个人用第 N 套模板(动作各不相同, 逐段递进)
+  "1": prompt_p1
+  "2": prompt_p2
+  "3": prompt_p3
 
-pipelines:          # 一人一段: 每段只挂本段对应的那张 hook, 三种人数下单段结构相同
-  "1": &talk_pipe
-    - id: vid
+# 本卡 = 整个主体部分(不是一段): 逐人生成 → 各自剥人声 → 合并 → 生成等长 BGM → 混音
+pipelines:
+  "1":
+    - id: vid1
       tool: kling_omni_video
-      params: {audio: true, duration: 10, refer: [$hook]}
-    - id: voice
+      params: {prompt: $prompt_1, audio: true, duration: 10, refer: [$hook_1]}
+    - id: voice1
       tool: isolate_voice
       local: true
-      params: {source: "@vid", engine: demucs, device: cpu}
+      params: {source: "@vid1", engine: demucs, device: cpu}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: $skill.music_prompt, duration: 12}   # 生成时多 2s, 下一步裁齐
     - id: out
       tool: mix_audio
       local: true
-      params: {video: "@vid", voice: "@voice", bgm: $bgm_slice,
-               voice_loudnorm: -18, bgm_volume: 0.22}
-  "2": *talk_pipe
-  "3": *talk_pipe
+      params: {video: "@vid1", voice: "@voice1", bgm: "@music",
+               duration: 10, voice_loudnorm: -18, bgm_volume: 0.22}
+  "2":
+    - id: vid1
+      tool: kling_omni_video
+      params: {prompt: $prompt_1, audio: true, duration: 10, refer: [$hook_1]}
+    - id: vid2
+      tool: kling_omni_video
+      params: {prompt: $prompt_2, audio: true, duration: 10, refer: [$hook_2]}
+    - id: voice1
+      tool: isolate_voice
+      local: true
+      params: {source: "@vid1", engine: demucs, device: cpu}
+    - id: voice2
+      tool: isolate_voice
+      local: true
+      params: {source: "@vid2", engine: demucs, device: cpu}
+    - id: joined
+      tool: concat_av
+      local: true
+      params: {videos: ["@vid1", "@vid2"], voices: ["@voice1", "@voice2"]}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: $skill.music_prompt, duration: 22}   # 20s + 2s 余量
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@joined", bgm: "@music",
+               duration: 20, voice_loudnorm: -18, bgm_volume: 0.22}
+  "3":
+    - id: vid1
+      tool: kling_omni_video
+      params: {prompt: $prompt_1, audio: true, duration: 10, refer: [$hook_1]}
+    - id: vid2
+      tool: kling_omni_video
+      params: {prompt: $prompt_2, audio: true, duration: 10, refer: [$hook_2]}
+    - id: vid3
+      tool: kling_omni_video
+      params: {prompt: $prompt_3, audio: true, duration: 10, refer: [$hook_3]}
+    - id: voice1
+      tool: isolate_voice
+      local: true
+      params: {source: "@vid1", engine: demucs, device: cpu}
+    - id: voice2
+      tool: isolate_voice
+      local: true
+      params: {source: "@vid2", engine: demucs, device: cpu}
+    - id: voice3
+      tool: isolate_voice
+      local: true
+      params: {source: "@vid3", engine: demucs, device: cpu}
+    - id: joined
+      tool: concat_av
+      local: true
+      params: {videos: ["@vid1", "@vid2", "@vid3"],
+               voices: ["@voice1", "@voice2", "@voice3"]}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: $skill.music_prompt, duration: 32}   # 30s + 2s 余量
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@joined", bgm: "@music",
+               duration: 30, voice_loudnorm: -18, bgm_volume: 0.22}
 
-scene_default: >-
-  bright clean bedroom with a large window, soft daylight,
-  plain light-colored wall
+music_prompt: |
+  Soft upbeat background music for a fashion try-on video, gentle and warm,
+  light percussion and mellow synth pads, steady and unobtrusive so a voice
+  can sit on top, no vocals, no sudden drops.
 
-prompt_template: |
-  Locked-off static camera, vertical 9:16 full-body shot, {scene}. A 10-second
+scene: bright clean bedroom with a large window, soft daylight, plain light-colored wall
+
+prompt_p1: |
+  Locked-off static camera, vertical 9:16 full-body shot, bright clean bedroom
+  with a large window, soft daylight, plain light-colored wall. A 10-second
   video in three shots, hard cut between shots. The same young woman from
-  <<<image_1>>>, wearing the {color} {garment}, appears in every shot.
-  Shot 1 (0-3s): she {action1}, speaking to the camera in Mandarin Chinese, and says: "{line1}"
-  Shot 2 (3-6s): she {action2}, speaking to the camera in Mandarin Chinese, and says: "{line2}"
-  Shot 3 (6-10s): she {action3}, speaking to the camera in Mandarin Chinese, and says: "{line3}"
+  <<<image_1>>> appears in every shot.
+  Shot 1 (0-3s): she walks in from the left edge of the frame, stops at the center and throws both arms open in a cheerful ta-da presentation, eyes wide with excitement, speaking to the camera in Mandarin Chinese, and says: "{line1_1}"
+  Shot 2 (3-6s): she grabs the hem with both hands and swings it lightly left and right to show the loose cut, glances down at the print then snaps her eyes back up to the camera, speaking to the camera in Mandarin Chinese, and says: "{line2_1}"
+  Shot 3 (6-10s): she flicks one wide sleeve through the air, pivots about 45 degrees to her side, then looks back over her shoulder and winks at the camera, speaking to the camera in Mandarin Chinese, and says: "{line3_1}"
   Same woman, same outfit, same room in all three shots. She speaks continuously
   with natural, accurate lip sync in Mandarin Chinese; clear female voice,
   upbeat and friendly, energetic performance.
@@ -61,72 +131,60 @@ prompt_template: |
   time, changing with each shot, matching exactly what she is saying. No other
   text or graphics, no extra people.
 
-slots:              # prompt_template 里 {} 的空位; auto_from 的由程序注入, 其余问模型
-  scene:
-    type: string
-    lang: en
-    auto_from: scene_default
-    desc: "室内场景描述; 三段必须一致"
-  color:
-    type: string
-    lang: en
-    auto_from: hook_color
-    desc: "该 hook 对应的配色, 如 pink / soft sage green"
-  garment:
-    type: string
-    lang: en
-    desc: "商品英文描述, 如 sweatshirt with a watercolor horse print"
-  action1:
-    type: string
-    lang: en
-    desc: "0-3s 建立动作(走入/亮相); 可从 action_library.entrance 取"
-  action2:
-    type: string
-    lang: en
-    desc: "3-6s 细节动作(抓衣摆/指印花/摸缝线); 可从 action_library.detail 取"
-  action3:
-    type: string
-    lang: en
-    desc: "6-10s 展示动作(甩袖/侧身/回眸); 可从 action_library.showcase 取; 禁 360 与 spin"
-  line1:
-    type: string
-    lang: zh
-    min_chars: 10
-    max_chars: 13
-    desc: "3秒句"
-  line2:
-    type: string
-    lang: zh
-    min_chars: 10
-    max_chars: 13
-    desc: "3秒句; 与 line1 语义必须拉开, 否则模型会连读成一段"
-  line3:
-    type: string
-    lang: zh
-    min_chars: 14
-    max_chars: 18
-    desc: "4秒句"
+prompt_p2: |
+  Locked-off static camera, vertical 9:16 full-body shot, bright clean bedroom
+  with a large window, soft daylight, plain light-colored wall. A 10-second
+  video in three shots, hard cut between shots. The same young woman from
+  <<<image_1>>> appears in every shot.
+  Shot 1 (0-3s): she leans slightly toward the camera and taps the contrast stitching on her collar with one finger, tilting her head, speaking to the camera in Mandarin Chinese, and says: "{line1_2}"
+  Shot 2 (3-6s): she slides both hands into her pockets and rocks her shoulders playfully from side to side, chin lifted, speaking to the camera in Mandarin Chinese, and says: "{line2_2}"
+  Shot 3 (6-10s): she takes two easy steps to her left, turns back to the camera and sweeps her hair off her shoulder with one hand, speaking to the camera in Mandarin Chinese, and says: "{line3_2}"
+  Same woman, same outfit, same room in all three shots. She speaks continuously
+  with natural, accurate lip sync in Mandarin Chinese; clear female voice,
+  upbeat and friendly, energetic performance.
+  AUDIO: her speaking voice ONLY — a clean dry studio voice recording. No
+  background music, no soundtrack, no instrumental, no ambient noise, no sound
+  effects.
+  SUBTITLES: burn in her spoken Chinese line as a caption at the bottom of the
+  frame, white bold sans-serif text with a thin dark outline, one line at a
+  time, changing with each shot, matching exactly what she is saying. No other
+  text or graphics, no extra people.
 
-action_library:
-  entrance:
-    - "walks in from the left edge and throws both arms open in a cheerful ta-da"
-    - "faces the camera with a bright surprised smile"
-  detail:
-    - "grabs the hem with both hands and swings it lightly left and right"
-    - "points at the print on her chest"
-    - "touches the contrast stitching along her collar and cuff"
-  showcase:
-    - "flicks one wide sleeve through the air then pivots about 45 degrees"
-    - "slides both hands into her pockets and rocks her shoulders playfully"
-    - "looks back over her shoulder and winks"
+prompt_p3: |
+  Locked-off static camera, vertical 9:16 full-body shot, bright clean bedroom
+  with a large window, soft daylight, plain light-colored wall. A 10-second
+  video in three shots, hard cut between shots. The same young woman from
+  <<<image_1>>> appears in every shot.
+  Shot 1 (0-3s): she holds up three fingers close to the camera, then spreads both arms wide to present the whole outfit, speaking to the camera in Mandarin Chinese, and says: "{line1_3}"
+  Shot 2 (3-6s): she plants one hand on her hip and points straight down toward the bottom of the frame with the other, giving a playful wink, speaking to the camera in Mandarin Chinese, and says: "{line2_3}"
+  Shot 3 (6-10s): she turns halfway away, looks back over her shoulder with a smile, then spins her hands into a small heart shape in front of her chest, speaking to the camera in Mandarin Chinese, and says: "{line3_3}"
+  Same woman, same outfit, same room in all three shots. She speaks continuously
+  with natural, accurate lip sync in Mandarin Chinese; clear female voice,
+  upbeat and friendly, energetic performance.
+  AUDIO: her speaking voice ONLY — a clean dry studio voice recording. No
+  background music, no soundtrack, no instrumental, no ambient noise, no sound
+  effects.
+  SUBTITLES: burn in her spoken Chinese line as a caption at the bottom of the
+  frame, white bold sans-serif text with a thin dark outline, one line at a
+  time, changing with each shot, matching exactly what she is saying. No other
+  text or graphics, no extra people.
+
+text_params:              # 模板要填的内容 + 实测字数约束(第 N 人一组)
+  line1_1: {lang: zh, chars: [10, 13]}    # 第1人 3秒句
+  line2_1: {lang: zh, chars: [10, 13]}
+  line3_1: {lang: zh, chars: [14, 18]}    # 第1人 4秒句
+  line1_2: {lang: zh, chars: [10, 13]}    # 第2人
+  line2_2: {lang: zh, chars: [10, 13]}
+  line3_2: {lang: zh, chars: [14, 18]}
+  line1_3: {lang: zh, chars: [10, 13]}    # 第3人
+  line2_3: {lang: zh, chars: [10, 13]}
+  line3_3: {lang: zh, chars: [14, 18]}
 
 measured:
   verified: true
   date: 2026-08-16
-  notes: >-
-    三段全成。台词 9/9 逐字准确(ASR复核), 口型同步, 身份与配色跨段稳定。
-    时段对齐: 台词按 3秒10-13字 配时最准(偏差<0.45s)。
+  notes: 三段全成; 台词 9/9 逐字准确(ASR复核), 口型同步, 身份与配色跨段稳定
   caveats:
-    - "硬切做不到: 模型无视 hard cut, 用推拉/景别变化代替(帧差仅6-18)"
-    - "字幕不可控: 3段中1段自行烧了字, 且写错中文字形 → 想要准确字幕改用后期烧"
-    - "各段人声响度差可达11dB, 装配时必须 loudnorm 归一"
+    - 模型无视 hard cut, 用推拉/景别变化代替 → 拿不到真正的硬切
+    - 会自行烧中文字幕且写错字形(3段中1段) → 要准确字幕改用 outdoor_narration
+    - 各段人声响度差可达 11dB → 装配时必须 loudnorm 归一

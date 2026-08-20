@@ -3,6 +3,8 @@
 LLM/生成器/判官/VLM/图像编辑全打桩,走完 §A0→§E 全流程。"""
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rl"))
@@ -69,11 +71,17 @@ class FakeT2I:
 
 
 class FakeKling:
-    """生产 BailianKlingClient 的接口面桩件。"""
+    """生产 BailianKlingClient 的接口面桩件(含组内并发要的 clone)。"""
 
-    def __init__(self):
+    def __init__(self, shared=None):
         self.generate_audio = False
         self._t2i = FakeT2I()
+        # 并发观测:所有副本共享一份台账(线程名/并发峰值/落盘路径)
+        self.shared = shared if shared is not None else {
+            "calls": [], "live": 0, "peak": 0, "lock": threading.Lock()}
+
+    def clone(self):
+        return FakeKling(shared=self.shared)
 
     def capabilities(self):
         return {"t2v", "i2v", "flf2v", "ref_images",
@@ -91,9 +99,21 @@ class FakeKling:
                  reference_video=None):
         if reference_video is not None:
             raise RuntimeError("no reference-video channel")
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(out_path).write_bytes(b"fake mp4 bytes " * 200)
-        return Path(out_path)
+        sh = self.shared
+        with sh["lock"]:
+            sh["live"] += 1
+            sh["peak"] = max(sh["peak"], sh["live"])
+            sh["calls"].append({"out": str(out_path),
+                                "audio": self.generate_audio,
+                                "client": id(self)})
+        try:
+            time.sleep(0.05)                # 给并发留出重叠窗口
+            Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(out_path).write_bytes(b"fake mp4 bytes " * 200)
+            return Path(out_path)
+        finally:
+            with sh["lock"]:
+                sh["live"] -= 1
 
     def frame_to_frame(self, prompt, first_frame, last_frame, out_path,
                        duration=None, seed=None, reference_images=None):
@@ -133,36 +153,41 @@ class FakeJudges(dict):
         super().__init__(text=T(), ranker=R(), consistency=C())
 
 
-def _episode(tmp_path, group=4, policy=None):
+def _episode(tmp_path, group=4, policy=None, judges=None):
     run = tmp_path / "movie_test"
     pol = policy or FakePolicy()
+    vg = FakeKling()
+    jg = judges or FakeJudges()
     res = L.run_episode(
         task_text="深夜便利店的十分钟",
         screenplay="深夜便利店。小明推门进店,拿起饭团说:\"就这个吧\","
                    "结账后走出店门。",
         run_dir=run, frozen_llm=FakeFrozenLLM(), policy=pol,
-        video_gen=FakeKling(), image_edit=FakeImageEdit(),
-        mllm=FakeVLM(), judges=FakeJudges(), group=group,
+        video_gen=vg, image_edit=FakeImageEdit(),
+        mllm=FakeVLM(), judges=jg, group=group,
         rl_temperature=0.9)
     recs = [json.loads(x) for x in
             (run / "rl_steps.jsonl").read_text().splitlines()]
-    return run, pol, recs, res
+    return run, pol, recs, res, vg, jg
 
 
 def test_group_sampling_and_temperatures(tmp_path):
     """K 组采样:v0 默认温度(None),其余带 rl 温度;image plan 单采。"""
-    _run, pol, recs, _res = _episode(tmp_path)
+    _run, pol, recs, _res, _vg, _jg = _episode(tmp_path)
     assert len(recs) == 3
     assert all(r["group_size"] == 4 and len(r["samples"]) == 4
                for r in recs)
-    cond_temps = [t for k, t in pol.calls if k == "cond"][:4]
-    assert cond_temps == [None, 0.9, 0.9, 0.9]
+    # 并发采样后调用【顺序】不再确定,但成分必须精确:每镜一次默认
+    # 温度(v0 主干)+ 三次 rl 温度
+    cond_temps = [t for k, t in pol.calls if k == "cond"]
+    assert cond_temps.count(None) == 3            # 3 镜 × 1 个 v0
+    assert cond_temps.count(0.9) == 9             # 3 镜 × 3 个分支
     assert sum(1 for k, _ in pol.calls if k == "plan") == 3  # 每镜一次
 
 
 def test_record_schema_and_trunk(tmp_path):
     """记录自包含 + degraded_from 字段回归 + 主干 = reward argmax。"""
-    _run, _pol, recs, _res = _episode(tmp_path)
+    _run, _pol, recs, _res, _vg, _jg = _episode(tmp_path)
     g = recs[1]
     for f in ("kind", "run", "shot_idx", "label", "junction_kind",
               "policy_version", "group_size", "menu", "context",
@@ -188,7 +213,7 @@ def test_record_schema_and_trunk(tmp_path):
 def test_junction_fusion_routing(tmp_path):
     """三叉分诊(生产同构):同人同景 → derive(桩视频派生必败)→
     退 continue;换景 → cut;非首镜菜单锁 ref2v。"""
-    run, _pol, recs, _res = _episode(tmp_path)
+    run, _pol, recs, _res, _vg, _jg = _episode(tmp_path)
     assert [r["junction_kind"] for r in recs] == [None, "continue",
                                                   "cut"]
     assert [m["name"] for m in recs[1]["menu"]] == ["ref2v"]
@@ -205,8 +230,8 @@ def test_fallback_on_bad_policy_reply(tmp_path):
     class BadPolicy:
         def complete(self, prompt, temperature=None, max_tokens=None):
             return "我拒绝输出 JSON"
-    _run, _pol, recs, _res = _episode(tmp_path, group=3,
-                                      policy=BadPolicy())
+    _run, _pol, recs, _res, _vg, _jg = _episode(
+        tmp_path, group=3, policy=BadPolicy())
     assert recs and all(
         s["via"] == "fallback" and s["r_format"] == 0.0
         for r in recs for s in r["samples"])
@@ -232,3 +257,88 @@ def test_collector_aggregates_and_skips_unjudged(tmp_path):
     out = Wc.collect_run(run, seen)
     assert len(out) == 1 and out[0]["samples"][0]["reward"] == 0.7
     assert len(seen) == 2
+
+
+def test_group_generation_runs_concurrently(tmp_path):
+    """轴 A:一组的 4 个候选【并发】生成 —— 峰值并发 >1 即证明不再串行;
+    且每个候选拿到的是自己的客户端副本(generate_audio 开关线程私有)。"""
+    _run, _pol, recs, _res, vg, _jg = _episode(tmp_path)
+    sh = vg.shared
+    assert sh["peak"] >= 2, f"并发峰值只有 {sh['peak']} —— 仍在串行"
+    # 候选生成用的是 clone,不是原客户端(原客户端只在串行阶段用)
+    cand_calls = [c for c in sh["calls"] if "/c" in c["out"]]
+    assert len({c["client"] for c in cand_calls}) >= 2
+
+
+def test_candidate_dirs_isolated(tmp_path):
+    """每候选独占工作目录 shotNNN/cK —— 中间产物(上镜尾帧、尾段裁片)
+    同名也不会互相覆盖。"""
+    run, _pol, recs, _res, _vg, _jg = _episode(tmp_path)
+    for g in recs:
+        vids = [s["video"] for s in g["samples"] if s["video"]]
+        assert len(set(vids)) == len(vids)          # 互不重名
+        for k, v in enumerate(vids):
+            assert f"/c{k}/" in v or f"c{k}" in Path(v).parts, v
+    assert (run / "shot000" / "c0").is_dir()
+    assert (run / "shot000" / "c3").is_dir()
+
+
+def test_judges_run_concurrently_and_keep_index_order(tmp_path):
+    """判官三段(文本 N / 排名 3 / 一致性 N)并发,且结果严格按候选
+    下标回填 —— 打分绝不能张冠李戴。"""
+    lock = threading.Lock()
+    seen = {"peak": 0, "live": 0, "text_calls": []}
+
+    def _enter():
+        with lock:
+            seen["live"] += 1
+            seen["peak"] = max(seen["peak"], seen["live"])
+
+    def _exit():
+        with lock:
+            seen["live"] -= 1
+
+    class J(dict):
+        def __init__(self):
+            outer = seen
+
+            class T:
+                def score(self, case, tag=None):
+                    _enter()
+                    try:
+                        time.sleep(0.05)
+                        i = tag["candidate"]
+                        with lock:
+                            outer["text_calls"].append(i)
+                        return 0.1 * (i + 1), {"cand": i}
+                    finally:
+                        _exit()
+
+            class R:
+                def rank(self, dim, ctx, videos, tag=None):
+                    _enter()
+                    try:
+                        time.sleep(0.05)
+                        return {"points": {i: 1.0 - 0.2 * i
+                                           for i in range(len(videos))},
+                                "order": list(range(len(videos))),
+                                "evidence": {"dim": dim}}
+                    finally:
+                        _exit()
+
+            class C:
+                def score(self, video, refs, ctx, tag=None):
+                    _enter()
+                    try:
+                        time.sleep(0.05)
+                        return 0.9, {"cand": tag["candidate"]}
+                    finally:
+                        _exit()
+            super().__init__(text=T(), ranker=R(), consistency=C())
+
+    _run, _pol, recs, _res, _vg, _jg = _episode(tmp_path, judges=J())
+    assert seen["peak"] >= 2, "判官仍在串行"
+    assert sorted(seen["text_calls"][:4]) == [0, 1, 2, 3]
+    # 分数按下标回填:文本判官给 c_i 的分是 0.1*(i+1),严格递增
+    r_text = [s["r_text"] for s in recs[0]["samples"]]
+    assert r_text == sorted(r_text) and r_text[0] < r_text[-1]

@@ -25,6 +25,7 @@ import base64
 import json
 import random
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -44,13 +45,16 @@ class JudgeLog:
     def __init__(self, path=None):
         self.path = Path(path) if path else _DEFAULT_JUDGE_LOG
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 2026-08-20 判官并发:单行含 raw[:2000],轻松超过 PIPE_BUF
+        # (4096)—— 无锁并发追加会把两行绞在一起。
+        self._lock = threading.Lock()
 
     def write(self, rec: dict) -> None:
         try:
             rec = {"ts": time.time(), **rec}
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False,
-                                   default=str) + "\n")
+            line = json.dumps(rec, ensure_ascii=False, default=str) + "\n"
+            with self._lock, self.path.open("a", encoding="utf-8") as f:
+                f.write(line)
         except Exception:
             pass                      # 留痕失败绝不打断评审
 
@@ -200,6 +204,9 @@ class VideoRanker:
                  log: "JudgeLog" = None):
         self.client = client
         self.rng = random.Random(rng_seed)
+        # 三个维度并发调用时共用这一个 rng —— 上锁保证每次 shuffle 是
+        # 完整一次抽取(不上锁也能出合法排列,但序列不可复现)
+        self._rng_lock = threading.Lock()
         self.log = log
 
     def rank(self, dim: str, context: dict,
@@ -208,7 +215,8 @@ class VideoRanker:
         展示顺序随机打乱(防位置偏好),映射留在返回明细里。"""
         n = len(videos)
         order = list(range(n))
-        self.rng.shuffle(order)
+        with self._rng_lock:
+            self.rng.shuffle(order)
         labels = [chr(ord("A") + i) for i in range(n)]
         content: list = [{"type": "text", "text":
                           _skill(_RANK_SKILLS[dim])

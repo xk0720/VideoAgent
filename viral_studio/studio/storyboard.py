@@ -26,7 +26,7 @@ class SegmentSpec(BaseModel):
     t0: float = 0.0
     t1: float = 0.0
     pipeline: List[dict] = Field(default_factory=list)     # ← 主产物
-    fills: Dict[str, str] = Field(default_factory=dict)    # 可追溯: LLM 填的可变内容
+    texts: Dict[str, str] = Field(default_factory=dict)    # pipeline 用到的文本参数(台词/旁白/标题)
     reason: str = ""
 
 
