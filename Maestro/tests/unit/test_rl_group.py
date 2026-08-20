@@ -1,6 +1,6 @@
-"""rl/env agent loop 单测(2026-08-19 用户令:loop 重建进 rl/ 后,
-本文件针对 rl/env —— 桩件同时被 run_grpo.sh --smoke 复用)。
-零 API:LLM/生成器/判官全打桩。"""
+"""rl/env agent loop 单测(2026-08-19 用户令:训练=生产完全同构后,
+针对全保真 driver;桩件同时被 run_grpo.sh --smoke 复用)。零 API:
+LLM/生成器/判官/VLM/图像编辑全打桩,走完 §A0→§E 全流程。"""
 import json
 import sys
 from pathlib import Path
@@ -11,34 +11,49 @@ from env import loop as L                                     # noqa: E402
 
 
 # ── 桩件(--smoke 复用)────────────────────────────────────────────
+_SB = {"cast": {"小明": "static: 蓝夹克短发男子; dynamic: none"},
+       "setting": "深夜便利店,冷白灯光",
+       "shots": [
+           {"description": "Shot 1: <小明>推门进入便利店",
+            "duration_s": 5, "end_state": "小明站在货架前,镜头静止",
+            "variation": "medium", "opening_frame": "便利店门口静景",
+            "bg": "bg_1"},
+           {"description": "Shot 2: <小明>拿起饭团走向收银台",
+            "duration_s": 5, "end_state": "小明到达收银台",
+            "variation": "medium", "bg": "bg_1",
+            "dialogue": {"speaker": "小明", "line": "就这个吧"}},
+           {"description": "Shot 3: <小明>走出店门", "duration_s": 4,
+            "end_state": "门关上", "variation": "large", "bg": "bg_2"}]}
+
+
 class FakeFrozenLLM:
     def complete(self, prompt, temperature=None, max_tokens=None):
-        if '"cast"' in prompt[-3000:]:          # scene_write 契约尾
-            return json.dumps({
-                "cast": {"小明": "static: 蓝夹克短发男子; dynamic: none"},
-                "setting": "深夜便利店,冷白灯光",
-                "shots": [
-                    {"description": "Shot 1: <小明>推门进入便利店",
-                     "duration_s": 5, "end_state": "小明站在货架前",
-                     "variation": "medium",
-                     "opening_frame": "便利店门口静景", "bg": "bg_1"},
-                    {"description": "Shot 2: <小明>拿起饭团走向收银台",
-                     "duration_s": 5, "end_state": "小明到达收银台",
-                     "variation": "medium", "bg": "bg_1",
-                     "dialogue": {"speaker": "小明", "line": "就这个吧"}},
-                    {"description": "Shot 3: <小明>走出店门",
-                     "duration_s": 4, "end_state": "门关上",
-                     "variation": "large", "bg": "bg_2"}]},
-                ensure_ascii=False)
-        return json.dumps({"prompt": "empty convenience store interior"})
+        if '"characters"' in prompt[-2000:]:      # character_extract
+            return json.dumps({"characters": _SB["cast"]},
+                              ensure_ascii=False)
+        if '"cast"' in prompt[-3000:]:            # scene_write
+            return json.dumps(_SB, ensure_ascii=False)
+        # scene_image / 肖像翻译等 → 任意文本(调用方有确定性兜底)
+        return "empty convenience store interior, cold white light"
 
 
 class FakePolicy:
     def __init__(self):
-        self.calls = []
+        self.calls = []                            # (kind, temperature)
 
     def complete(self, prompt, temperature=None, max_tokens=None):
-        self.calls.append(temperature)
+        if '"prev_end_cast"' in prompt:            # 交界人物判官
+            return json.dumps({"prev_end_cast": ["小明"],
+                               "cur_open_cast": ["小明"],
+                               "reason": "同人"}, ensure_ascii=False)
+        if '"view"' in prompt[-200:]:              # pick_space_view
+            return json.dumps({"view": "master"})
+        if "first_shot_desc" in prompt:            # 缝合师 → 判死退模板
+            return "no"
+        if "single_first_frame" in prompt:         # image plan
+            self.calls.append(("plan", temperature))
+            return json.dumps({"strategy": "none", "reason": "test"})
+        self.calls.append(("cond", temperature))   # generation-condition
         strat = "ref2v" if '"ref2v"' in prompt else "t2v"
         return json.dumps(
             {"strategy": strat, "reason": "test",
@@ -49,16 +64,54 @@ class FakePolicy:
 class FakeT2I:
     def text_to_image(self, prompt, out, seed=0):
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        Path(out).write_bytes(b"png")
-        return out
+        Path(out).write_bytes(b"\x89PNG fake" * 8)
+        return Path(out)
 
 
 class FakeKling:
-    def generate(self, prompt, duration, out, first_frame=None,
-                 reference_images=None, audio=False):
+    """生产 BailianKlingClient 的接口面桩件。"""
+
+    def __init__(self):
+        self.generate_audio = False
+        self._t2i = FakeT2I()
+
+    def capabilities(self):
+        return {"t2v", "i2v", "flf2v", "ref_images",
+                "first_frame_plus_refs", "t2i"}
+
+    @staticmethod
+    def ref_token(n):
+        return f"<<<image_{n}>>>"
+
+    def text_to_image(self, prompt, out, seed=0):
+        return self._t2i.text_to_image(prompt, out, seed=seed)
+
+    def generate(self, prompt, duration, out_path, fps=None, seed=None,
+                 first_frame=None, reference_images=None,
+                 reference_video=None):
+        if reference_video is not None:
+            raise RuntimeError("no reference-video channel")
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_bytes(b"fake mp4 bytes " * 200)
+        return Path(out_path)
+
+    def frame_to_frame(self, prompt, first_frame, last_frame, out_path,
+                       duration=None, seed=None, reference_images=None):
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_bytes(b"fake mp4 bytes " * 200)
+        return Path(out_path)
+
+
+class FakeImageEdit:
+    def edit(self, src, prompt, out, references=None):
         Path(out).parent.mkdir(parents=True, exist_ok=True)
-        Path(out).write_bytes(b"mp4")
-        return out
+        Path(out).write_bytes(b"\x89PNG fake" * 8)
+        return Path(out)
+
+
+class FakeVLM:
+    def caption_image(self, image_path):
+        return "background: 测试图注,货架与收银台"
 
 
 class FakeJudges(dict):
@@ -80,31 +133,36 @@ class FakeJudges(dict):
         super().__init__(text=T(), ranker=R(), consistency=C())
 
 
-def _episode(tmp_path, group=4):
+def _episode(tmp_path, group=4, policy=None):
     run = tmp_path / "movie_test"
-    pol = FakePolicy()
-    L.run_episode(task_text="深夜便利店,店员和最后一位客人的十分钟",
-                  run_dir=run, frozen_llm=FakeFrozenLLM(), policy=pol,
-                  kling=FakeKling(), t2i=FakeT2I(), judges=FakeJudges(),
-                  group=group, rl_temperature=0.9)
+    pol = policy or FakePolicy()
+    res = L.run_episode(
+        task_text="深夜便利店的十分钟",
+        screenplay="深夜便利店。小明推门进店,拿起饭团说:\"就这个吧\","
+                   "结账后走出店门。",
+        run_dir=run, frozen_llm=FakeFrozenLLM(), policy=pol,
+        video_gen=FakeKling(), image_edit=FakeImageEdit(),
+        mllm=FakeVLM(), judges=FakeJudges(), group=group,
+        rl_temperature=0.9)
     recs = [json.loads(x) for x in
             (run / "rl_steps.jsonl").read_text().splitlines()]
-    return run, pol, recs
+    return run, pol, recs, res
 
 
 def test_group_sampling_and_temperatures(tmp_path):
-    """K 组采样:v0 默认温度(None → 客户端默认),其余带 rl 温度。"""
-    _run, pol, recs = _episode(tmp_path)
+    """K 组采样:v0 默认温度(None),其余带 rl 温度;image plan 单采。"""
+    _run, pol, recs, _res = _episode(tmp_path)
     assert len(recs) == 3
     assert all(r["group_size"] == 4 and len(r["samples"]) == 4
                for r in recs)
-    assert pol.calls[:4] == [None, 0.9, 0.9, 0.9]
+    cond_temps = [t for k, t in pol.calls if k == "cond"][:4]
+    assert cond_temps == [None, 0.9, 0.9, 0.9]
+    assert sum(1 for k, _ in pol.calls if k == "plan") == 3  # 每镜一次
 
 
 def test_record_schema_and_trunk(tmp_path):
-    """记录自包含:menu/context/completion/reward 字段齐;主干唯一,
-    且 = reward argmax(桩判官给 c0 最高)。"""
-    _run, _pol, recs = _episode(tmp_path)
+    """记录自包含 + degraded_from 字段回归 + 主干 = reward argmax。"""
+    _run, _pol, recs, _res = _episode(tmp_path)
     g = recs[1]
     for f in ("kind", "run", "shot_idx", "label", "junction_kind",
               "policy_version", "group_size", "menu", "context",
@@ -112,12 +170,12 @@ def test_record_schema_and_trunk(tmp_path):
         assert f in g, f
     s0 = g["samples"][0]
     for f in ("decision_id", "via", "completion", "raw", "usable",
-              "strategy", "final_prompt", "video", "chosen", "reward",
-              "r_format", "r_text", "r_video", "video_detail",
-              "dropped_components"):
+              "strategy", "degraded_from", "final_prompt", "video",
+              "chosen", "reward", "r_format", "r_text", "r_video",
+              "video_detail", "dropped_components"):
         assert f in s0, f
     assert sum(1 for s in g["samples"] if s["chosen"]) == 1
-    assert s0["chosen"] is True
+    assert s0["chosen"] is True                    # 桩排名给 c0 最高
     comp = json.loads(s0["completion"])
     assert set(comp) == {"strategy", "reason", "video_prompt"}
     ctx = g["context"]
@@ -127,52 +185,31 @@ def test_record_schema_and_trunk(tmp_path):
                         "episode_guidance"}
 
 
-def test_junction_and_menu_lock(tmp_path):
-    """精简 junction:shot0=None(全菜单)、同 bg=continue、换 bg=cut;
-    非首镜菜单锁 [ref2v](与生产菜单锁一致)。"""
-    _run, _pol, recs = _episode(tmp_path)
-    assert [r["junction_kind"] for r in recs] == [None, "continue", "cut"]
-    assert [m["name"] for m in recs[0]["menu"]] == ["t2v", "ref2v"]
+def test_junction_fusion_routing(tmp_path):
+    """三叉分诊(生产同构):同人同景 → derive(桩视频派生必败)→
+    退 continue;换景 → cut;非首镜菜单锁 ref2v。"""
+    run, _pol, recs, _res = _episode(tmp_path)
+    assert [r["junction_kind"] for r in recs] == [None, "continue",
+                                                  "cut"]
     assert [m["name"] for m in recs[1]["menu"]] == ["ref2v"]
-
-
-def test_outgoing_prompt_chain():
-    """出门链:剥标记 → 引用闸 → 名字终换 → 对白+无BGM 压制句;
-    引用清单外编号 → 弃用整条落剧本兜底。"""
-    entry = {"description": "Shot 2: <小明>拿起饭团",
-             "dialogue": "就这个吧", "dialogue_speaker": "小明",
-             "end_state": ""}
-    slots = [{"slot": "<<<image_1>>>", "content": "master plate",
-              "referenceable": True},
-             {"slot": "<<<image_2>>>", "content": "portrait",
-              "referenceable": True, "name": "小明"}]
-    p, audio = L.outgoing_prompt(
-        {"video_prompt": "<小明>在<<<image_1>>>前", "strategy": "ref2v"},
-        entry, slots, {"小明": "蓝夹克男子"}, zh=True)
-    assert audio and "无背景音乐" in p
-    assert "<小明>" not in p and "<<<image_2>>>" in p     # 名字终换
-    # 清单外编号 → 弃用,落剧本兜底(剥 Shot 前缀)
-    p2, _ = L.outgoing_prompt(
-        {"video_prompt": "看<<<image_9>>>", "strategy": "ref2v"},
-        entry, slots, {}, zh=True)
-    assert "<<<image_9>>>" not in p2 and "拿起饭团" in p2
+    sb = json.loads((run / "storyboard.json").read_text())
+    jm1 = sb["entries"][1]["junction_meta"]
+    assert jm1["kind"] == "continue" \
+        and jm1.get("fallback_to") == "continue"   # 派生失败留痕
+    # 空间圣经:视图注册表已建(image_edit 兜底路),含 master
+    assert "master" in (sb.get("spaces") or {}).get("bg_1", {})
 
 
 def test_fallback_on_bad_policy_reply(tmp_path):
-    """策略回复不可解析 → via=fallback、reward 只剩 format 差异,
-    组照样成型(loop 不因坏回复卡死)。"""
+    """策略回复不可解析 → via=fallback、r_format=0,组照样成型。"""
     class BadPolicy:
         def complete(self, prompt, temperature=None, max_tokens=None):
             return "我拒绝输出 JSON"
-    run = tmp_path / "movie_bad"
-    L.run_episode(task_text="深夜便利店的十分钟", run_dir=run,
-                  frozen_llm=FakeFrozenLLM(), policy=BadPolicy(),
-                  kling=FakeKling(), t2i=FakeT2I(), judges=FakeJudges(),
-                  group=3, rl_temperature=0.9)
-    recs = [json.loads(x) for x in
-            (run / "rl_steps.jsonl").read_text().splitlines()]
-    assert all(s["via"] == "fallback" and s["r_format"] == 0.0
-               for r in recs for s in r["samples"])
+    _run, _pol, recs, _res = _episode(tmp_path, group=3,
+                                      policy=BadPolicy())
+    assert recs and all(
+        s["via"] == "fallback" and s["r_format"] == 0.0
+        for r in recs for s in r["samples"])
 
 
 def test_collector_aggregates_and_skips_unjudged(tmp_path):
@@ -180,7 +217,7 @@ def test_collector_aggregates_and_skips_unjudged(tmp_path):
     响亮跳过。"""
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]
                            / "rl/collect"))
-    import watch_online as W
+    import watch_online as Wc
     run = tmp_path / "movie_c"
     run.mkdir(parents=True)
     good = {"kind": "condition_group", "run": "movie_c", "shot_idx": 0,
@@ -192,6 +229,6 @@ def test_collector_aggregates_and_skips_unjudged(tmp_path):
     (run / "rl_steps.jsonl").write_text(
         json.dumps(good) + "\n" + json.dumps(bad) + "\n")
     seen = set()
-    out = W.collect_run(run, seen)
+    out = Wc.collect_run(run, seen)
     assert len(out) == 1 and out[0]["samples"][0]["reward"] == 0.7
-    assert len(seen) == 2                     # 坏组也记书签,不反复读
+    assert len(seen) == 2

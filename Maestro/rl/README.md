@@ -15,13 +15,25 @@ bash rl/run_grpo.sh --stop   # 一键收摊(农场→rollout→vLLM→GPU 残留
 bash rl/run_grpo.sh --smoke  # 本机自检:mock rollout→收集→分组→advantage
 ```
 
+**同构纪律(2026-08-19 用户令)**:训练 loop 与生产 loop 完全一样。
+rl/env 的生成路径是 src/maestro 的【逐字移植】——window_core.py(窗口
+函数原文)、storyboard/space_bible/ref_slots/junction_stitcher/
+logging_utils/language(整文件拷贝,仅 import 行改 shim);
+tests/unit/test_rl_env_parity.py 在 CI 锁两边不漂移(行为锁+源文锁)。
+与生产的差异仅限用户明令三点:①每镜 K 组采样;②skill 判官择主干
+(评审板/锦标赛/修复不进 RL);③enhancer/episode/BGM/转场关。
+
 - DESIGN.md                 设计全文(v1 + v2 增补)
 - env/rollout.py            RL rollout 入口(一次调用 = 一条轨迹)
-- env/loop.py               agent loop 本体:分镜→资产→逐镜 K 组采样→
-                            skill 判官择主干→rl_steps.jsonl(reward 内联)
+- env/loop.py               driver:生产 generate_movie_windowed 的移植
+                            (§A0→空间圣经→三叉分诊 derive/cut/continue
+                            →image plan→K 组采样→判官择主干→§E 拼接)
+- env/window_core.py        生产 window_loop 生成路径函数的逐字移植件
+- env/storyboard.py 等      整文件移植件(见同构纪律)
 - env/skills.py             策略 prompt 唯一事实源(env 采样与 trainer
                             重建共用;decision_prompt = 生产同款拼法)
-- env/clients.py            精简客户端(冻结 LLM/策略 vLLM/可灵/wavespeed)
+- env/clients.py            生产接口面客户端(冻结 LLM/策略 vLLM/可灵/
+                            wavespeed t2i+图像编辑/EnvVLM 图注)
 - env/config.py             迷你 dotenv/yaml
 - reward/judges.py          skill 判官(文本 4 维 + 三路视频排名 +
                             一致性对照;JudgeLog 全量留痕)

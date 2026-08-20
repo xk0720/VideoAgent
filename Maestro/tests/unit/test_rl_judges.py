@@ -111,7 +111,8 @@ def test_compose_renormalizes_on_missing_components():
 
 def test_env_judge_group_composes_rewards(tmp_path):
     """桩判官走通采样端评审全链(2026-08-19 评审移进 rl/env):案卷
-    组装/合成/明细留痕 —— 文本逐候选 + 排名 + 一致性剔除归一化。"""
+    组装/合成/明细留痕 —— 文本逐候选 + 排名 + 一致性剔除归一化;
+    衔接连续性按 junction_meta(continue → 可判)。"""
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "rl"))
     from env.loop import judge_group
     run = tmp_path / "movie_x"
@@ -121,8 +122,18 @@ def test_env_judge_group_composes_rewards(tmp_path):
         v = run / f"v{i}.mp4"
         v.write_bytes(b"fake")
         videos.append(v)
-    entry = {"description": "A 走进店里。", "label": "s1",
-             "bg_id": "bg_1", "camera_facing": "朝柜台"}
+
+    class _E:
+        description = "A 走进店里。"
+        label = "s1"
+        bg_id = "bg_1"
+        camera_facing = "朝柜台"
+        junction_meta = {"kind": "continue"}
+
+    class _SB:
+        portraits: dict = {}
+        spaces: dict = {}
+
     context = {"cast": {}, "cast_in_shot": [], "storyboard": [],
                "prev_shot": {"end_state": "A 在门口"},
                "slots_by_strategy": {"t2v": []}, "setting": ""}
@@ -130,6 +141,7 @@ def test_env_judge_group_composes_rewards(tmp_path):
                  "video_prompt": "p0"},
                 {"strategy": "t2v", "via": "llm", "decision_id": "d1",
                  "video_prompt": "p1"}]
+    conds = [{"strategy": "t2v"}, {"strategy": "t2v"}]
 
     class _TJ:
         def score(self, case, tag=None):
@@ -148,15 +160,12 @@ def test_env_judge_group_composes_rewards(tmp_path):
 
     rewards, jv = judge_group(
         {"text": _TJ(), "ranker": _RK(), "consistency": _CC()},
-        context, entry, {"portraits": {}, "backgrounds": {}},
-        variants, videos, "movie_x",
-        {"junction_kind": "continue"})
+        context, _E(), _SB(), variants, conds, videos, "movie_x")
     s0, s1 = rewards
     assert s0["r_text"] == 0.9 and s1["r_text"] == 0.4
-    # 无肖像/背景板参考 → consistency 跳过并被剔除留痕
+    # 无肖像/空间视图参照 → consistency 跳过并被剔除留痕
     assert "consistency" in s0["dropped_components"]
     assert s0["reward"] > s1["reward"]     # 排名+文本双赢 → 合成分更高
-
 
 
 def test_batch_metrics_component_means():

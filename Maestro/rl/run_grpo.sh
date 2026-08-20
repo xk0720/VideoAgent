@@ -126,12 +126,15 @@ import sys, pathlib
 sys.path.insert(0, "rl"); sys.path.insert(0, "tests/unit")
 sbx = pathlib.Path(sys.argv[1]); run = sbx / "movie_rlsmoke"
 import os; os.environ["MAESTRO_POLICY_VERSION"] = "1"
-from test_rl_group import (FakeFrozenLLM, FakeJudges, FakeKling,
-                           FakePolicy, FakeT2I)
+from test_rl_group import (FakeFrozenLLM, FakeImageEdit, FakeJudges,
+                           FakeKling, FakePolicy, FakeVLM)
 from env.loop import run_episode
 res = run_episode(task_text="深夜便利店,店员和最后一位客人的十分钟",
+                  screenplay="深夜便利店。小明推门进店,拿起饭团,"
+                             "结账后走出店门。",
                   run_dir=run, frozen_llm=FakeFrozenLLM(),
-                  policy=FakePolicy(), kling=FakeKling(), t2i=FakeT2I(),
+                  policy=FakePolicy(), video_gen=FakeKling(),
+                  image_edit=FakeImageEdit(), mllm=FakeVLM(),
                   judges=FakeJudges(), group=3, rl_temperature=0.8)
 n = len((run / "rl_steps.jsonl").read_text().splitlines())
 assert n >= 1, "mock rollout 未产出组记录"

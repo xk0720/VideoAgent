@@ -117,17 +117,34 @@ class KlingClient:
 
     def __init__(self, api_key: str, mode: str = "std",
                  aspect_ratio: str = "16:9", poll_interval: float = 15.0,
-                 timeout: float = 900, log: CallLog | None = None):
+                 timeout: float = 900, log: CallLog | None = None,
+                 t2i=None):
         self.api_key = api_key
         self.mode = mode
         self.aspect_ratio = aspect_ratio
         self.poll_interval = poll_interval
         self.timeout = timeout
         self.log = log or CallLog(None)
+        # 生产同款接口面(window_core 的移植体按鸭子类型调用):
+        self.generate_audio = False          # driver 按对白镜临时翻转
+        self._t2i = t2i                      # wavespeed t2i 代理(生产同构)
         # 本机代理会掐死长轮询(生产同款教训)—— 会话必须绕过 env 代理
         self.session = requests.Session()
         self.session.trust_env = False
         self._upload_cache: dict = {}
+
+    def capabilities(self) -> set:
+        """与生产 BailianKlingClient 同款能力申报(菜单门控依据)。"""
+        caps = {"t2v", "i2v", "flf2v", "ref_images",
+                "first_frame_plus_refs"}
+        if self._t2i is not None:
+            caps.add("t2i")
+        return caps
+
+    def text_to_image(self, prompt: str, out_path, seed: int = 0):
+        if self._t2i is None:
+            raise RuntimeError("no wavespeed t2i proxy configured")
+        return self._t2i.text_to_image(prompt, out_path, seed=seed)
 
     @staticmethod
     def ref_token(n: int) -> str:
@@ -187,10 +204,16 @@ class KlingClient:
         self._upload_cache[ck] = url
         return url
 
-    # ── 生成 ─────────────────────────────────────────────────────
-    def generate(self, prompt: str, duration, out_path,
-                 first_frame=None, reference_images=None,
-                 audio: bool = False) -> Path:
+    # ── 生成(签名与生产 BailianKlingClient.generate 对齐:fps/seed
+    # 接受但平台不支持不发;reference_video 生产同款拒绝)────────────
+    def generate(self, prompt: str, duration, out_path, fps=None,
+                 seed=None, first_frame=None, reference_images=None,
+                 reference_video=None) -> Path:
+        if reference_video is not None:
+            raise RuntimeError(
+                "bailian kling has no reference-video channel "
+                "(production parity: raise before any upload)")
+        audio = bool(getattr(self, "generate_audio", False))
         model = self.MODEL_OMNI if (first_frame or reference_images) \
             else self.MODEL_T2V
         media = []
@@ -232,6 +255,49 @@ class KlingClient:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         self._download(url, out_path, task_id)
         self.log.write("kling_done", task_id=task_id, out=str(out_path))
+        return out_path
+
+    def frame_to_frame(self, prompt: str, first_frame, last_frame,
+                       out_path, duration=None, seed=None,
+                       reference_images=None) -> Path:
+        """首尾双帧(flf2v):media=[first_frame, last_frame(+refer…)],
+        与生产 BailianKlingClient.frame_to_frame 同协议。"""
+        model = self.MODEL_OMNI
+        media = [{"type": "first_frame",
+                  "url": self._upload(first_frame, model)},
+                 {"type": "last_frame",
+                  "url": self._upload(last_frame, model)}]
+        for ref in (reference_images or []):
+            media.append({"type": "refer",
+                          "url": self._upload(ref, model)})
+        params: dict = {"mode": self.mode,
+                        "audio": bool(getattr(self, "generate_audio",
+                                              False))}
+        if duration is not None:
+            d = int(duration) if float(duration) == int(duration) \
+                else int(float(duration)) + 1
+            params["duration"] = max(3, min(15, d))
+        payload = {"model": model,
+                   "input": {"prompt": prompt, "media": media},
+                   "parameters": params}
+        headers = {"Authorization": f"Bearer {self.api_key}",
+                   "Content-Type": "application/json",
+                   "X-DashScope-Async": "enable",
+                   "X-DashScope-OssResourceResolve": "enable"}
+        self.log.write("kling_flf2v", n_media=len(media),
+                       duration=params.get("duration"),
+                       prompt=prompt[:400])
+        r = self.session.post(
+            f"{self.BASE}/services/aigc/video-generation/video-synthesis",
+            json=payload, headers=headers, timeout=120)
+        if r.status_code >= 400:
+            raise RuntimeError(f"kling flf2v HTTP {r.status_code}: "
+                               f"{r.text[:500]}")
+        task_id = r.json()["output"]["task_id"]
+        url = self._poll(task_id)
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        self._download(url, out_path, task_id)
         return out_path
 
     def _poll(self, task_id: str) -> str:
@@ -338,3 +404,162 @@ class WaveSpeedT2I:
                 return out_path
             if st == "failed":
                 raise RuntimeError(f"t2i FAILED: {data.get('error')}")
+
+
+class WaveSpeedImageEdit:
+    """seedream v4 图像编辑(空间圣经派生视图/清场回流用)。协议与
+    生产 WaveSpeedImageEditClient 同款:参考图走上传 URL(base64 会
+    400),size 按被编辑图长边≈2048 等比 8 对齐(写死方图是已知 bug,
+    不复制)。"""
+
+    BASE = "https://api.wavespeed.ai/api/v3"
+    MODEL = "bytedance/seedream-v4/edit"
+
+    def __init__(self, api_key: str, poll_interval: float = 2.0,
+                 timeout: float = 300, log: CallLog | None = None):
+        self.api_key = api_key
+        self.poll_interval = poll_interval
+        self.timeout = timeout
+        self.log = log or CallLog(None)
+        self._upload_cache: dict = {}
+
+    def _upload(self, path) -> str:
+        s = str(path)
+        if s.startswith(("http://", "https://")):
+            return s
+        p = Path(path)
+        if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+            raise RuntimeError(f"image-edit ref must be an image: {p}")
+        ck = (str(p), p.stat().st_mtime, p.stat().st_size)
+        if ck in self._upload_cache:
+            return self._upload_cache[ck]
+        with open(p, "rb") as fh:
+            r = requests.post(
+                f"{self.BASE}/media/upload/binary",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                files={"file": (p.name, fh)}, timeout=300)
+        if r.status_code >= 400:
+            raise RuntimeError(f"media upload HTTP {r.status_code}: "
+                               f"{r.text[:300]}")
+        url = r.json()["data"]["download_url"]
+        self._upload_cache[ck] = url
+        return url
+
+    @staticmethod
+    def _size_for(src) -> str:
+        try:
+            from PIL import Image
+            w, h = Image.open(src).size
+            if w >= h:
+                W = 2048
+                H = max(8, int(round(2048 * h / w / 8)) * 8)
+            else:
+                H = 2048
+                W = max(8, int(round(2048 * w / h / 8)) * 8)
+            return f"{W}*{H}"
+        except Exception:
+            return "2048*2048"
+
+    def edit(self, src, prompt: str, out_path, references=None) -> Path:
+        images = [self._upload(src)] + [self._upload(r)
+                                        for r in (references or [])]
+        self.log.write("image_edit_submit", n_refs=len(images) - 1,
+                       prompt=str(prompt)[:300])
+        r = requests.post(
+            f"{self.BASE}/{self.MODEL}",
+            json={"enable_base64_output": False,
+                  "enable_sync_mode": False,
+                  "images": images, "prompt": str(prompt),
+                  "size": self._size_for(src)},
+            headers={"Authorization": f"Bearer {self.api_key}",
+                     "Content-Type": "application/json"}, timeout=120)
+        if r.status_code >= 400:
+            raise RuntimeError(f"image-edit submit HTTP {r.status_code}: "
+                               f"{r.text[:300]}")
+        task_id = r.json()["data"]["id"]
+        t0 = time.time()
+        while True:
+            if time.time() - t0 > self.timeout:
+                raise RuntimeError(f"image-edit task {task_id} timeout")
+            time.sleep(self.poll_interval)
+            try:
+                pr = requests.get(
+                    f"{self.BASE}/predictions/{task_id}/result",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=60)
+            except requests.RequestException:
+                continue
+            if pr.status_code >= 500:
+                continue
+            data = pr.json().get("data") or {}
+            st = data.get("status")
+            if st == "completed":
+                url = data["outputs"][0]
+                out_path = Path(out_path)
+                if out_path.suffix.lower() not in (".png", ".jpg",
+                                                   ".jpeg", ".webp"):
+                    out_path = out_path.with_suffix(".png")
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                img = requests.get(url, timeout=300)
+                out_path.write_bytes(img.content)
+                self.log.write("image_edit_done", out=str(out_path))
+                return out_path
+            if st == "failed":
+                raise RuntimeError(
+                    f"image-edit FAILED: {data.get('error')}")
+
+
+class EnvVLM:
+    """RL 环境的 mllm 角色(idealab Gemini,OpenAI 兼容图文 chat)。
+    方法集 = 生产 IdealabGeminiVLM 在管线里【实际被用到】的面:
+    caption_image(指令原文与生产 OpenAICompatVLM.caption_image 逐字
+    一致)。接点实况/空间圣经图注在生产 idealab 配置下都会落到它。"""
+
+    _CAPTION_INSTRUCTION = (
+        "Describe this image in ONE short sentence for retrieval: "
+        "what/who it shows and the setting. Also start with one "
+        "category word from [background, character, object, style] "
+        "and a colon. Example: 'background: a cozy living room at "
+        "night with a lit fireplace'. No other text.")
+
+    def __init__(self, base_url: str, model: str, api_key: str,
+                 timeout: float = 300, log: CallLog | None = None):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.timeout = timeout
+        self.log = log or CallLog(None)
+
+    def _chat_image(self, image_path, text: str) -> str:
+        import base64 as _b64
+        p = Path(str(image_path))
+        if not p.exists() or p.suffix.lower() not in (
+                ".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+            return ""
+        try:
+            b64 = _b64.b64encode(p.read_bytes()).decode()
+        except OSError:
+            return ""
+        try:
+            r = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={"model": self.model, "messages": [{
+                    "role": "user", "content": [
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/png;base64,{b64}"}},
+                        {"type": "text", "text": text}]}]},
+                timeout=self.timeout)
+            if r.status_code >= 400:
+                self.log.write("vlm_caption_http", code=r.status_code,
+                               body=r.text[:200])
+                return ""
+            return (_content_text(
+                r.json()["choices"][0]["message"]["content"])
+                or "").strip()
+        except Exception as exc:
+            self.log.write("vlm_caption_error", error=str(exc)[:150])
+            return ""
+
+    def caption_image(self, image_path) -> str:
+        return self._chat_image(image_path, self._CAPTION_INSTRUCTION)

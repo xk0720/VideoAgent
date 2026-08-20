@@ -1,513 +1,107 @@
-"""RL agent loop(2026-08-19 用户令:整个训练环境重建进 rl/,主管线
-零依赖)。精简版窗口式生成,只保留训练必需:
+"""RL agent loop —— 生产 generate_movie_windowed 的逐段移植(2026-08-19
+用户令【训练=生产完全同构 + rl/ 自包含】)。
 
-  §A  剧本→分镜(冻结 LLM + scene_write 技能,任务 prompt 与生产逐字
-      同款 —— 冻结 agent 的输入分布不漂)
-  §A' 资产(肖像 t2i 逐角色、背景板 t2i 逐 bg;资产保证闸:缺 = 硬停)
-  §C  逐镜:junction(精简:同 bg=continue、换 bg=cut;不做 derive
-      派生帧)→ 菜单(shot0=[t2v,ref2v],其余锁 [ref2v],与生产菜单锁
-      一致)→ 策略 K 组采样(v0 默认温度,其余 rl_temperature)→ 每
-      候选走同一条出门链(剥标记/契约清洗/引用闸/名字终换/对白音频)
-      → 可灵生成
-  §R  skill 判官组内评审(文本判官逐候选 + 三路视频排名 + 一致性对照
-      —— rl/reward/judges.py 同一套技能文件)→ compose_rewards →
-      argmax = 主干推进;全部判词落 JudgeLog
-  §W  rl_steps.jsonl 组记录(schema 与旧版同,reward 已内联 ——
-      收集器只聚合,不再二次评审)
+与生产的差异仅限用户明令三点:
+  ① 每镜 generation-condition 同 state 采 K 个决策(v0 默认温度,其余
+     rl_temperature),K 个候选各自走完整出门链并生成;
+  ② 主干 = rl/reward skill 判官(文本判官 + action/physics/camera 三路
+     排名 + 一致性对照)合成 reward 的 argmax —— 评审板/锦标赛/修复
+     循环不进 RL(既定裁决:--max-turns 0、skill 判官换评审);
+  ③ enhancer / episode 记忆 / BGM / 转场 / baseline anchor 关(生产 RL
+     农场跑法本就如此)。
 
-刻意去掉的生产件(用户令"多余的全部去掉"):修复循环、语义/物理
-critic、metric_tool、锦标赛、prompt enhancer、episode 记忆、derive 缝合、
-空间圣经、BGM/转场、蒸馏。
+其余与生产同构(代码 = rl/env/window_core.py 的逐字移植件):
+§A0 剧本 → §A1 角色提取 → §A 分镜(坏回复/语言/对白覆盖全闸)→
+§A' 官方肖像 → §A2 背景板 + 资产保证闸 → 空间圣经(环视多视图+图注)
+→ 逐镜三叉分诊(derive 派生缝合 / cut / continue 片尾报告)→ §B'
+image plan(策略单采样,与生产一致)→ 条件菜单+菜单锁 → 槽位清单 →
+K 组采样 → 出门链(剥标记/契约清洗/引用闸/正典/对白音频/名字终换)
+→ 条件执行(同策略重试一次→降级留痕)→ 判官择主干 → rl_steps 组记录
+→ 空间圣经实拍回流 → §E 拼接。
 """
 from __future__ import annotations
 
 import json
 import os
 import re
-import time
-import uuid
+import shutil
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 RL_ROOT = Path(__file__).resolve().parent.parent
-import sys
 if str(RL_ROOT) not in sys.path:
     sys.path.insert(0, str(RL_ROOT))
 
-from env.skills import decision_prompt, extract_json, skill_body  # noqa: E402
+import env.window_core as W                                   # noqa: E402
+from env.junction_stitcher import JunctionStitcherAgent       # noqa: E402
+from env.language import set_output_lang                      # noqa: E402
+from env.logging_utils import brain_log, get_logger, set_brain_log  # noqa: E402
+from env.space_bible import (build_space_views, pick_space_view,    # noqa: E402
+                             washed_frame_upgrade)
+from env.storyboard import StoryboardMemory                   # noqa: E402
 
-# ── 生产同款常量/小闸(逐字移植,来源 window_loop.py)────────────────
-_MARKER_RE = re.compile(r"<([^<>\n]{1,60})>")
-_CAST_SPLIT_RE = re.compile(
-    r"static[:：]\s*(.+?)\s*[;;,]\s*dynamic[:：].*",
-    re.IGNORECASE | re.DOTALL)
-_SHOT_PREFIX_RE = re.compile(
-    r"^\s*shot\s+\d+\s*:\s*(scene\s+\d+\s*[—-]\s*)?", re.IGNORECASE)
-_REF_TOKEN_RE = re.compile(
-    r"@(?:Image|Video)\d+|reference image \d+|<<<(?:image|video)_\d+>>>",
-    re.IGNORECASE)
-_KLING_VARIANT_RE = re.compile(
-    r"<{1,4}\s*(image|video)[\s_]?(\d+)\s*>{1,4}", re.IGNORECASE)
-_PORTRAIT_SLOT_CONTENT = (
-    "official portrait of {name} — identity ONLY: match the character's "
-    "face/build/wardrobe to it; NEVER copy its pose, framing or background")
-_CONDITION_PRIORITY = ["ref2v", "t2v"]        # 精简菜单的确定性兜底序
+log = get_logger("maestro.rl_env")
 
 
-def strip_markers(text: str) -> str:
-    return _MARKER_RE.sub(r"\1", text or "")
+@dataclass
+class ShotSpec:
+    """window_core 用到的 spec 三元组(生产 types.ShotSpec 的使用面)。"""
+    shot_idx: int
+    duration: float | None
+    prompt: str
 
 
-def static_half(desc: str) -> str:
-    s = str(desc or "").strip()
-    m = _CAST_SPLIT_RE.match(s)
-    if m:
-        return m.group(1).strip()
-    cut = re.split(r"dynamic[:：]", s, maxsplit=1,
-                   flags=re.IGNORECASE)[0]
-    cut = re.sub(r"^\s*static[:：]\s*", "", cut, flags=re.IGNORECASE)
-    return cut.strip().rstrip(";;,. ").strip()
+def _fallback_outline(text: str, n_shots: int = 3,
+                      max_shots: int = 12) -> list[str]:
+    """确定性拆条兜底(生产 ScreenwriterAgent.run 同法:分号切子句,
+    循环填充,"Shot i:" 前缀)。scene_write 全败才会走到这里。"""
+    n = max(1, min(n_shots, max_shots))
+    clauses = [c.strip() for c in str(text or "").replace("；", ";")
+               .split(";") if c.strip()]
+    return [f"Shot {i + 1}: {clauses[i % len(clauses)] if clauses else text}"
+            for i in range(n)]
 
 
-def scrub_cast_labels(text: str, cast: dict) -> str:
-    out = str(text or "")
-    for v in (cast or {}).values():
-        s = str(v or "").strip()
-        m = _CAST_SPLIT_RE.match(s)
-        if m and s in out:
-            out = out.replace(s, m.group(1).strip())
-    return re.sub(r"\bstatic[:：]\s*", "", out)
-
-
-def cast_in_shot(description: str, cast: dict) -> dict:
-    if not cast:
-        return {}
-    marks = {m.strip().lower()
-             for m in _MARKER_RE.findall(description or "")}
-    if not marks:
-        return dict(cast)
-    hit = {k: v for k, v in cast.items() if k.strip().lower() in marks}
-    return hit or dict(cast)
-
-
-def normalize_ref_tokens(prompt: str) -> str:
-    return _KLING_VARIANT_RE.sub(
-        lambda m: f"<<<{m.group(1).lower()}_{m.group(2)}>>>",
-        str(prompt or ""))
-
-
-def validate_references(prompt: str, slots: list[dict],
-                        zh: bool) -> tuple[str, dict]:
-    """出口引用闸(生产同款规则):清单外编号 → 整条作废;可引用槽位
-    漏提 → 自动补一句。"""
-    prompt = normalize_ref_tokens(prompt)
-    allowed = {str(r.get("slot", "")).lower(): r for r in slots
-               if r.get("referenceable")}
-    found = {m.group(0) for m in _REF_TOKEN_RE.finditer(prompt)}
-    unknown = sorted(t for t in found if t.lower() not in allowed)
-    if unknown:
-        return "", {"ok": False, "unknown": unknown,
-                    "allowed": sorted(r["slot"] for r in slots
-                                      if r.get("referenceable"))}
-    mentioned = {t.lower() for t in found}
-    appended = []
-    fixed = prompt.rstrip()
-    for r in slots:
-        if not r.get("referenceable"):
-            continue
-        slot = str(r.get("slot", ""))
-        if slot.lower() in mentioned:
-            continue
-        content = str(r.get("content", "")).strip()
-        _cjk = any("一" <= ch <= "鿿" for ch in content)
-        if zh and not _cjk:
-            fixed += f"画面中包含{slot}所示之物,外观与其保持一致。"
-        else:
-            fixed += (f" {slot} shows: {content} — keep it consistent."
-                      if content else f" Keep {slot} consistent.")
-        appended.append(slot)
-    return fixed, {"ok": True, "unknown": [], "appended": appended}
-
-
-def names_to_tokens(text: str, name_to_slot: dict) -> str:
-    if not text or not name_to_slot:
-        return text
-    parts = re.split(r'(["“][^"“”]*["”])', text)
-    for i in range(0, len(parts), 2):
-        for n, tok in name_to_slot.items():
-            if n in parts[i]:
-                parts[i] = parts[i].replace(n, tok)
-    return "".join(parts)
-
-
-def with_dialogue(prompt: str, entry: dict, name_to_slot: dict,
-                  zh: bool) -> str:
-    """对白子句 + 无 BGM 压制句(生产规则的精简版:台词已在场就只补
-    压制句;不在场则按说话人记号补一句)。"""
-    line = str(entry.get("dialogue") or "").strip()
-    if not line or not prompt:
-        return prompt
-    audio_zh = "音频:只有角色说这句台词的人声——无背景音乐、无音效。"
-    audio_en = ("Audio: only the character's voice speaking the line — "
-                "no background music, no sound effects.")
-
-    def ensure_audio(p_):
-        if "无背景音乐" in p_ or "no background music" in p_:
-            return p_
-        return f"{p_} {audio_zh}" if zh else f"{p_} {audio_en}"
-    if line in prompt:
-        return ensure_audio(prompt)
-    who = (entry.get("dialogue_speaker") or "").strip() or "the character"
-    subj = name_to_slot.get(who, who)
-    if zh:
-        return ensure_audio(f'{prompt} {subj}说:"{line}"。')
-    return ensure_audio(f'{prompt} {subj} says: "{line}".')
-
-
-# ── §A 分镜(scene_write,任务 prompt 与生产逐字同款)────────────────
-def scene_write_prompt(task_text: str, prompt_language: str,
-                       max_shots: int) -> str:
-    skill_text = skill_body("scene_write")
-    return (
-        skill_text
-        + "\n\nTHIS TASK (JSON):\n"
-        + json.dumps({"user_prompt": task_text,
-                      "prompt_language": prompt_language,
-                      "cast_canon": {},
-                      "asset_catalog": [],
-                      "episode_guidance": {"past_task_shapes": []},
-                      "max_shots_hard_cost_cap": max_shots},
-                     ensure_ascii=False)
-        + '\n\nSTRICT JSON only: {"cast": {"<entity name>": "<10-20 '
-          'word CANONICAL appearance descriptor (species/build, coat/'
-          'wardrobe with colors, distinctive marks) — every shot prompt '
-          'will restate it VERBATIM>"}, "setting": "<one canonical '
-          'set-dressing + lighting sentence for the (main) scene>", '
-          '"shots": [{"description": "Shot 1: '
-          '<detailed filmable description — mark every cast character '
-          'as <name> in angle brackets, names copied from cast keys>", '
-          '"duration_s": <int 4-10>, '
-          '"end_state": "<one sentence: at the CUT, who/what is where, '
-          'moving or still, in which direction — PLUS the camera\'s '
-          'own state (static / pushing in / tracking right at walking '
-          'pace ...)>", '
-          '"variation": "large|medium|small (expected first-to-last '
-          'frame change inside this shot)", '
-          '"opening_frame": "<ONLY for the first shot and scene cuts: '
-          'a purely STATIC opening snapshot (no ongoing actions); omit '
-          'for continuing shots>", '
-          '"dialogue": {"speaker": "<the cast key of WHO SPEAKS — copied '
-          'verbatim from cast>", "line": "<ONE spoken line of at most '
-          '6 words>"} — include ONLY when a cast character visibly '
-          'speaks on screen (medium close-up or closer); omit '
-          'otherwise, '
-          '"bg": "<background id like bg_1 — keep the SAME id while '
-          'the shot happens in the same physical space (the master '
-          'background is unchanged); switch to a NEW id ONLY when the '
-          'action moves to a different space. Predicting this drives '
-          'which background reference image the generator receives>"}, '
-          '...], "music_plan": {"scene 1": "<ONE music description '
-          'for the whole scene: mood, genre, tempo/BPM — all shots in '
-          'a scene share one track; omit a scene (or the whole field) '
-          'for silence>"}} '
-          "— each description 15-40 words (subject + action + "
-          "setting + camera), scene N stated when the location changes. "
-          "YOU decide the shot count AND each shot's duration_s (4-10 "
-          "seconds, from how long the action NEEDS) from the story "
-          "itself (use past_task_shapes as experience from similar "
-          f"past tasks); max_shots ({max_shots}) is only a COST ceiling, "
-          "never a target — never pad by repeating a shot. HANDOFF LAW: "
-          "each shot's opening must continue the PREVIOUS shot's "
-          "end_state exactly (position AND motion); to hand motion to "
-          "the next shot, do NOT let the mover stop before the cut; a "
-          "resting object may only move again if a NEW force/event acts "
-          "on it (write that event into the description). SCRIPT LANGUAGE LAW: "
-        + ("EVERYTHING (descriptions, end_state, opening_frame, "
-           "cast descriptors, setting) MUST be in CHINESE, "
-           "EXCERPTING the screenplay's own action and performance "
-           "wording verbatim wherever it exists — translation is "
-           "loss (image-model strings are translated downstream). "
-           if prompt_language == "zh" else
-           "cast descriptors, setting, descriptions, end_state, "
-           "variation and opening_frame MUST be ENGLISH (they feed "
-           "image/video models directly). ")
-        + "Entity NAMES in cast keys and dialogue lines always "
-          "stay in the user's language. CAST CANON: when the task "
-          "JSON carries a non-empty cast_canon, adopt those names and "
-          "descriptors VERBATIM in your cast output — you may only ADD "
-          "characters it missed, never rename or rewrite them."
-    )
-
-
-def build_storyboard(frozen_llm, task_text: str, prompt_language: str,
-                     max_shots: int = 16) -> dict:
-    """§A:scene_write → {"cast","setting","shots":[entry…]}。坏回复
-    重试 2 次;仍不可用 → 硬停(训练环境没有确定性拆条的价值)。"""
-    prompt = scene_write_prompt(task_text, prompt_language, max_shots)
-    data = None
-    for attempt in range(3):
+def _brain_index(run_dir: Path) -> dict:
+    """decision_id → brain_calls 记录(raw 的单一来源:生产 _decide 不
+    回传 raw,原始输出只落 brain_calls.jsonl —— 组记录按 id 回取)。"""
+    idx: dict = {}
+    p = run_dir / "brain_calls.jsonl"
+    if not p.exists():
+        return idx
+    for line in p.read_text(errors="replace").splitlines():
         try:
-            raw = frozen_llm.complete(prompt, max_tokens=16384)
-            data = extract_json(raw)
-        except Exception as exc:
-            print(f"[env] scene_write call failed: {str(exc)[:200]}",
-                  flush=True)
-            data = None
-        if isinstance(data, dict) and isinstance(data.get("shots"), list) \
-                and len(data["shots"]) >= 2:
-            break
-        data = None
-    if data is None:
-        raise RuntimeError("scene_write unusable after retries — "
-                           "rollout aborted (no deterministic fallback "
-                           "in the RL env)")
-    shots = []
-    for i, s in enumerate(data["shots"][:max_shots]):
-        if not isinstance(s, dict) or not str(s.get("description",
-                                                    "")).strip():
+            d = json.loads(line)
+        except Exception:
             continue
-        dlg = s.get("dialogue") or {}
-        shots.append({
-            "shot_idx": len(shots),
-            "label": f"shot {len(shots) + 1}",
-            "description": str(s["description"]).strip(),
-            "duration_s": s.get("duration_s"),
-            "end_state": str(s.get("end_state", "")).strip(),
-            "variation": str(s.get("variation", "")).strip(),
-            "opening_frame": str(s.get("opening_frame", "")).strip(),
-            "dialogue": str(dlg.get("line", "")).strip()
-            if isinstance(dlg, dict) else "",
-            "dialogue_speaker": str(dlg.get("speaker", "")).strip()
-            if isinstance(dlg, dict) else "",
-            "bg_id": str(s.get("bg", "") or "bg_1").strip() or "bg_1",
-            "status": "pending", "video": None,
-        })
-    return {"cast": {str(k): str(v) for k, v in
-                     (data.get("cast") or {}).items()},
-            "setting": str(data.get("setting", "")).strip(),
-            "shots": shots}
+        did = d.get("decision_id")
+        if did and d.get("stage") == "window/generation-condition":
+            idx[did] = d
+    return idx
 
 
-# ── §A' 资产 ──────────────────────────────────────────────────────
-def ensure_assets(sb: dict, frozen_llm, t2i, run_dir: Path) -> dict:
-    """肖像逐角色 + 背景板逐 bg(t2i);资产保证闸:任一缺失 = 硬停。
-    返回 {"portraits": {name: path}, "backgrounds": {bg_id: path}}。"""
-    portraits, backgrounds = {}, {}
-    setting = sb["setting"]
-    for name, desc in sb["cast"].items():
-        slug = re.sub(r"[^\w一-鿿]+", "_", name).strip("_") or "cast"
-        out = run_dir / "portraits" / f"{slug}.png"
-        if not out.exists():
-            bg = (f"Background: {setting} — the character stands inside "
-                  f"this exact scene, lit by its natural light."
-                  if setting else "Neutral studio backdrop.")
-            t2i.text_to_image(
-                f"full-body portrait of {name}: {static_half(desc)}. "
-                f"Standing, natural pose, facing the camera, whole "
-                f"figure visible. {bg} cinematic still, high detail",
-                out)
-        portraits[name] = str(out)
-    for bg_id in sorted({e["bg_id"] for e in sb["shots"]}):
-        out = run_dir / "anchors" / f"bg_{bg_id}.png"
-        if not out.exists():
-            shots_here = [strip_markers(e["description"])
-                          for e in sb["shots"] if e["bg_id"] == bg_id][:3]
-            bg_prompt = None
-            try:
-                raw = frozen_llm.complete(
-                    skill_body("scene_image")
-                    + "\n\nTHIS TASK (JSON):\n"
-                    + json.dumps({"bg_id": bg_id, "setting": setting,
-                                  "sample_shots": shots_here},
-                                 ensure_ascii=False)
-                    + '\n\nSTRICT JSON only: {"prompt": "<one ENGLISH '
-                      "t2i prompt for this location's EMPTY master "
-                      'plate>"}')
-                d = extract_json(raw)
-                bg_prompt = (d or {}).get("prompt")
-            except Exception as exc:
-                print(f"[env] scene_image failed ({str(exc)[:120]}) — "
-                      f"deterministic bg prompt", flush=True)
-            if not bg_prompt:
-                bg_prompt = f"{setting} — wide establishing view."
-            bg_prompt = str(bg_prompt) + (
-                " Empty scene: no people, no characters, no animals — "
-                "architecture, furniture and lighting only.")
-            t2i.text_to_image(bg_prompt, out)
-        backgrounds[bg_id] = str(out)
-    missing = [n for n in sb["cast"] if not Path(portraits[n]).exists()]
-    missing += [b for b in backgrounds
-                if not Path(backgrounds[b]).exists()]
-    if missing:
-        raise RuntimeError(f"asset guarantee failed — missing: {missing}")
-    return {"portraits": portraits, "backgrounds": backgrounds}
+def _concat(clips: list, out_path: Path) -> Path:
+    """§E 拼接(生产 VideoConcatTool 同律:ffmpeg 必备、假产物绝不
+    出门;concat demuxer -c copy)。"""
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("video_concat: ffmpeg is REQUIRED")
+    bad = [str(p) for p in clips
+           if not Path(p).exists() or Path(p).stat().st_size <= 1024]
+    if bad:
+        raise RuntimeError(f"video_concat: bad inputs {bad[:3]}")
+    import subprocess
+    lst = out_path.parent / "concat_list.txt"
+    lst.write_text("".join(f"file '{Path(p).resolve()}'\n" for p in clips))
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat",
+                        "-safe", "0", "-i", str(lst), "-c", "copy",
+                        str(out_path)], capture_output=True, timeout=600)
+    if r.returncode != 0 or not out_path.exists():
+        raise RuntimeError(f"concat failed: {r.stderr.decode()[:200]}")
+    return out_path
 
 
-# ── §C 逐镜状态构造 ───────────────────────────────────────────────
-def junction_of(entry: dict, prev: dict | None) -> str | None:
-    """精简 junction:shot0=None;换 bg=cut;同 bg=continue。
-    (生产的 derive 派生帧机器不进 RL 环境 —— 用户令去多余。)"""
-    if prev is None or not prev.get("video"):
-        return None
-    return "cut" if entry["bg_id"] != prev["bg_id"] else "continue"
-
-
-def junction_ctx(kind: str | None, entry: dict, prev: dict | None,
-                 zh: bool) -> dict:
-    if kind == "cut":
-        return {"junction_kind": "cut",
-                "junction_note": (
-                    "硬切换场:背景已变,本镜是全新构图;禁止书写任何承接"
-                    "上一镜的连续性语句(不写承接/入场对齐/未尽动作);"
-                    "人物与场景一致性由引用图保证。" if zh else
-                    "HARD CUT: the background changed — this shot is a "
-                    "FRESH composition. Do NOT write any continuity with "
-                    "the previous shot (no carry-over, no entry alignment, "
-                    "no unfinished action); character and location "
-                    "consistency ride on the reference images."),
-                "required_end_state": entry["end_state"] or None}
-    if kind == "continue":
-        return {"junction_kind": "continue",
-                "prev_tail_report": None,
-                "prev_end_state_script": (prev or {}).get("end_state")
-                or None,
-                "required_end_state": entry["end_state"] or None}
-    return {"required_end_state": entry["end_state"] or None}
-
-
-def build_menu(kind: str | None, has_refs: bool) -> list[dict]:
-    """精简菜单(与生产的可灵菜单锁一致:非首镜锁 ref2v)。"""
-    menu = [{"name": "t2v", "description": "Text only — nothing else "
-             "is available (last resort)."}]
-    if has_refs:
-        menu.append({"name": "ref2v",
-                     "description": "Reference-to-video: every planned "
-                                    "reference image and official "
-                                    "portrait rides the reference "
-                                    "channel (<<<image_N>>>). THE "
-                                    "route for scene cuts with "
-                                    "characters. Mention every slot "
-                                    "with its content."})
-    if kind is not None:
-        cut_only = [m for m in menu if m["name"] == "ref2v"]
-        if cut_only:
-            menu = cut_only
-    return menu
-
-
-def slot_manifest(strategy: str, bg_path: str | None,
-                  shot_portraits: dict) -> list[dict]:
-    """ref2v 槽位清单:背景板 → 肖像(按名排序);编号 = refer 装配序。"""
-    if strategy != "ref2v":
-        return []
-    rows = []
-    n = 1
-    if bg_path:
-        rows.append({"slot": f"<<<image_{n}>>>",
-                     "content": "the location's empty master plate — "
-                                "match its space layout and lighting",
-                     "referenceable": True})
-        n += 1
-    for name in sorted(shot_portraits):
-        rows.append({"slot": f"<<<image_{n}>>>",
-                     "content": _PORTRAIT_SLOT_CONTENT.format(name=name),
-                     "referenceable": True, "name": name})
-        n += 1
-    return rows
-
-
-def brain_line(e: dict) -> dict:
-    """台账行(键集与生产 to_brain_line 对齐,策略看到同形状态)。"""
-    return {"label": e["label"], "description": e["description"],
-            "end_state": e["end_state"], "variation": e["variation"],
-            "opening_frame": e["opening_frame"], "dialogue": e["dialogue"],
-            "status": e["status"], "image_plan": None,
-            "images": ([{"role": "reference", "source": "background",
-                         "description": "location master plate"}]
-                       if e.get("_bg_attached") else []),
-            "keyframe": None, "keyframe_source": None,
-            "video": e.get("video"), "condition_strategy":
-            e.get("condition_strategy"), "last_score": e.get("last_score"),
-            "open_defects": []}
-
-
-def build_context(sb: dict, entry: dict, prev: dict | None,
-                  junction: dict, slots_by_strategy: dict,
-                  shot_cast: dict, prompt_language: str) -> dict:
-    return {"shot": brain_line(entry),
-            "prompt_language": prompt_language,
-            "prev_shot": brain_line(prev) if prev else None,
-            "junction": junction,
-            "cast": sb["cast"], "setting": sb["setting"],
-            "cast_in_shot": sorted(shot_cast),
-            "slots_by_strategy": slots_by_strategy,
-            "storyboard": [brain_line(e) for e in sb["shots"]],
-            "episode_guidance": {"replay_hints": [], "avoid": [],
-                                 "n_episodes_matched": 0}}
-
-
-# ── 策略采样(_decide 精简版:LLM 严格 JSON → 确定性兜底)────────────
-def decide(policy, menu: list[dict], context: dict,
-           temperature=None) -> dict:
-    valid = {m["name"] for m in menu}
-    prompt = decision_prompt(skill_body("window_generation"), menu, context)
-    raw = ""
-    try:
-        raw = policy.complete(prompt, temperature=temperature)
-        data = extract_json(raw)
-    except Exception as exc:
-        raw = raw or f"<complete() raised: {exc}>"
-        data = None
-    out = None
-    if isinstance(data, dict) and str(data.get("strategy", "")) in valid:
-        out = {"strategy": str(data["strategy"]),
-               "reason": str(data.get("reason", ""))}
-        if isinstance(data.get("video_prompt"), str) \
-                and data["video_prompt"].strip():
-            out["video_prompt"] = data["video_prompt"].strip()
-        out["via"] = "llm"
-    if out is None:
-        name = next((n for n in _CONDITION_PRIORITY if n in valid),
-                    sorted(valid)[0])
-        out = {"strategy": name, "via": "fallback",
-               "reason": "deterministic priority (brain reply unusable)"}
-    out["decision_id"] = uuid.uuid4().hex[:16]
-    out["_raw"] = raw
-    return out
-
-
-def sample_group(policy, menu, context, k: int,
-                 temperature: float) -> list[dict]:
-    """K 个决策同一 state:v0 默认温度,v1..k-1 带 rl_temperature。"""
-    group = [decide(policy, menu, context)]
-    for _ in range(max(0, k - 1)):
-        group.append(decide(policy, menu, context,
-                            temperature=temperature))
-    return group
-
-
-# ── 出门链(prompt_chain 精简版)──────────────────────────────────
-def outgoing_prompt(d: dict, entry: dict, slots: list[dict], cast: dict,
-                    zh: bool) -> tuple[str, bool]:
-    """决策 → 出门 prompt:剥标记 → 契约清洗 → 引用闸(错编号弃用,
-    落剧本兜底)→ 名字终换 → 对白+无BGM。返回 (prompt, want_audio)。"""
-    p = scrub_cast_labels(strip_markers(d.get("video_prompt", "")), cast)
-    fallback = _SHOT_PREFIX_RE.sub("", strip_markers(entry["description"]))
-    if p:
-        fixed, audit = validate_references(p, slots, zh)
-        p = fixed if audit["ok"] else ""
-    if not p:
-        p, _ = validate_references(fallback, slots, zh)
-        p = p or fallback
-    name_to_slot = {r["name"]: r["slot"] for r in slots
-                    if r.get("name") and r.get("referenceable")}
-    p = names_to_tokens(p, name_to_slot)
-    want_audio = bool(entry.get("dialogue"))
-    if want_audio:
-        p = with_dialogue(p, entry, name_to_slot, zh)
-    return p, want_audio
-
-
-# ── §R 组内评审(skill 判官;择优即主干)──────────────────────────
+# ── 判官(与收集器时代同一套 skill;评审在采样端)──────────────────
 def build_judges(models_cfg: dict, log_path: Path):
     from reward.judges import (ConsistencyChecker, JudgeLog,
                                OpenAICompatChat, TextJudge, VideoRanker)
@@ -545,22 +139,27 @@ def build_judges(models_cfg: dict, log_path: Path):
                 log=jlog)}
 
 
-def judge_group(judges, context: dict, entry: dict, assets: dict,
-                variants: list[dict], videos: list, run: str,
-                junction: dict) -> tuple[list[dict], dict]:
-    """组内双重评审(文本逐候选 + 三路排名 + 一致性)→ compose。
-    返回 (per-candidate dicts, group-level judge_video)。分量失败剔除
-    归一化;全失败 = reward 只剩 format 分(诚实,不编数)。"""
+def judge_group(judges, context: dict, entry, storyboard,
+                variants: list[dict], conds: list[dict], videos: list,
+                run: str) -> tuple[list[dict], dict]:
+    """组内双重评审(用户 reward v3 设计原样):文本判官逐候选(判词
+    = brain 原始 video_prompt;衔接连续性仅 continue / 带空间视图的
+    derive 可判)+ 三路排名(一组一调用)+ 一致性对照(参照 = 出场者
+    肖像 + junction 空间视图)→ compose_rewards。分量失败剔除归一化;
+    全失败 = reward 只剩 format 分(诚实,不编数)。"""
     from reward.judges import compose_rewards
     n = len(variants)
     fmt = [1.0 if v.get("via") == "llm" else 0.0 for v in variants]
-    kind = junction.get("junction_kind")
+    jm = getattr(entry, "junction_meta", None) or {}
+    kind = jm.get("kind")
+    continuity = bool(kind == "continue"
+                      or (kind == "derive" and jm.get("space_view")))
     text_scores: list = []
     details: list[dict] = [{} for _ in range(n)]
     for i, v in enumerate(variants):
         try:
             case = {
-                "shot_script": entry["description"],
+                "shot_script": entry.description,
                 "cast_canon": context.get("cast") or {},
                 "story_so_far": [{"label": r.get("label"),
                                   "description": r.get("description")}
@@ -569,15 +168,14 @@ def judge_group(judges, context: dict, entry: dict, assets: dict,
                 "prev_end_state": (context.get("prev_shot")
                                    or {}).get("end_state", ""),
                 "junction": {"kind": kind,
-                             "continuity_applicable":
-                                 kind == "continue",
-                             "handoff_required": False},
+                             "continuity_applicable": continuity,
+                             "handoff_required": kind == "derive"},
                 "slots": (context.get("slots_by_strategy")
                           or {}).get(v.get("strategy"), []),
                 "candidate_prompt": v.get("video_prompt", ""),
             }
             score, detail = judges["text"].score(
-                case, tag={"run": run, "label": entry["label"],
+                case, tag={"run": run, "label": entry.label,
                            "candidate": i,
                            "decision_id": v.get("decision_id")})
             details[i]["judge_text"] = detail
@@ -590,16 +188,16 @@ def judge_group(judges, context: dict, entry: dict, assets: dict,
     video_parts: dict = {"action": None, "physics": None,
                          "camera": None, "consistency": None}
     judge_video: dict = {}
-    ok_videos = [v for v in videos if v and Path(str(v)).exists()]
-    if len(ok_videos) == n and n >= 2:
-        rank_ctx = {"shot_script": entry["description"],
-                    "camera_facing": entry.get("camera_facing", ""),
+    ok = [v for v in videos if v and Path(str(v)).exists()]
+    if len(ok) == n and n >= 2:
+        rank_ctx = {"shot_script": entry.description,
+                    "camera_facing": getattr(entry, "camera_facing", ""),
                     "cast_canon": context.get("cast") or {}}
         for dim in ("action", "physics", "camera"):
             try:
                 res = judges["ranker"].rank(
                     dim, rank_ctx, [str(v) for v in videos],
-                    tag={"run": run, "label": entry["label"]})
+                    tag={"run": run, "label": entry.label})
                 video_parts[dim] = res["points"]
                 judge_video[dim] = {"evidence": res.get("evidence"),
                                     "order": res.get("order")}
@@ -608,24 +206,26 @@ def judge_group(judges, context: dict, entry: dict, assets: dict,
                       flush=True)
                 judge_video[dim] = {"error": str(exc)[:120]}
         refs = []
+        portraits = storyboard.portraits or {}
         for name in (context.get("cast_in_shot") or []):
-            pth = (assets.get("portraits") or {}).get(name)
+            pth = portraits.get(name)
             if pth and Path(pth).exists():
                 refs.append({"kind": f"portrait:{name}", "path": pth,
                              "note": (context.get("cast")
                                       or {}).get(name, "")[:120]})
-        bgp = (assets.get("backgrounds") or {}).get(entry["bg_id"])
-        if bgp and Path(bgp).exists():
-            refs.append({"kind": "space:master_plate", "path": bgp,
-                         "note": (context.get("setting") or "")[:200]})
+        sv = jm.get("space_view") or {}
+        if isinstance(sv, dict) and sv.get("path") \
+                and Path(sv["path"]).exists():
+            refs.append({"kind": "space_view", "path": sv["path"],
+                         "note": (sv.get("caption") or "")[:200]})
         if refs:
             cons: dict = {}
             for i, v in enumerate(videos):
                 try:
                     sc, detail = judges["consistency"].score(
                         str(v), refs,
-                        {"shot_script": entry["description"]},
-                        tag={"run": run, "label": entry["label"],
+                        {"shot_script": entry.description},
+                        tag={"run": run, "label": entry.label,
                              "candidate": i})
                     cons[i] = sc
                     details[i]["judge_consistency"] = detail
@@ -641,128 +241,760 @@ def judge_group(judges, context: dict, entry: dict, assets: dict,
     return details, judge_video
 
 
-# ── §W 组记录 ────────────────────────────────────────────────────
-def write_step_record(run_dir: Path, entry: dict, junction: dict,
-                      menu: list, context: dict, variants: list[dict],
-                      videos: list, rewards: list[dict],
-                      judge_video: dict, best_k: int):
-    samples = []
-    for k, (v, vid, rw) in enumerate(zip(variants, videos, rewards)):
-        # completion = 训练目标:只留决策语义字段(与 STRICT JSON 输出
-        # 契约同形);内部簿记(_ 前缀)与机械字段绝不入内
-        completion = {k2: v2 for k2, v2 in v.items()
-                      if k2 not in ("via", "decision_id")
-                      and not k2.startswith("_")}
-        samples.append({"decision_id": v.get("decision_id"),
-                        "via": v.get("via"),
-                        "completion": json.dumps(completion,
-                                                 ensure_ascii=False),
-                        "raw": v.get("_raw", ""),
-                        "usable": v.get("via") == "llm",
-                        "strategy": v.get("strategy"),
-                        "degraded_from": None,
-                        "final_prompt": v.get("_final_prompt"),
-                        "video": str(vid) if vid else None,
-                        "chosen": k == best_k,
-                        **rw})
-    rec = {"kind": "condition_group", "run": run_dir.name,
-           "shot_idx": entry["shot_idx"], "label": entry["label"],
-           "junction_kind": junction.get("junction_kind"),
-           "policy_version": os.environ.get("MAESTRO_POLICY_VERSION",
-                                            "0"),
-           "group_size": len(variants), "menu": menu,
-           "context": context, "judge_video": judge_video,
-           "samples": samples}
-    with open(run_dir / "rl_steps.jsonl", "a") as f:
-        f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
-
-
-def save_storyboard(run_dir: Path, sb: dict, assets: dict):
-    tmp = run_dir / "storyboard.json.tmp"
-    tmp.write_text(json.dumps(
-        {"cast": sb["cast"], "setting": sb["setting"],
-         "portraits": assets.get("portraits", {}),
-         "backgrounds": assets.get("backgrounds", {}),
-         "entries": sb["shots"]}, ensure_ascii=False, indent=1,
-        default=str))
-    tmp.replace(run_dir / "storyboard.json")
-
-
-# ── 主循环 ───────────────────────────────────────────────────────
-def run_episode(*, task_text: str, run_dir: Path, frozen_llm, policy,
-                kling, t2i, judges, group: int = 4,
-                rl_temperature: float = 0.9, max_shots: int = 16) -> dict:
+# ── 主 driver(生产 generate_movie_windowed 的移植)──────────────────
+def run_episode(*, task_text: str = "", screenplay: str | None = None,
+                run_dir: Path, frozen_llm, policy, video_gen, image_edit,
+                mllm, judges, group: int = 4, rl_temperature: float = 0.9,
+                fps: int = 8, window_tail_s: float = 2.0,
+                max_shots: int = 12, enable_audio: bool = False,
+                use_junction_agent: bool = True) -> dict:
+    """一条轨迹。task_text = idea/一句话;screenplay = 用户剧本原文
+    (给了就跳过 §A0,与生产同)。"""
+    # ── 硬预检(生产同款)────────────────────────────────────────
+    _missing = [t for t in ("ffmpeg", "ffprobe") if not shutil.which(t)]
+    if _missing:
+        raise RuntimeError(
+            f"windowed pipeline PREFLIGHT failed: {_missing} not found "
+            f"on PATH — install ffmpeg first.")
+    run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
-    zh = bool(re.search(r"[一-鿿]", task_text))
-    lang = "zh" if zh else "en"
-    print(f"[env] §A scene_write ({lang}) …", flush=True)
-    sb = build_storyboard(frozen_llm, task_text, lang, max_shots)
-    print(f"[env] storyboard: {len(sb['shots'])} shots, "
-          f"cast={list(sb['cast'])}", flush=True)
-    assets = ensure_assets(sb, frozen_llm, t2i, run_dir)
-    save_storyboard(run_dir, sb, assets)
-    prev = None
+    set_brain_log(run_dir / "brain_calls.jsonl")
+    asset_memory = None                      # RL 无用户素材(生产同构:
+    #                                          全部素材函数 None 安全)
+    decisions: list[dict] = []
+    guidance = {"replay_hints": [], "avoid": [], "n_episodes_matched": 0}
+    replay_plan: dict = {}
+    replay_cond: dict = {}
+
+    llm_screenwriter = llm_scene_writer = llm = frozen_llm
+    llm_video_brain = policy
+    junction_stitcher = (JunctionStitcherAgent(llm=llm_video_brain)
+                         if use_junction_agent else None)
+
+    # ── §A0 剧本 + 语言 + 声词词典 ───────────────────────────────
+    asset_catalog0 = W._media_catalog(asset_memory)
+    screenplay_text, sp_via = W._write_screenplay(
+        llm_screenwriter, task_text, screenplay, asset_catalog0)
+    decisions.append({"stage": "screenplay", "via": sp_via,
+                      "chars": len(screenplay_text)})
+    prompt_lang = W._prompt_lang(screenplay_text or task_text)
+    set_output_lang(prompt_lang)
+    W.set_run_sound_lexicon(screenplay_text or task_text)
+
+    # ── §A1 角色提取 ────────────────────────────────────────────
+    cast_canon, ce_via = (W._extract_characters(
+        llm, screenplay_text, given=None, prompt_language=prompt_lang)
+        if sp_via != "idea_passthrough" else ({}, "skipped"))
+    decisions.append({"stage": "character_extract", "via": ce_via,
+                      "characters": sorted(cast_canon)})
+
+    # ── §A 分镜 ─────────────────────────────────────────────────
+    outline, shot_durations, shot_end_states, script_meta, outline_via = \
+        W._write_outline(
+            llm_scene_writer, screenplay_text, asset_catalog0,
+            episode_guidance=guidance, max_shots=max_shots,
+            fallback_fn=lambda: _fallback_outline(
+                screenplay_text or task_text, max_shots=max_shots),
+            cast_canon=cast_canon, prompt_language=prompt_lang)
+    decisions.append({"stage": "playwriting", "label": "outline",
+                      "strategy": f"{len(outline)} shots",
+                      "via": outline_via})
+    specs = [ShotSpec(shot_idx=i,
+                      duration=(float(d) if d is not None else None),
+                      prompt=W._strip_markers(o))
+             for i, (o, d) in enumerate(zip(outline, shot_durations))]
+    storyboard = StoryboardMemory.from_outline(
+        outline, path=run_dir / "storyboard.json")
+    for i_, (entry_, end_) in enumerate(zip(storyboard.entries,
+                                            shot_end_states)):
+        entry_.end_state = end_
+        vars_ = script_meta.get("variations") or []
+        opens_ = script_meta.get("opening_frames") or []
+        dlgs_ = script_meta.get("dialogues") or []
+        spks_ = script_meta.get("dialogue_speakers") or []
+        bgs_ = script_meta.get("bgs") or []
+        entry_.variation = vars_[i_] if i_ < len(vars_) else ""
+        entry_.opening_frame = opens_[i_] if i_ < len(opens_) else ""
+        entry_.dialogue_speaker = spks_[i_] if i_ < len(spks_) else ""
+        entry_.bg_id = bgs_[i_] if i_ < len(bgs_) else ""
+        entry_.dialogue = dlgs_[i_] if i_ < len(dlgs_) else ""
+        _fcs = script_meta.get("camera_facings") or []
+        entry_.camera_facing = _fcs[i_] if i_ < len(_fcs) else ""
+    storyboard.cast = dict(script_meta.get("cast", {}))
+    storyboard.music_plan = dict(script_meta.get("music_plan", {}))
+    storyboard.setting = str(script_meta.get("setting", ""))
+
+    # ── §A' 官方肖像 + §A2 背景板 + 资产保证闸 + 空间圣经 ─────────
+    decisions.extend(W._ensure_cast_portraits(
+        storyboard, asset_memory, video_gen, run_dir,
+        library=None, llm=llm))
+    _caps0 = (video_gen.capabilities() if video_gen is not None else set())
+    _bg_prompts: dict = {}
+    _need_keys: list = []
+    if video_gen is not None and "t2i" in _caps0 \
+            and hasattr(video_gen, "text_to_image"):
+        adir = run_dir / "anchors"
+        _bg_keys: list = []
+        for e in storyboard.entries:
+            k = (getattr(e, "bg_id", "") or f"scene_{e.scene_idx}")
+            if k not in _bg_keys:
+                _bg_keys.append(k)
+        _need_keys = [k for k in _bg_keys
+                      if k not in (storyboard.backgrounds or {})]
+        _bg_prompts, _bg_via = (W._write_bg_prompts(llm, storyboard,
+                                                    _need_keys)
+                                if _need_keys else ({}, "none"))
+        if _need_keys:
+            decisions.append({"stage": "scene_image", "via": _bg_via,
+                              "backgrounds": sorted(_need_keys)})
+        from env.cine import _spaced_retry
+        for _bk in _need_keys:
+            aprompt = _bg_prompts[_bk]
+            adir.mkdir(parents=True, exist_ok=True)
+            got = _spaced_retry(
+                lambda: video_gen.text_to_image(aprompt,
+                                                adir / f"bg_{_bk}.png"),
+                tag=f"background asset {_bk}")
+            storyboard.backgrounds[_bk] = {"path": str(got), "src": "t2i"}
+            decisions.append({"stage": "background_asset", "bg": _bk,
+                              "via": "t2i", "path": str(got)})
+        storyboard._save()
+        _missing_assets: list = []
+        for _e in storyboard.entries:
+            for _n in W._cast_in_shot(_e.description, storyboard.cast):
+                _pp = (storyboard.portraits or {}).get(_n)
+                if not _pp or not Path(_pp).exists():
+                    _missing_assets.append(
+                        f"shot {_e.shot_idx}: character {_n!r} 无肖像")
+            _k = (getattr(_e, "bg_id", "") or f"scene_{_e.scene_idx}")
+            _b = (storyboard.backgrounds or {}).get(_k) or {}
+            if not _b.get("path") or not Path(str(_b["path"])).exists():
+                _missing_assets.append(
+                    f"shot {_e.shot_idx}: background {_k} 无场景板")
+        if _missing_assets:
+            raise RuntimeError("asset guarantee failed — "
+                               + "; ".join(_missing_assets))
+        decisions.extend(build_space_views(
+            storyboard, image_edit, mllm, run_dir / "spaces",
+            bg_descs=_bg_prompts if _need_keys else None,
+            video_gen=video_gen))
+    log.info("window: playwriting done via=%s — %s",
+             outline_via, storyboard.summary())
+
+    # ── §B' Image Plan(策略单采样决策,与生产一致)──────────────
+    kf_dir = run_dir / "keyframes"
+    asset_catalog = W._media_catalog(asset_memory)
+    portrait_paths: set = set()
+    for _pp in (storyboard.portraits or {}).values():
+        try:
+            portrait_paths.add(str(Path(_pp).resolve()))
+        except Exception:
+            portrait_paths.add(str(_pp))
+    for entry, spec in zip(storyboard.entries, specs):
+        menu = W._image_plan_menu(video_gen, asset_memory)
+        d = W._decide(
+            llm_video_brain, "image-plan", menu,
+            {"shot": entry.to_brain_line(),
+             "prompt_language": prompt_lang,
+             "cast": storyboard.cast, "setting": storyboard.setting,
+             "storyboard": storyboard.to_brain_json(),
+             "asset_catalog": asset_catalog,
+             "episode_guidance": guidance},
+            replay_hint=replay_plan.get(entry.label),
+            priority=W._PLAN_PRIORITY)
+        decisions.append({"stage": "image_plan", "label": entry.label,
+                          **d})
+        _shot_cast_b = W._cast_in_shot(entry.description, storyboard.cast)
+        plan_final, images, degraded_from = W._execute_image_plan(
+            d, entry, video_gen, asset_memory, None, kf_dir,
+            cast=storyboard.cast, portrait_paths=portrait_paths,
+            has_portrait_cast=any(n in (storyboard.portraits or {})
+                                  for n in _shot_cast_b))
+        storyboard.set_image_plan(entry.shot_idx, plan_final, images,
+                                  degraded_from=degraded_from)
+
+    W.set_run_ambience(storyboard.setting)
+    source_videos = W._prepared_source_videos(asset_memory,
+                                              run_dir / "asset_labels")
+
+    # ── §C 逐镜大循环 ────────────────────────────────────────────
     n_groups = 0
-    for entry in sb["shots"]:
-        kind = junction_of(entry, prev)
-        jctx = junction_ctx(kind, entry, prev, zh)
-        shot_cast = cast_in_shot(entry["description"], sb["cast"])
-        shot_portraits = {n: assets["portraits"][n] for n in shot_cast
-                          if n in assets["portraits"]}
-        bg_path = assets["backgrounds"].get(entry["bg_id"])
-        entry["_bg_attached"] = bool(bg_path)
-        menu = build_menu(kind, has_refs=bool(bg_path or shot_portraits))
-        slots_by = {m["name"]: slot_manifest(m["name"], bg_path,
-                                             shot_portraits)
-                    for m in menu}
-        context = build_context(sb, entry, prev, jctx, slots_by,
-                                shot_cast, lang)
-        print(f"[env] {entry['label']} junction={kind} "
-              f"menu={[m['name'] for m in menu]} — sampling K={group}",
-              flush=True)
-        variants = sample_group(policy, menu, context, group,
-                                rl_temperature)
-        shot_dir = run_dir / f"shot{entry['shot_idx']:03d}"
+    aborted = False
+    while True:
+        entry = storyboard.next_pending()
+        if entry is None:
+            break
+        spec = specs[entry.shot_idx]
+        prev = storyboard.prev_generated(entry.shot_idx)
+        shot_dir = run_dir / f"shot{entry.shot_idx:03d}"
+
+        # 三叉分诊(生产原文:人物变→derive(退 cut);同人异景→cut;
+        # 同人同景→derive(退 continue))
+        _junction_kind = None
+        _route_reason = ""
+        _open_cast: list = []
+        _derive_fallback = "cut"
+        _bg_prev = _bg_cur = None
+        if prev is not None and prev.video_path and entry.shot_idx > 0:
+            _bg_prev = (getattr(prev, "bg_id", "")
+                        or f"scene_{prev.scene_idx}")
+            _bg_cur = (getattr(entry, "bg_id", "")
+                       or f"scene_{entry.scene_idx}")
+            _same_cast, _cast_reason, _open_cast = W._judge_junction_cast(
+                llm_video_brain, prev, entry, storyboard.cast,
+                storyboard.portraits, prompt_lang)
+            if not _same_cast:
+                _junction_kind = "derive"
+                _derive_fallback = "cut"
+            elif _bg_prev != _bg_cur:
+                _junction_kind = "cut"
+            else:
+                _junction_kind = "derive"
+                _derive_fallback = "continue"
+            _route_reason = f"bg {_bg_prev}→{_bg_cur}; {_cast_reason}"
+            log.info("window: %s junction → %s (%s)", entry.label,
+                     _junction_kind, _route_reason[:200])
+
+        junction_actual = None
+        if _junction_kind == "derive":
+            junction_actual = W._junction_state(
+                mllm, prev, shot_dir, tail_s=window_tail_s,
+                portraits=storyboard.portraits)
+            _bgrec = (storyboard.backgrounds or {}).get(_bg_cur) or {}
+            _sview = None
+            if _bg_prev == _bg_cur:
+                _sview = pick_space_view(
+                    llm_video_brain, storyboard, _bg_cur,
+                    (getattr(entry, "camera_facing", "") or
+                     W._strip_markers(" ".join(
+                         t for t in (entry.opening_frame,
+                                     entry.description) if t))))
+            _derived = W._derive_junction_frame(
+                video_gen, mllm, llm_video_brain, prev, prev, entry,
+                _open_cast, storyboard.cast, storyboard.portraits,
+                (_bgrec.get("path") if _bg_prev != _bg_cur else None),
+                shot_dir, prompt_lang,
+                stitcher=junction_stitcher,
+                tail_report=W._parse_tail_report(junction_actual),
+                space_view=_sview)
+            entry.junction_meta = {
+                **(getattr(entry, "junction_meta", None) or {}),
+                "kind": "derive", "route_reason": _route_reason[:300],
+                "space_view": ({"view": _sview["view"],
+                                "path": _sview["path"],
+                                "caption": _sview.get("caption",
+                                                      "")[:200]}
+                               if _sview else None),
+                "derived_frame": (str(_derived) if _derived else None),
+            }
+            if _derived is not None:
+                entry.images = list(entry.images or []) + [{
+                    "path": str(_derived), "role": "reference",
+                    "source": "pin_frame",
+                    "description": "derived junction first frame"}]
+                decisions.append({"stage": "junction",
+                                  "label": entry.label,
+                                  "strategy": "derive",
+                                  "reason": _route_reason[:160]})
+            else:
+                _junction_kind = _derive_fallback
+                entry.junction_meta["fallback_to"] = _derive_fallback
+                decisions.append({"stage": "junction",
+                                  "label": entry.label,
+                                  "strategy":
+                                      f"derive→{_derive_fallback}",
+                                  "reason": "派生失败/两拒 — 降级"
+                                            f"{_derive_fallback}"})
+        if _junction_kind == "derive":
+            junction_ctx = {
+                "junction_kind": "derive",
+                "junction_note": (
+                    "缝合策略:本镜首帧已由派生帧给定(清单末位 pin_frame "
+                    "行,其提及由执行器负责,你绝不引用该槽位);按本镜"
+                    "剧本全新书写画面与动作,禁止书写任何承接上一镜的"
+                    "连续性语句。" if prompt_lang == "zh" else
+                    "STITCH strategy: the opening frame is given by a "
+                    "derived frame (the manifest's last pin_frame row; the "
+                    "executor owns its mention — never reference that slot "
+                    "yourself). Write the shot fresh from its own script; "
+                    "do NOT write any continuity with the previous shot."),
+                "required_end_state": entry.end_state or None,
+            }
+        elif _junction_kind == "cut":
+            junction_ctx = {
+                "junction_kind": "cut",
+                "junction_note": (
+                    "硬切换场:背景已变,本镜是全新构图;禁止书写任何承接"
+                    "上一镜的连续性语句(不写承接/入场对齐/未尽动作);"
+                    "人物与场景一致性由引用图保证。" if prompt_lang == "zh"
+                    else
+                    "HARD CUT: the background changed — this shot is a "
+                    "FRESH composition. Do NOT write any continuity with "
+                    "the previous shot (no carry-over, no entry alignment, "
+                    "no unfinished action); character and location "
+                    "consistency ride on the reference images."),
+                "required_end_state": entry.end_state or None,
+            }
+            entry.junction_meta = {
+                **(getattr(entry, "junction_meta", None) or {}),
+                "kind": "cut", "route_reason": _route_reason[:300]}
+            decisions.append({"stage": "junction", "label": entry.label,
+                              "strategy": "cut",
+                              "reason": _route_reason[:160]})
+        elif _junction_kind == "continue":
+            junction_actual = W._junction_state(
+                mllm, prev, shot_dir, tail_s=window_tail_s,
+                portraits=storyboard.portraits)
+            _tail_rep = W._parse_tail_report(junction_actual)
+            junction_ctx = {
+                "junction_kind": "continue",
+                "prev_tail_report": _tail_rep or (junction_actual
+                                                  or None),
+                "prev_end_state_script": (getattr(prev, "end_state", "")
+                                          or None) if prev else None,
+                "required_end_state": entry.end_state or None,
+            }
+            entry.junction_meta = {
+                **(getattr(entry, "junction_meta", None) or {}),
+                "kind": "continue", "route_reason": _route_reason[:300],
+                "tail_report": _tail_rep}
+            decisions.append({"stage": "junction", "label": entry.label,
+                              "strategy": "continue",
+                              "reason": _route_reason[:160]})
+        else:
+            junction_ctx = {"required_end_state": entry.end_state or None}
+
+        shot_cast = W._cast_in_shot(entry.description, storyboard.cast)
+        shot_portraits = {n: storyboard.portraits[n] for n in shot_cast
+                          if n in (storyboard.portraits or {})}
+        # 背景板前插(生产原文:恒为自有图第一位)
+        if "first_frame_plus_refs" in (video_gen.capabilities()
+                                       or set()):
+            _bgkey = (getattr(entry, "bg_id", "")
+                      or f"scene_{entry.scene_idx}")
+            _bg = (storyboard.backgrounds or {}).get(_bgkey) \
+                or ({"path": storyboard.scene_anchors.get(
+                        entry.scene_idx), "src": "t2i"}
+                    if (storyboard.scene_anchors
+                        or {}).get(entry.scene_idx) else None)
+            if _bg and _bg.get("path") and Path(_bg["path"]).exists() \
+                    and not any(im.get("source") == "background"
+                                or str(im.get("path")) == str(_bg["path"])
+                                for im in (entry.images or [])):
+                if _bg.get("src") == "frame":
+                    _bgdesc = (f"the OFFICIAL look of background {_bgkey} "
+                               f"(a real frame from an earlier shot of "
+                               f"this film) — the shot MUST take place in "
+                               f"this SAME space: identical architecture, "
+                               f"floor, furniture and lighting; never "
+                               f"invent a different hall; IGNORE the "
+                               f"people in it — do not copy them or "
+                               f"their positions")
+                else:
+                    _bgdesc = (f"the OFFICIAL look of background {_bgkey} "
+                               f"— the shot MUST take place in this SAME "
+                               f"space: identical architecture, floor, "
+                               f"furniture and lighting; never invent a "
+                               f"different hall; do not copy its empty "
+                               f"framing")
+                entry.images = [{
+                    "path": str(_bg["path"]), "role": "reference",
+                    "source": "background",
+                    "description": _bgdesc}] + list(entry.images or [])
+
+        menu = W._condition_menu(entry, prev, video_gen,
+                                 portraits=shot_portraits)
+        if _junction_kind is not None:
+            _cut_only = [m for m in menu if m["name"] == "ref2v"]
+            if _cut_only:
+                menu = _cut_only
+                log.info("window: %s junction=%s → menu locked to ref2v",
+                         entry.label, _junction_kind)
+        slots_by_strategy = {
+            m["name"]: W._slot_manifest(m["name"], entry, prev,
+                                        use_prev_tail=True,
+                                        source_videos=source_videos,
+                                        portraits=shot_portraits,
+                                        video_gen=video_gen)
+            for m in menu}
+        _ns_best = max((W._name_slot_map(v)
+                        for v in slots_by_strategy.values()),
+                       key=len, default={})
+        _junction_mapped = dict(junction_ctx)
+        if isinstance(_junction_mapped.get("prev_tail_report"), dict):
+            _junction_mapped["prev_tail_report"] = W._map_tail_report(
+                _junction_mapped["prev_tail_report"], _ns_best,
+                storyboard.cast, portraits=storyboard.portraits)
+        for _k in ("prev_end_state_script", "required_end_state"):
+            if _junction_mapped.get(_k):
+                _junction_mapped[_k] = W._map_markers(
+                    _junction_mapped[_k], _ns_best)
+        _cond_context = {
+            "shot": entry.to_brain_line(),
+            "prompt_language": prompt_lang,
+            "prev_shot": prev.to_brain_line() if prev else None,
+            "junction": _junction_mapped,
+            "cast": storyboard.cast, "setting": storyboard.setting,
+            "cast_in_shot": sorted(shot_cast),
+            "slots_by_strategy": slots_by_strategy,
+            "storyboard": storyboard.to_brain_json(),
+            "episode_guidance": guidance}
+        d = W._decide(
+            llm_video_brain, "generation-condition", menu, _cond_context,
+            replay_hint=replay_cond.get(entry.label),
+            priority=W._CONDITION_PRIORITY)
+        # RL 组采样(生产 2026-08-10 版原文,唯一保留的 RL 差异①):
+        # 同 state 带温度再采 K-1 个;组记录自包含
+        rl_variants = [d]
+        for _rlk in range(max(0, group - 1)):
+            rl_variants.append(W._decide(
+                llm_video_brain, "generation-condition", menu,
+                _cond_context,
+                replay_hint=replay_cond.get(entry.label),
+                priority=W._CONDITION_PRIORITY,
+                temperature=rl_temperature))
+        rl_state = {"menu": [dict(m) for m in menu],
+                    "context": _cond_context}
+        decisions.append({"stage": "condition", "label": entry.label,
+                          **d})
+        entry.draft_prompt = str(d.get("video_prompt") or "")
+
+        def _prompt_chain(d):
+            """决策 → 出门 prompt 全链(生产原文;enhancer 恒 None →
+            润色段自然跳过)。"""
+            brain_prompt = W._scrub_setting_sentence(
+                W._scrub_cast_labels(
+                    W._strip_markers(d.get("video_prompt", "")),
+                    storyboard.cast),
+                storyboard.setting, d["strategy"])
+            use_tail = bool(d.get("use_prev_tail_video", False))
+            slots = W._slot_manifest(d["strategy"], entry, prev, use_tail,
+                                     source_videos=source_videos,
+                                     portraits=shot_portraits,
+                                     video_gen=video_gen)
+            # 承接句机器化(生产原文)
+            _pin_row = next((r_ for r_ in (slots or [])
+                             if r_.get("source") == "pin_frame"), None)
+            if _pin_row and brain_prompt:
+                brain_prompt = re.sub(
+                    r"[^。]*(?:从首帧精确开始|从第一帧开始|从第一帧精确开始|"
+                    r"首帧即上一镜|第一帧与上一镜|上一镜的最后一帧|"
+                    r"starts? EXACTLY on the given first)[^。]*。\s*",
+                    "", brain_prompt).strip()
+                if _pin_row["slot"] not in brain_prompt:
+                    _tok = _pin_row["slot"]
+                    brain_prompt = (
+                        f"画面从{_tok}所示的首帧继续。"
+                        if prompt_lang == "zh"
+                        else f"The video continues from the first frame "
+                             f"shown in {_tok}. ") + brain_prompt
+            # 正典逐字契约(无锚路线)
+            if d["strategy"] not in W._ANCHORED_STRATEGIES:
+                brain_prompt, canon_notes = W._enforce_cast_canon(
+                    brain_prompt, shot_cast, storyboard.cast)
+            else:
+                canon_notes = []
+            for cn in canon_notes:
+                decisions.append({**cn, "label": entry.label})
+            # 音频线(生产原文;RL 农场 enable_audio=False 时全部短路)
+            want_audio = bool(enable_audio and entry.dialogue)
+            if enable_audio and not want_audio and brain_prompt \
+                    and re.search("(?:说道?|says?|喊道?|大喊|高喊|怒吼|低语|回应|"
+                                  "问道?|轻声问?)[^\"“]{0,6}?"
+                                  "[:：]?\\s*[\"“]",
+                                  brain_prompt):
+                want_audio = True
+                log.warning("window: %s prompt carries spoken lines but "
+                            "the dialogue field is EMPTY — enabling "
+                            "native audio anyway", entry.label)
+                if "无背景音乐" not in brain_prompt \
+                        and "no background music" not in brain_prompt:
+                    _snd_i = W._scripted_sounds(entry.description,
+                                                entry.end_state)
+                    if re.search(r"[一-鿿]", brain_prompt):
+                        brain_prompt += (
+                            f"音频:角色对白的人声与剧本写明的环境声"
+                            f"({'、'.join(_snd_i)})——无背景音乐、无其他"
+                            f"音效。" if _snd_i else
+                            "音频:只有角色对白的人声——无背景音乐、无音效。")
+                    else:
+                        brain_prompt += (
+                            " Audio: the characters' voices plus the "
+                            "scripted ambient sound "
+                            f"({', '.join(_snd_i)}) — no "
+                            "background music, no other effects."
+                            if _snd_i else
+                            " Audio: only the characters' voices — no "
+                            "background music, no sound effects.")
+            if enable_audio and not want_audio and brain_prompt:
+                _snd_shot = W._scripted_sounds(entry.description,
+                                               entry.end_state)
+                if _snd_shot:
+                    want_audio = True
+                    log.info("window: %s no dialogue but scripted sounds "
+                             "%s — native audio ON (sfx shot)",
+                             entry.label, _snd_shot)
+                    if "无背景音乐" not in brain_prompt \
+                            and "no background music" not in brain_prompt:
+                        brain_prompt += (
+                            f"音频:只有剧本写明的环境声"
+                            f"({'、'.join(_snd_shot)})——无背景音乐、"
+                            f"无人声。"
+                            if re.search(r"[一-鿿]", brain_prompt) else
+                            " Audio: only the scripted ambient sound "
+                            f"({', '.join(_snd_shot)}) — no background "
+                            "music, no voices.")
+            # 引用出口闸
+            if brain_prompt:
+                fixed, audit = W.validate_references(brain_prompt, slots)
+                if not audit["ok"]:
+                    log.warning("window: %s prompt references unknown "
+                                "slots %s (allowed: %s) — dropping it",
+                                entry.label, audit["unknown"],
+                                audit["allowed"])
+                    decisions.append({"stage": "ref_validate",
+                                      "label": entry.label,
+                                      "strategy": d["strategy"],
+                                      "via": "gate",
+                                      "reason": "unknown refs "
+                                                f"{audit['unknown']}"})
+                    brain_prompt = ""
+                else:
+                    if audit["appended"]:
+                        decisions.append({"stage": "ref_validate",
+                                          "label": entry.label,
+                                          "strategy": d["strategy"],
+                                          "via": "gate",
+                                          "reason": "appended mentions: "
+                                                    f"{audit['appended']}"})
+                    brain_prompt = fixed
+            if want_audio:
+                brain_prompt = W._with_dialogue(
+                    brain_prompt or spec.prompt, entry, storyboard.cast,
+                    name_to_slot=W._name_slot_map(slots))
+            # 旁白剥除 + 名字终换闸(生产原文)
+            if brain_prompt:
+                brain_prompt = re.sub(
+                    r"(?:画外)?旁白[:：]?\s*[\"“][^\"“”]*"
+                    r"[\"”]。?\s*|(?:voice-?over|narration)\s*[:：]"
+                    r"[^.\"]*[.\"]?\s*",
+                    "", brain_prompt, flags=re.IGNORECASE).strip()
+                brain_prompt = W._names_to_tokens(
+                    brain_prompt, W._name_slot_map(slots))
+                _noq = re.sub(r'["“][^"“”]*["”]', "", brain_prompt)
+                _leak = [n for n in (storyboard.cast or {}) if n in _noq]
+                if _leak:
+                    log.warning("window: %s outgoing prompt still "
+                                "carries SLOTLESS cast name(s) %s "
+                                "outside quotes", entry.label, _leak)
+                    decisions.append({"stage": "name_leak",
+                                      "label": entry.label,
+                                      "names": _leak})
+            return brain_prompt, slots, use_tail, want_audio
+
+        # ── 生成:K 个变体各走同一条链(生产 _gen_plan 原文)────────
         videos: list = []
-        for k, v in enumerate(variants):
-            prompt, want_audio = outgoing_prompt(
-                v, entry, slots_by.get(v["strategy"], []), sb["cast"], zh)
-            v["_final_prompt"] = prompt
-            out = shot_dir / f"shot{entry['shot_idx']:03d}_w_s{k}.mp4"
-            refs = ([bg_path] if (bg_path and v["strategy"] == "ref2v")
-                    else [])
-            refs += [shot_portraits[n] for n in sorted(shot_portraits)] \
-                if v["strategy"] == "ref2v" else []
+        seed_conds: list = []
+        for s, _rl_d in enumerate(rl_variants):
+            d = _rl_d
+            brain_prompt, slots, use_tail, want_audio = _prompt_chain(d)
+            _old_ga = getattr(video_gen, "generate_audio", False)
+            if want_audio:
+                video_gen.generate_audio = True
             try:
-                kling.generate(prompt, entry.get("duration_s"), out,
-                               reference_images=refs or None,
-                               audio=want_audio)
-                videos.append(out)
+                video_path, cond = W._generate_with_condition(
+                    d["strategy"], entry, prev, spec, video_gen,
+                    shot_dir, seed=s, fps=fps,
+                    window_tail_s=window_tail_s,
+                    brain_prompt=brain_prompt,
+                    use_prev_tail_video=use_tail,
+                    source_videos=source_videos,
+                    portraits=shot_portraits)
             except Exception as exc:
-                print(f"[env] {entry['label']} c{k} generation FAILED: "
-                      f"{str(exc)[:200]}", flush=True)
-                videos.append(None)
+                log.warning("window: conditioned generation failed (%s): "
+                            "%s — retrying the SAME strategy once",
+                            d["strategy"], exc)
+                try:
+                    video_path, cond = W._generate_with_condition(
+                        d["strategy"], entry, prev, spec, video_gen,
+                        shot_dir, seed=s, fps=fps,
+                        window_tail_s=window_tail_s,
+                        brain_prompt=brain_prompt,
+                        use_prev_tail_video=use_tail,
+                        source_videos=source_videos,
+                        portraits=shot_portraits)
+                    cond["retried_after"] = f"exception: {exc}"[:200]
+                except Exception as exc2:
+                    try:
+                        video_path, cond = W._generate_with_condition(
+                            "t2v", entry, prev, spec, video_gen,
+                            shot_dir, seed=s, fps=fps,
+                            window_tail_s=window_tail_s,
+                            brain_prompt=(W._with_dialogue(
+                                spec.prompt, entry, storyboard.cast)
+                                if want_audio else ""))
+                        cond["degraded_from"] = d["strategy"]
+                        cond["degraded_reason"] = \
+                            f"exception: {exc2}"[:200]
+                    except Exception as exc3:
+                        log.warning("window: %s c%d ALL routes failed "
+                                    "(%s)", entry.label, s,
+                                    str(exc3)[:160])
+                        video_path, cond = None, {
+                            "strategy": d["strategy"],
+                            "degraded_from": d["strategy"],
+                            "degraded_reason":
+                                f"all routes failed: {exc3}"[:200]}
+            finally:
+                video_gen.generate_audio = _old_ga
+            if want_audio:
+                cond["generate_audio"] = True
+            cond["seed"] = s
+            cond["rl"] = {"k": s, "decision_id": _rl_d.get("decision_id"),
+                          "via": _rl_d.get("via"),
+                          "strategy": _rl_d.get("strategy")}
+            cond["final_prompt"] = brain_prompt or cond.get(
+                "final_prompt", "")
+            seed_conds.append(cond)
+            videos.append(video_path)
+
+        # ── 差异②:skill 判官择主干(评审板/锦标赛不存在)─────────
         rewards, judge_video = judge_group(
-            judges, context, entry, assets, variants, videos,
-            run_dir.name, jctx)
-        order = sorted(range(len(variants)),
+            judges, _cond_context, entry, storyboard, rl_variants,
+            seed_conds, videos, run_dir.name)
+        order = sorted(range(len(rl_variants)),
                        key=lambda i: (rewards[i].get("reward") or 0.0),
                        reverse=True)
         best_k = next((i for i in order if videos[i] is not None),
                       order[0])
-        write_step_record(run_dir, entry, jctx, menu, context, variants,
-                          videos, rewards, judge_video, best_k)
+
+        # 组记录(schema 与旧收集器契约一致;reward 内联;raw 从
+        # brain_calls.jsonl 按 decision_id 回取 —— 生产单源)
+        bidx = _brain_index(run_dir)
+        samples = []
+        for k, (v, cond, vid, rw) in enumerate(zip(rl_variants,
+                                                   seed_conds, videos,
+                                                   rewards)):
+            completion = {k2: v2 for k2, v2 in v.items()
+                          if k2 not in ("via", "decision_id")
+                          and not k2.startswith("_")}
+            call = bidx.get(v.get("decision_id")) or {}
+            samples.append({
+                "decision_id": v.get("decision_id"),
+                "via": v.get("via"),
+                "completion": json.dumps(completion, ensure_ascii=False),
+                "raw": call.get("raw")
+                       or json.dumps(completion, ensure_ascii=False),
+                "usable": bool(call.get("usable",
+                                        v.get("via") == "llm")),
+                "strategy": cond.get("strategy", v.get("strategy")),
+                "degraded_from": cond.get("degraded_from"),
+                "final_prompt": cond.get("final_prompt"),
+                "video": str(vid) if vid else None,
+                "chosen": k == best_k, **rw})
+        try:
+            with open(run_dir / "rl_steps.jsonl", "a") as _f:
+                _f.write(json.dumps({
+                    "kind": "condition_group",
+                    "run": run_dir.name,
+                    "shot_idx": entry.shot_idx,
+                    "label": entry.label,
+                    "junction_kind": (entry.junction_meta or {}
+                                      ).get("kind"),
+                    "policy_version": os.environ.get(
+                        "MAESTRO_POLICY_VERSION", "0"),
+                    "group_size": len(rl_variants),
+                    "menu": rl_state["menu"],
+                    "context": rl_state["context"],
+                    "judge_video": judge_video,
+                    "samples": samples,
+                }, ensure_ascii=False, default=str) + "\n")
+        except Exception as _exc:
+            log.warning("rl group record failed (%s)", str(_exc)[:120])
         n_groups += 1
+
         if videos[best_k] is None:
-            print(f"[env] {entry['label']}: ALL candidates failed — "
-                  f"episode aborted after {n_groups} groups", flush=True)
+            log.warning("window: %s ALL candidates failed — episode "
+                        "aborted after %d groups", entry.label, n_groups)
+            aborted = True
             break
-        entry["video"] = str(videos[best_k])
-        entry["status"] = "generated"
-        entry["condition_strategy"] = variants[best_k]["strategy"]
-        entry["last_score"] = rewards[best_k].get("reward")
-        prev = entry
-        save_storyboard(run_dir, sb, assets)
-        print(f"[env] {entry['label']} trunk=c{best_k} "
-              f"reward={rewards[best_k].get('reward')}", flush=True)
-    return {"groups": n_groups, "run": run_dir.name}
+
+        # 台账归因(生产同律:按主干胜者的实际条件;分歧才展开 per_seed)
+        winner_cond = dict(seed_conds[best_k])
+        winner_cond["decided_strategy"] = rl_variants[0]["strategy"]
+        winner_cond["decided_via"] = rl_variants[0]["via"]
+        distinct = {json.dumps({k: v for k, v in c.items()
+                                if k not in ("seed", "rl")},
+                               sort_keys=True) for c in seed_conds}
+        if len(distinct) > 1:
+            winner_cond["per_seed"] = seed_conds
+        storyboard.set_condition(entry.shot_idx, winner_cond)
+        storyboard.set_result(entry.shot_idx, Path(videos[best_k]),
+                              converged=False, repair_actions=[])
+        brain_log("window/shot_outcome", {
+            "label": entry.label, "shot_idx": entry.shot_idx,
+            "converged": False, "stop_reason": "judge_trunk",
+            "repair_turns": 0, "gen_calls": len(rl_variants),
+            "condition_decision_id": rl_variants[best_k].get(
+                "decision_id"),
+            "decided_strategy": rl_variants[best_k]["strategy"],
+            "decided_via": rl_variants[best_k]["via"],
+            "trunk_k": best_k,
+            "trunk_reward": rewards[best_k].get("reward"),
+        })
+        log.info("window: %s done — trunk=c%d reward=%s", entry.label,
+                 best_k, rewards[best_k].get("reward"))
+
+        # ③空间圣经·实拍回流(生产原文)
+        best_vp = Path(videos[best_k])
+        if best_vp.exists():
+            _bgk3 = (getattr(entry, "bg_id", "")
+                     or f"scene_{entry.scene_idx}")
+            _tailf = W._last_frame(best_vp,
+                                   shot_dir / "space_upgrade_tail.png")
+            if _tailf is not None:
+                _upv = washed_frame_upgrade(
+                    storyboard, _bgk3, Path(_tailf), image_edit, mllm,
+                    llm_video_brain, run_dir / "spaces",
+                    entry.shot_idx)
+                if _upv:
+                    entry.junction_meta = {
+                        **(getattr(entry, "junction_meta", None) or {}),
+                        "frame_upgrade": {
+                            "view": _upv,
+                            "path": storyboard.spaces[_bgk3][_upv]
+                            ["path"]}}
+                    decisions.append({"stage": "space_view",
+                                      "bg": _bgk3, "view": _upv,
+                                      "via": "frame_upgrade",
+                                      "label": entry.label})
+
+    # ── §E 合成(生产同律:时长对账 + concat;音频/BGM 关)────────
+    final = None
+    if not aborted:
+        clips, assemble_notes = W._final_cut(storyboard, run_dir)
+        decisions.extend(assemble_notes)
+        for e_ in storyboard.entries:
+            if not e_.video_path or not Path(e_.video_path).exists():
+                continue
+            planned_ = (specs[e_.shot_idx].duration
+                        if e_.shot_idx < len(specs) else None)
+            if not planned_:
+                continue
+            actual_ = W._probe_seconds(Path(e_.video_path))
+            if actual_ > 0 and abs(actual_ - float(planned_)) > max(
+                    1.5, 0.3 * float(planned_)):
+                log.warning("assemble AUDIT: %s runs %.1fs but the plan "
+                            "says %.1fs", e_.label, actual_,
+                            float(planned_))
+        if clips:
+            try:
+                final = _concat(clips, run_dir / "movie.mp4")
+            except Exception as exc:
+                log.warning("window: FINAL MERGE FAILED (%s) — per-shot "
+                            "clips remain", exc)
+    (run_dir / "decisions.json").write_text(
+        json.dumps(decisions, ensure_ascii=False, indent=1, default=str))
+    return {"groups": n_groups, "run": run_dir.name,
+            "movie": str(final) if final else None,
+            "aborted": aborted}
