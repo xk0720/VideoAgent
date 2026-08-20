@@ -12,21 +12,32 @@ produces:
   audio_mode: lipsync            # seedance 原生音画同出, 人物真的在说话
   shots: 3                       # 3+3+4 秒三动作
 
+audio:
+  bgm_source: shared       # 整片共享音轨切片, 源由 Planner 决定
+
 needs_background: false          # 场景写在 prompt 里, 直接 t2v
 
-pipeline:
-  - id: vid
-    tool: seedance_t2v
-    params: {generate_audio: true, duration: 10, refs: [$hook]}
-  - id: voice                    # 模型会自配BGM(实测静默窗 -30dB) → 只留人声
-    tool: isolate_voice
-    local: true
-    params: {source: "@vid", engine: demucs, device: cpu}
-  - id: out
-    tool: mix_audio
-    local: true
-    params: {video: "@vid", voice: "@voice", bgm: $bgm_slice,
-             voice_loudnorm: -18, bgm_volume: 0.22}
+prompt_source:      # 三种人数共用一个模板(每段只出现一个人)
+  "1": prompt_template
+  "2": prompt_template
+  "3": prompt_template
+
+pipelines:          # 一人一段: 每段只挂本段对应的那张 hook, 三种人数下单段结构相同
+  "1": &talk_pipe
+    - id: vid
+      tool: kling_omni_video
+      params: {audio: true, duration: 10, refer: [$hook]}
+    - id: voice
+      tool: isolate_voice
+      local: true
+      params: {source: "@vid", engine: demucs, device: cpu}
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", voice: "@voice", bgm: $bgm_slice,
+               voice_loudnorm: -18, bgm_volume: 0.22}
+  "2": *talk_pipe
+  "3": *talk_pipe
 
 scene_default: >-
   bright clean bedroom with a large window, soft daylight,
@@ -35,7 +46,7 @@ scene_default: >-
 prompt_template: |
   Locked-off static camera, vertical 9:16 full-body shot, {scene}. A 10-second
   video in three shots, hard cut between shots. The same young woman from
-  @Image1, wearing the {color} {garment}, appears in every shot.
+  <<<image_1>>>, wearing the {color} {garment}, appears in every shot.
   Shot 1 (0-3s): she {action1}, speaking to the camera in Mandarin Chinese, and says: "{line1}"
   Shot 2 (3-6s): she {action2}, speaking to the camera in Mandarin Chinese, and says: "{line2}"
   Shot 3 (6-10s): she {action3}, speaking to the camera in Mandarin Chinese, and says: "{line3}"
@@ -50,16 +61,16 @@ prompt_template: |
   time, changing with each shot, matching exactly what she is saying. No other
   text or graphics, no extra people.
 
-slots:
+slots:              # prompt_template 里 {} 的空位; auto_from 的由程序注入, 其余问模型
   scene:
     type: string
     lang: en
-    auto_from: scene_default       # 固定值, 程序注入以保证三段一致
+    auto_from: scene_default
     desc: "室内场景描述; 三段必须一致"
   color:
     type: string
     lang: en
-    auto_from: hook_color          # 由程序按 hook_index 注入, 不问模型(实测模型会猜错位)
+    auto_from: hook_color
     desc: "该 hook 对应的配色, 如 pink / soft sage green"
   garment:
     type: string

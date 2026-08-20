@@ -12,13 +12,22 @@ Part = Literal["opening", "body", "ending"]
 
 
 class SegmentSpec(BaseModel):
-    seg_id: str                                  # seg01, seg02 …
+    """一段 = 选定的 skill + **填好的完整 pipeline**(可直接执行)。
+
+    pipeline 里 prompt 全文、素材绝对路径、时长/卡点数值都已就位; 只有两类
+    占位符留到运行期: @id(本段前一步的产物) 与 @bgimg(缺背景图时 Act 前置生成)。
+    """
+    seg_id: str
     part: Part
     skill_id: str
     variant: Optional[str] = None                # closer 用: "3" / "2"
     hook_index: Optional[int] = None             # 该段用第几张人物图(1-based)
-    slots: Dict[str, str] = Field(default_factory=dict)
-    reason: str = ""                             # 为什么选这个 skill(须引用实测/卡片依据)
+    duration_s: float = 0.0
+    t0: float = 0.0
+    t1: float = 0.0
+    pipeline: List[dict] = Field(default_factory=list)     # ← 主产物
+    fills: Dict[str, str] = Field(default_factory=dict)    # 可追溯: LLM 填的可变内容
+    reason: str = ""
 
 
 class Storyboard(BaseModel):

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from ..llm import chat_json
+from ..render import Renderer
 from ..skill_store import SkillStore
 from ..storyboard import Issue, Report, SegmentSpec, Storyboard
 
@@ -138,13 +139,15 @@ class StoryboardPlanner:
         return out
 
     # ── 主流程 ───────────────────────────────────────────
-    def plan(self, brief: dict) -> Tuple[Storyboard, Report]:
+    def plan(self, brief: dict, bgm_source=None) -> Tuple[Storyboard, Report]:
         cat = brief.get("category", "服装")
         n = len(brief.get("person_hooks", [])) or 1
+        hooks = list(brief.get("person_hooks") or [])
         picked, overall = self._select(brief, cat, n)
 
         segs: List[SegmentSpec] = []
         prior: List[str] = []
+        t = 0.0
         for i, seg in enumerate(picked, 1):
             seg.setdefault("seg_id", f"seg{i:02d}")
             card = self.store.get(seg.get("skill_id", ""))
@@ -153,17 +156,33 @@ class StoryboardPlanner:
                                         skill_id=seg.get("skill_id", "?"),
                                         reason=seg.get("reason", "")))
                 continue
-            slots, reason = self._fill(seg, card, brief, n, prior)
-            prior += [v for k, v in slots.items()
+            fills, reason = self._fill(seg, card, brief, n, prior)
+            prior += [v for k, v in fills.items()
                       if (card.get("slots", {}).get(k, {}) or {}).get("lang") == "zh"]
-            variants = (card.get("produces") or {}).get("variants")
+
+            p = card.get("produces", {})
+            variants = p.get("variants")
+            variant = str(n) if variants else None
+            dur = float(p.get("duration_s")
+                        or (variants or {}).get(variant, {}).get("duration_s") or 0)
+            tail = float(card.get("tail_s", 0.5)) if variants else 0.0
+
+            # ★ 填空之后立刻渲染成完整 pipeline —— 分镜脚本即可执行形态
+            r = Renderer(card, hooks, person_count=n,
+                         hook_index=seg.get("hook_index"), bgm_source=bgm_source,
+                         t0=round(t, 3), t1=round(t + dur, 3))
+            pipeline = r.pipeline(fills)
+
             segs.append(SegmentSpec(
                 seg_id=seg["seg_id"], part=seg.get("part", "body"),
-                skill_id=seg["skill_id"],
-                variant=str(n) if variants else None,     # 变体由人数决定, 不问模型
-                hook_index=seg.get("hook_index"), slots=slots, reason=reason))
-            log.info("  %s [%s] %s 填了 %d 个 slot", seg["seg_id"], seg.get("part"),
-                     seg["skill_id"], len(slots))
+                skill_id=seg["skill_id"], variant=variant,
+                hook_index=seg.get("hook_index"), duration_s=dur,
+                t0=round(t, 3), t1=round(t + dur, 3),
+                pipeline=pipeline, fills=fills, reason=reason))
+            t += dur + tail
+            log.info("  %s [%s] %s → %d 步: %s", seg["seg_id"], seg.get("part"),
+                     seg["skill_id"], len(pipeline),
+                     " → ".join(c["tool"] for c in pipeline))
 
         sb = Storyboard(product_name=brief.get("name", ""), category=cat,
                         person_count=n, segments=segs, overall_reason=overall)
@@ -201,12 +220,12 @@ class StoryboardPlanner:
                 errs.append(Issue(seg_id=sid, field="hook_index", msg=f"越界(1..{n})"))
 
             spec = card.get("slots") or {}
-            for k in sorted(set(seg.slots) - set(spec)):
+            for k in sorted(set(seg.fills) - set(spec)):
                 errs.append(Issue(seg_id=sid, field=f"slots.{k}", msg="该 skill 没有这个 slot"))
-            for k in sorted(set(spec) - set(seg.slots)):
+            for k in sorted(set(spec) - set(seg.fills)):
                 errs.append(Issue(seg_id=sid, field=f"slots.{k}", msg="缺少必填 slot"))
-            for m in self._check_slots(seg.slots, {k: v for k, v in spec.items()
-                                                   if k in seg.slots}):
+            for m in self._check_slots(seg.fills, {k: v for k, v in spec.items()
+                                                   if k in seg.fills}):
                 errs.append(Issue(seg_id=sid, field="slots", msg=m))
 
         if len(body_skills) > 1:

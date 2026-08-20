@@ -15,37 +15,69 @@ produces:
     "3": {duration_s: 6, beats: [2, 4, 6], windows: 3}
     "2": {duration_s: 4, beats: [2, 4], windows: 2}
 
+audio:
+  bgm_source: generated    # text-to-music 现生成
+
 needs_background: true           # 用背景参考图复刻拼贴质感; 无图时走 background_prompt
 
-pipeline:
-  - id: vid
-    tool: seedance_t2v
-    params: {generate_audio: false, duration: "$variant.duration_s",
-             refs: [$background, $hook_1, $hook_2, $hook_3]}
-  - id: music
-    tool: sonilo_text_to_music
-    params: {prompt: "{music_prompt}", duration: "$variant.duration_s + 2"}
-  - id: punch
-    tool: punch_up
-    local: true
-    params: {audio: "@music", beats: "$variant.beats", gain: 0.85,
-             trim_to: "$variant.duration_s + 0.5"}
-  - id: out
-    tool: mix_audio
-    local: true
-    params: {video: "@vid", audio: "@punch",
-             duration: "$variant.duration_s + 0.5"}
+prompt_source:      # 视频调用的 prompt 正文取哪一段(按人数选版本)
+  "2": prompt_2p
+  "3": prompt_3p
+
+pipelines:          # 人数不同 → 参考图数量/时长/卡点都不同; 1 人整段跳过
+  "2":
+    - id: vid
+      tool: kling_omni_video
+      params: {audio: false, duration: 4,
+               first_frame: $background,      # 背景钉为首帧, 不占 <<<image_N>>> 编号
+               refer: [$hook_1, $hook_2]}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: "{music_prompt}", duration: 6}    # 段长+2, 给最后一击留衰减
+    - id: punch
+      tool: punch_up
+      local: true
+      params: {audio: "@music", beats: [2, 4], gain: 0.85, trim_to: 4.5}
+    - id: mix
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", audio: "@punch", duration: 4.5}
+    - id: out
+      tool: burn_text
+      local: true
+      params: {video: "@mix", text: "{title}", y_frac: 0.16, size: 76}
+  "3":
+    - id: vid
+      tool: kling_omni_video
+      params: {audio: false, duration: 6,
+               first_frame: $background,
+               refer: [$hook_1, $hook_2, $hook_3]}
+    - id: music
+      tool: sonilo_text_to_music
+      params: {prompt: "{music_prompt}", duration: 8}
+    - id: punch
+      tool: punch_up
+      local: true
+      params: {audio: "@music", beats: [2, 4, 6], gain: 0.85, trim_to: 6.5}
+    - id: mix
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", audio: "@punch", duration: 6.5}
+    - id: out
+      tool: burn_text
+      local: true
+      params: {video: "@mix", text: "{title}", y_frac: 0.16, size: 76}
 
 # ── 3 人版 ────────────────────────────────────────────────────────
 prompt_3p: |
-  Locked-off static camera, vertical 9:16. The exact background from @Image1 —
+  Locked-off static camera, vertical 9:16. The exact background of this shot —
   a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
   stays fixed and unchanged for the whole clip. A 6-second video.
-  0-2s: the woman from @Image2 pops into the center of the phone frame, landing
+  0-2s: the woman from <<<image_1>>> pops into the center of the phone frame, landing
   in a confident standing pose with one hand on her hip.
-  2-4s: the woman from @Image3 pops in and stands to her left; both stay on
+  2-4s: the woman from <<<image_2>>> pops in and stands to her left; both stay on
   screen holding their poses.
-  4-6s: the woman from @Image4 pops in and stands to her right; all three stand
+  4-6s: the woman from <<<image_3>>> pops in and stands to her right; all three stand
   in a row facing the camera, smiling.
   All three women are rendered at exactly the SAME scale and the SAME distance
   from the camera — their heads at the same height, their bodies the same size,
@@ -60,12 +92,12 @@ prompt_3p: |
 
 # ── 2 人版 ────────────────────────────────────────────────────────
 prompt_2p: |
-  Locked-off static camera, vertical 9:16. The exact background from @Image1 —
+  Locked-off static camera, vertical 9:16. The exact background of this shot —
   a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
   stays fixed and unchanged for the whole clip. A 4-second video.
-  0-2s: the woman from @Image2 pops into the frame slightly left of center,
+  0-2s: the woman from <<<image_1>>> pops into the frame slightly left of center,
   landing in a confident standing pose with one hand on her hip.
-  2-4s: the woman from @Image3 pops in to her right; both stand side by side
+  2-4s: the woman from <<<image_2>>> pops in to her right; both stand side by side
   facing the camera, smiling.
   Both women are rendered at exactly the SAME scale and the SAME distance from
   the camera — heads at the same height, bodies the same size, symmetrically
@@ -103,7 +135,7 @@ slots:
     lang: zh
     min_chars: 4
     max_chars: 10
-    desc: "收尾标题(后期烧), 默认 title_overlay.default_text"
+    desc: "收尾标题(pipeline 末尾 burn_text 用), 默认见 title_overlay.default_text"
 
 measured:
   verified: true

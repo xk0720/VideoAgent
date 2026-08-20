@@ -12,6 +12,9 @@ produces:
   audio_mode: music_only
   fps_note: wan-pro 原生 25fps(std 只有 15fps, 明显偏卡)
 
+audio:
+  bgm_source: asset        # 随驱动片段带走
+
 needs_background: false          # animate 的背景来自 hook 参考图
 
 asset:                           # 核心资产: 驱动片段 + 它自带的 BGM
@@ -20,17 +23,24 @@ asset:                           # 核心资产: 驱动片段 + 它自带的 BGM
   bpm: 123
   cuts_in_source: 6              # 原片 6 个硬切(每约 0.8s)
 
-pipeline:
-  - id: vid
-    tool: animate_move
-    params: {mode: wan-pro, ref: $hook_1, driving: $skill.asset.clip}
-  - id: mix
-    tool: mix_audio
-    local: true
-    params: {video: "@vid", audio: $skill.asset.bgm, bgm_volume: 1.0}
+prompt_source:      # animate 不吃文本, 三种人数都无 prompt
+  "1": null
+  "2": null
+  "3": null
+
+pipelines:          # 按 hook 人数枚举; 本卡只用第 1 张, 三种情况相同
+  "1": &beat_pipe
+    - id: vid
+      tool: animate_move
+      params: {mode: wan-pro, ref: $hook_1, driving: $skill.asset.clip}
+    - id: out
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", audio: $skill.asset.bgm, bgm_volume: 1.0}
+  "2": *beat_pipe
+  "3": *beat_pipe
 
 prompt_template: ""              # animate 不吃文本, 一致性全靠参考图变体
-slots: {}
 
 measured:
   verified: true

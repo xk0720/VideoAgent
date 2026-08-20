@@ -12,25 +12,36 @@ produces:
   audio_mode: voiceover          # 不要求音画同步 → 动作可彻底放开
   subtitle: burned_in_post       # 后期烧, 中文 100% 准确
 
+audio:
+  bgm_source: shared       # 整片共享音轨切片, 源由 Planner 决定
+
 needs_background: false          # 外景写在 prompt 里; 若要预生成背景图见 background_prompt
 
-pipeline:
-  - id: vid
-    tool: seedance_t2v
-    params: {generate_audio: false, duration: 10, refs: [$hook]}
-  - id: vo
-    tool: minimax_tts
-    params: {voice_id: Lively_Girl, emotion: happy, text: "{narration}"}
-  - id: mix
-    tool: mix_audio
-    local: true
-    params: {video: "@vid", voice: "@vo", bgm: $bgm_slice,
-             voice_loudnorm: -18, bgm_volume: 0.20}
-  - id: sub
-    tool: burn_subtitle
-    local: true
-    params: {video: "@mix", text: "{narration}", engine: pillow,
-             y_frac: 0.83, size: 40, max_chars: 13}
+prompt_source:
+  "1": prompt_template
+  "2": prompt_template
+  "3": prompt_template
+
+pipelines:          # 一人一段: 每段只挂本段对应的那张 hook
+  "1": &narr_pipe
+    - id: vid
+      tool: kling_omni_video
+      params: {audio: false, duration: 10, refer: [$hook]}
+    - id: vo
+      tool: minimax_tts
+      params: {voice_id: Lively_Girl, emotion: happy, text: "{narration}"}
+    - id: mix
+      tool: mix_audio
+      local: true
+      params: {video: "@vid", voice: "@vo", bgm: $bgm_slice,
+               voice_loudnorm: -18, bgm_volume: 0.20}
+    - id: out
+      tool: burn_subtitle
+      local: true
+      params: {video: "@mix", text: "{narration}", engine: pillow,
+               y_frac: 0.83, size: 40, max_chars: 13}
+  "2": *narr_pipe
+  "3": *narr_pipe
 
 scene_by_color:                  # 按商品配色推导外景(实测成立)
   pink: >-
@@ -45,7 +56,7 @@ scene_by_color:                  # 按商品配色推导外景(实测成立)
 
 prompt_template: |
   Handheld camera with a subtle natural sway, vertical 9:16 full-body shot,
-  {scene}. The woman from @Image1, wearing the {color} {garment}, is the only
+  {scene}. The woman from <<<image_1>>>, wearing the {color} {garment}, is the only
   person in frame. Over the 10 seconds, {action}. Her expressions are lively
   and varied — she smiles, raises her eyebrows, and looks straight into the
   lens. Cinematic natural light, shallow depth of field. Same woman and same
@@ -55,16 +66,16 @@ background_prompt: |
   Vertical 9:16 empty outdoor scene photograph, {scene}, no people in frame,
   natural daylight, shallow depth of field, photorealistic.
 
-slots:
+slots:              # prompt_template 里 {} 的空位; auto_from 的由程序注入
   scene:
     type: string
     lang: en
-    auto_from: scene_by_color      # 由程序按配色查表注入
-    desc: "取自 scene_by_color, 按该 hook 的配色选"
+    auto_from: scene_by_color
+    desc: "按该 hook 的配色从 scene_by_color 查表"
   color:
     type: string
     lang: en
-    auto_from: hook_color          # 由程序按 hook_index 注入, 不问模型
+    auto_from: hook_color
     desc: "该 hook 对应的配色"
   garment:
     type: string
