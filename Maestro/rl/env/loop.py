@@ -288,9 +288,27 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                 mllm, judges, group: int = 4, rl_temperature: float = 0.9,
                 fps: int = 8, window_tail_s: float = 2.0,
                 max_shots: int = 12, enable_audio: bool = False,
-                use_junction_agent: bool = True) -> dict:
+                use_junction_agent: bool = True,
+                group_sampler=None, ref_llm=None,
+                on_shot_boundary=None) -> dict:
     """一条轨迹。task_text = idea/一句话;screenplay = 用户剧本原文
-    (给了就跳过 §A0,与生产同)。"""
+    (给了就跳过 §A0,与生产同)。
+
+    ── 三个可选钩子(2026-08-21 用户裁决:本地推理路线)──────────────
+    全部默认 None;不给时本函数行为与之前【逐字节相同】(现有测试与
+    同构锁全绿即为证),vLLM 路径原样保留作回退。
+
+      group_sampler(prompt, menu, k, temperature) -> list[变体]
+          给了就替代 K 组采样;返回的变体除 strategy/reason/video_prompt
+          外,额外带 _prompt_ids / _response_ids / _logp_old / _temperature
+          —— 训练侧因此能拿到【模型实际吃进去和吐出来的那串 token】,
+          不再靠裸文本重新 tokenize(chat 模板漂移的根治)。
+      ref_llm
+          给了就让【图计划】与【空间视图挑图】改吃 θ_ref(参考策略)。
+          它们是环境组件、不产生训练信号,钉住它们 = 环境静止。
+      on_shot_boundary()
+          每镜收尾时回调一次 —— adapter 重载【唯一允许】发生的安全点。
+    """
     # ── 硬预检(生产同款)────────────────────────────────────────
     _missing = [t for t in ("ffmpeg", "ffprobe") if not shutil.which(t)]
     if _missing:
@@ -309,6 +327,8 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
 
     llm_screenwriter = llm_scene_writer = llm = frozen_llm
     llm_video_brain = policy
+    # 图计划 / 空间视图挑图的底座:给了 ref_llm 就吃 θ_ref,否则维持原状
+    llm_env_role = ref_llm or llm_video_brain
     # ── 缝合师(2026-08-20 用户裁决:独立 agent → 冻结底座)────────
     # 独立性依据:自带上下文(上镜 end_state / 片尾报告 / 本镜 opening
     # / 槽位表,共 5 个字段 —— 看不到台账、菜单、决策历史)、自带四级
@@ -449,7 +469,7 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
     for entry, spec in zip(storyboard.entries, specs):
         menu = W._image_plan_menu(video_gen, asset_memory)
         d = W._decide(
-            llm_video_brain, "image-plan", menu,
+            llm_env_role, "image-plan", menu,
             {"shot": entry.to_brain_line(),
              "prompt_language": prompt_lang,
              "cast": storyboard.cast, "setting": storyboard.setting,
@@ -530,7 +550,7 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
             _sview = None
             if _bg_prev == _bg_cur:
                 _sview = pick_space_view(
-                    llm_video_brain, storyboard, _bg_cur,
+                    llm_env_role, storyboard, _bg_cur,
                     (getattr(entry, "camera_facing", "") or
                      W._strip_markers(" ".join(
                          t for t in (entry.opening_frame,
@@ -719,15 +739,24 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
         # rl_temperature)。2026-08-20 组内并发:K 个请求【同时】发给
         # vLLM —— 同 state 意味着 prompt 逐字相同,continuous batching
         # 会自动复用前缀 KV,4 路几乎等于 1 路的时间。
-        rl_variants = _run_concurrent(
-            lambda t: W._decide(
-                llm_video_brain, "generation-condition", menu,
-                _cond_context,
-                replay_hint=replay_cond.get(entry.label),
-                priority=W._CONDITION_PRIORITY,
-                temperature=t),
-            [None] + [rl_temperature] * max(0, group - 1),
-            _POLICY_CONCURRENCY)
+        if group_sampler is not None:
+            # 本地推理路线:一次前缀填充出 K 个候选,变体自带 token ids
+            # 与行为策略 logprob(见钩子说明)
+            rl_variants = group_sampler(
+                prompt=W.decision_prompt(
+                    W._skill_body("generation-condition"), menu,
+                    _cond_context),
+                menu=menu, k=group, temperature=rl_temperature)
+        else:
+            rl_variants = _run_concurrent(
+                lambda t: W._decide(
+                    llm_video_brain, "generation-condition", menu,
+                    _cond_context,
+                    replay_hint=replay_cond.get(entry.label),
+                    priority=W._CONDITION_PRIORITY,
+                    temperature=t),
+                [None] + [rl_temperature] * max(0, group - 1),
+                _POLICY_CONCURRENCY)
         d = rl_variants[0]
         rl_state = {"menu": [dict(m) for m in menu],
                     "context": _cond_context}
@@ -980,7 +1009,16 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                 "degraded_from": cond.get("degraded_from"),
                 "final_prompt": cond.get("final_prompt"),
                 "video": str(vid) if vid else None,
-                "chosen": k == best_k, **rw})
+                "chosen": k == best_k,
+                # 本地推理路线的训练原料(vLLM 路径下这三项为 None):
+                # 模型实际吃进去/吐出来的 token 与行为策略 logprob。
+                # 注意兜底样本这里存的也是【模型真实产出的 token】,
+                # 而不是兜底 JSON —— 低 format 分正好教它别乱写。
+                "prompt_ids": v.get("_prompt_ids"),
+                "response_ids": v.get("_response_ids"),
+                "logp_old": v.get("_logp_old"),
+                "sample_temperature": v.get("_temperature"),
+                **rw})
         try:
             with open(run_dir / "rl_steps.jsonl", "a") as _f:
                 _f.write(json.dumps({
@@ -1001,6 +1039,14 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
         except Exception as _exc:
             log.warning("rl group record failed (%s)", str(_exc)[:120])
         n_groups += 1
+        # 镜间安全点:组已写完、下一镜尚未开采 —— adapter 重载唯一
+        # 允许发生的时刻(插在组采样中途会让一个组横跨两个策略版本)
+        if on_shot_boundary is not None:
+            try:
+                on_shot_boundary(record=samples, entry=entry,
+                                 context=rl_state["context"], menu=menu)
+            except Exception as _exc:
+                log.warning("on_shot_boundary failed (%s)", str(_exc)[:160])
 
         if videos[best_k] is None:
             log.warning("window: %s ALL candidates failed — episode "
