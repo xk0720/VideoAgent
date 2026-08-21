@@ -525,8 +525,18 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                      W._strip_markers(" ".join(
                          t for t in (entry.opening_frame,
                                      entry.description) if t))))
+            # 第三个参数 llm = 帧审查的裁决端(2026-08-20 用户裁决:
+            # 换冻结 qwen3.8-max)。逐行核过:这个 llm 在
+            # _derive_junction_frame 体内【只被 frame_review_ok 用】——
+            # 缝合师走独立的 stitcher= 参数。
+            # 为什么该冻结:帧审查是判官不是决策者,尺子取自【剧本】
+            # (entry.opening_frame/description + 空间图注)而非缝合师
+            # 的交稿,上下文自成一体(图注 600 + 意图 600 + 912 字符
+            # 内联纪律,零缓存零历史),判词永不进训练目标。它还是
+            # 双模型协作:VLM 出图注、LLM 出裁决 —— 图注端本就在
+            # 冻结 gemini 上,裁决端再跟着策略漂是没道理的混搭。
             _derived = W._derive_junction_frame(
-                video_gen, mllm, llm_video_brain, prev, prev, entry,
+                video_gen, mllm, frozen_llm, prev, prev, entry,
                 _open_cast, storyboard.cast, storyboard.portraits,
                 (_bgrec.get("path") if _bg_prev != _bg_cur else None),
                 shot_dir, prompt_lang,

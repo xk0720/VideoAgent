@@ -394,3 +394,30 @@ def test_stitcher_rides_frozen_model_and_has_its_skill(tmp_path,
     kinds = {k for k, _ in pol.calls}
     assert "cast_judge" in kinds and "space_pick" in kinds
     assert not any(k == "stitch" for k, _ in pol.calls)
+
+
+def test_frame_review_rides_frozen_model(tmp_path, monkeypatch):
+    """2026-08-20 用户裁决:帧审查是判官不是决策者(尺子取自剧本,
+    不是缝合师的交稿)→ 裁决端换冻结 qwen3.8-max,与它的图注端
+    (gemini)一起彻底脱离被训策略。
+
+    同样验【接线】:桩件的假 mp4 抽不出上镜尾帧,真链路在单测里到不了
+    帧审查本身 —— 但派生函数的第三个参数就是它的裁决端。"""
+    import env.window_core as W
+    got = {}
+    real = W._derive_junction_frame
+
+    def _rec(video_gen, mllm, llm, *a, **kw):
+        got["llm"] = llm
+        return real(video_gen, mllm, llm, *a, **kw)
+
+    monkeypatch.setattr(W, "_derive_junction_frame", _rec)
+    _run, pol, _recs, _res, _vg, _jg, frz = _episode(tmp_path)
+
+    assert got, "派生分支没被触发,测试前提失效"
+    assert got["llm"] is frz, "帧审查裁决端没接到冻结模型"
+    assert got["llm"] is not pol, "帧审查仍接在被训策略上"
+
+    # 只搬了帧审查:另外两个内联岗位仍在策略上(要改必须明示)
+    kinds = {k for k, _ in pol.calls}
+    assert "cast_judge" in kinds and "space_pick" in kinds
