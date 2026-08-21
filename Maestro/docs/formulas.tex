@@ -1,0 +1,412 @@
+% =====================================================================
+%  Maestro —— 方法公式手册(供实习工作总结 / 答辩文档摘抄)
+%
+%  编译(必须用 XeLaTeX 或 LuaLaTeX,因为含中文):
+%      xelatex formulas.tex && xelatex formulas.tex
+%  或:
+%      latexmk -xelatex formulas.tex
+%
+%  依赖:ctex, amsmath, amssymb, geometry —— 均为 TeX Live / MacTeX 标配。
+%  字体未指定,由 ctex 自动选择系统中文字体(macOS 下为宋体/黑体)。
+%
+%  用法:每条公式都带编号与标签,直接整段复制到正文即可;
+%       符号表见第 1 节,超参数见第 7 节。
+% =====================================================================
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[a4paper, margin=2.5cm]{geometry}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\clip}{clip}
+\DeclareMathOperator{\softmax}{softmax}
+
+\allowdisplaybreaks
+
+\title{面向多镜头叙事视频生成的条件构造方法与策略优化\\[4pt]
+       \large 方法公式手册}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\vspace{-2em}
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{符号约定}
+% =====================================================================
+
+\begin{tabular}{ll}
+\hline
+符号 & 含义 \\
+\hline
+$T$ & 一部片的镜头总数 \\
+$t$ & 镜头下标,亦即决策步下标 \\
+$s_t$ & 第 $t$ 镜的状态 \\
+$a_t=(c_t,p_t)$ & 动作:条件策略 $c_t$ 与视频提示词 $p_t$ \\
+$\mathcal{M}_t$ & 第 $t$ 镜的动态策略菜单,$c_t\in\mathcal{M}_t$ \\
+$y^{(i)}$ & 第 $i$ 个候选动作对应的 token 序列 \\
+$y^{(i)}_l$ & 该序列的第 $l$ 个 token,$l=1,\dots,\lvert y^{(i)}\rvert$ \\
+$K$ & 组大小(同一状态下的候选数) \\
+$r^{(i)}$ & 第 $i$ 个候选的标量奖励 \\
+$A^{(i)}$ & 第 $i$ 个候选的组相对优势 \\
+$\pi_\theta$ & 当前策略(基座 + LoRA 适配器) \\
+$\pi_{\theta_{\text{old}}}$ & 采样时刻的策略(行为策略) \\
+$\pi_{\text{ref}}$ & 参考策略(关闭适配器后的基座) \\
+$z_l$ & 第 $l$ 个位置的 logits 向量 \\
+$T_{\text{s}}$ & 采样温度(与镜头数 $T$ 区分,加下标 s) \\
+$\rho^{(i)}_l$ & token 级重要性比值 \\
+$\varepsilon_{\text{low}},\varepsilon_{\text{high}}$ & 非对称裁剪的下界与上界幅度 \\
+$\beta$ & KL 正则系数 \\
+$B$ & 适配器广播节拍(每 $B$ 次优化步发布一版) \\
+$v$ & 适配器版本号 \\
+$\sigma_{\text{stale}}$ & 组的陈旧度 \\
+\hline
+\end{tabular}
+
+% =====================================================================
+\section{问题形式化}
+% =====================================================================
+
+逐镜条件决策建模为有限时域马尔可夫决策过程
+\begin{equation}
+\mathcal{P}=\bigl(\mathcal{S},\ \mathcal{A},\ \mathcal{T},\ R,\ T\bigr),
+\label{eq:mdp}
+\end{equation}
+其三层结构为:一个 episode 是一部片($T$ 个镜头),一个 step 是一镜的条件决策,而一个 action 是策略输出的一段 JSON,即一串 token。
+
+状态由筹备期产物与前序执行结果共同构成:
+\begin{equation}
+s_t=\bigl(\,\text{镜头表}_t,\ \text{人物设定},\ \text{空间视图}_t,\ \text{上镜实况}_{t-1},\ \text{交界结果}_t,\ \text{图像计划}_t,\ \text{槽位清单}_t,\ \mathcal{M}_t\,\bigr).
+\label{eq:state}
+\end{equation}
+
+动作由策略以单条 JSON 序列一次性产生:
+\begin{equation}
+a_t=(c_t,\ p_t)\ \longleftrightarrow\ y_t=\bigl(y_{t,1},\dots,y_{t,\lvert y_t\rvert}\bigr),
+\qquad c_t\in\mathcal{M}_t .
+\label{eq:action}
+\end{equation}
+
+序列的对数概率按自回归分解,并在采样温度下计算:
+\begin{equation}
+\log\pi_\theta\bigl(y\mid s\bigr)
+=\sum_{l=1}^{\lvert y\rvert}
+\log\softmax\!\bigl(z_l/T_{\text{s}}\bigr)\bigl[\,y_l\,\bigr].
+\label{eq:seqlogprob}
+\end{equation}
+
+\paragraph{注.} 策略梯度作用于 token 级,而奖励只在 step 级给出;GRPO 通过把 step 级优势 $A^{(i)}$ 广播到该序列的全部 token 来处理这一稀疏信用分配。
+
+% =====================================================================
+\section{奖励设计}
+% =====================================================================
+
+\subsection{总奖励}
+
+\begin{equation}
+r \;=\; 0.15\,r_{\text{format}} \;+\; 0.35\,r_{\text{text}} \;+\; 0.50\,r_{\text{video}} .
+\label{eq:reward}
+\end{equation}
+
+\subsection{格式奖励}
+
+$r_{\text{format}}\in[0,1]$ 与生产管线的校验闸门同构,由五个二值判据加权求和:
+\begin{equation}
+r_{\text{format}}
+=\mathbf{1}_{\text{usable}}\cdot
+\bigl(0.4\,\mathbf{1}_{\text{JSON}}
++0.2\,\mathbf{1}_{c\,\in\,\mathcal{M}}
++0.2\,\mathbf{1}_{\mathcal{R}\,\subseteq\,\mathcal{S}}
++0.1\,\mathbf{1}_{\text{lang}}
++0.1\,\mathbf{1}_{\text{fields}}\bigr),
+\label{eq:rformat}
+\end{equation}
+其中 $\mathcal{R}$ 为输出中出现的引用符号集合,$\mathcal{S}$ 为该镜的合法槽位集合;若管线已判定该输出不可用,则 $\mathbf{1}_{\text{usable}}=0$,整项计零。
+
+\subsection{文本判官奖励}
+
+文本判官对单个候选打四维分(整数 $1$--$5$),按有效维归一:
+\begin{equation}
+r_{\text{text}}
+=\frac{1}{\lvert \mathcal{D}_{\text{eff}}\rvert}
+\sum_{d\in\mathcal{D}_{\text{eff}}}\frac{s_d-1}{4},
+\qquad
+\mathcal{D}=\{\text{忠实度},\ \text{具体性},\ \text{交界连续性}^{\ast},\ \text{人物纪律}\}.
+\label{eq:rtext}
+\end{equation}
+带 $\ast$ 的交界连续性为\textbf{条件维}:仅当该镜与上镜同人同景时参评,否则判空并从 $\mathcal{D}_{\text{eff}}$ 中剔除。
+
+\subsection{视频判官奖励}
+
+视频判官以原生视频输入给出四个分量,加权后按有效权重归一:
+\begin{equation}
+r_{\text{video}}
+=\frac{\displaystyle\sum_{d\in\mathcal{D}_{\text{v}}^{\text{eff}}} w_d\, s_d}
+       {\displaystyle\sum_{d\in\mathcal{D}_{\text{v}}^{\text{eff}}} w_d},
+\qquad
+\bigl(w_{\text{act}},w_{\text{phy}},w_{\text{cam}},w_{\text{cons}}\bigr)
+=(0.30,\ 0.25,\ 0.15,\ 0.30).
+\label{eq:rvideo}
+\end{equation}
+
+前三维(表演 / 物理 / 运镜)采用\textbf{组内排名}:一组 $K$ 个候选一次调用完成排序,展示顺序随机打乱以消除位置偏好,允许并列;排名 $\mathrm{rk}^{(i)}\in\{1,\dots,K\}$ 转点数
+\begin{equation}
+s^{(i)}_d=\frac{K-\mathrm{rk}^{(i)}}{K-1},
+\label{eq:rank2point}
+\end{equation}
+并列者取其平均名次。第四维(一致性)采用对照清单直判:
+\begin{equation}
+s_{\text{cons}}=\frac{\#\{\text{通过项}\}}{\#\{\text{总项}\}} .
+\label{eq:cons}
+\end{equation}
+
+\paragraph{注.} 前三维用相对排序、第四维用绝对判定,这一区分是有意的:当组内候选全部质量低下时,排名会把“矮子里的将军”当作好样本;凡存在客观锚点(参考图、布局清单)的维度,必须使用绝对判定。
+
+\subsection{诚实降级}
+
+任一判官失效时,剔除其分量并对其余权重重新归一化。记有效判官集合为 $\mathcal{J}^{\text{eff}}$:
+\begin{equation}
+r=\frac{\displaystyle\sum_{j\in\mathcal{J}^{\text{eff}}} w_j\, r_j}
+        {\displaystyle\sum_{j\in\mathcal{J}^{\text{eff}}} w_j},
+\qquad
+\mathcal{J}=\{\text{format},\ \text{text},\ \text{video}\}.
+\label{eq:degrade}
+\end{equation}
+若 $\mathcal{J}^{\text{eff}}=\varnothing$ 则退回旧版指标。\textbf{绝不以 $0$ 分冒充评审结果}——$0$ 是强信号,会严重污染优势估计。
+
+% =====================================================================
+\section{组相对优势与主干选择}
+% =====================================================================
+
+\subsection{组相对优势}
+
+对状态 $s_t$,自行为策略采出 $K$ 个候选 $\{y^{(i)}\}_{i=1}^{K}\sim\pi_{\theta_{\text{old}}}(\cdot\mid s_t)$,得奖励 $\{r^{(i)}\}$。组均值与\textbf{无偏}标准差为
+\begin{equation}
+\bar r=\frac{1}{K}\sum_{i=1}^{K} r^{(i)},
+\qquad
+\sigma=\sqrt{\frac{1}{K-1}\sum_{i=1}^{K}\bigl(r^{(i)}-\bar r\bigr)^{2}},
+\label{eq:groupstat}
+\end{equation}
+组相对优势为
+\begin{equation}
+\boxed{\;
+A^{(i)}=\frac{r^{(i)}-\bar r}{\sigma+\epsilon}\;},
+\qquad \epsilon=10^{-6}.
+\label{eq:advantage}
+\end{equation}
+
+三处实现约定:标准差取无偏($K-1$)估计;\textbf{不}采用留一法,即样本自身亦在其基线之内;$K=1$ 时定义 $A^{(1)}=0$(无基线)。
+
+组内奖励打平时整组跳过:
+\begin{equation}
+\max_{i}\bigl\lvert A^{(i)}\bigr\rvert<10^{-6}
+\ \Longrightarrow\ \text{跳过该组},
+\label{eq:skip}
+\end{equation}
+因为此时梯度精确为零,执行优化步只会累积数值噪声。
+
+\subsection{主干选择}
+
+轨迹沿组内奖励最高的候选推进:
+\begin{equation}
+s_{t+1}=\mathcal{T}\bigl(s_t,\ y^{(i^\star)}\bigr),
+\qquad
+i^\star=\argmax_{i\in\{1,\dots,K\}} r^{(i)} .
+\label{eq:trunk}
+\end{equation}
+
+\paragraph{偏置说明.} 该设计使状态分布偏向高奖励区域,与均匀在策略分布不同。其辩护是:部署时系统本就采用贪心解码,因此该偏置的方向与部署时的状态分布一致,属于有意为之。
+
+% =====================================================================
+\section{策略目标}
+% =====================================================================
+
+\subsection{重要性比值}
+
+\begin{equation}
+\rho^{(i)}_{l}(\theta)
+=\exp\Bigl(
+\log\pi_{\theta}\bigl(y^{(i)}_{l}\mid s,\,y^{(i)}_{<l}\bigr)
+-\log\pi_{\theta_{\text{old}}}\bigl(y^{(i)}_{l}\mid s,\,y^{(i)}_{<l}\bigr)
+\Bigr).
+\label{eq:ratio}
+\end{equation}
+其中 $\log\pi_{\theta_{\text{old}}}$ \textbf{于采样时刻记录},而非事后重算——多流并行下采样权重与训练权重可能不同,事后重算将使比值恒为 $1$,off-policy 修正随之失效。
+
+\subsection{非对称裁剪的策略梯度损失}
+
+\begin{equation}
+\boxed{\;
+\mathcal{L}^{\text{PG}}(\theta)
+=-\frac{1}{\sum_{i}\lvert y^{(i)}\rvert}
+\sum_{i=1}^{K}\sum_{l=1}^{\lvert y^{(i)}\rvert}
+\min\Bigl(
+\rho^{(i)}_{l}A^{(i)},\;
+\clip\bigl(\rho^{(i)}_{l},\,1-\varepsilon_{\text{low}},\,1+\varepsilon_{\text{high}}\bigr)A^{(i)}
+\Bigr)\;}
+\label{eq:pg}
+\end{equation}
+取 $\varepsilon_{\text{low}}=0.2$、$\varepsilon_{\text{high}}=0.3$。上下界不对称的用意:为正优势 token 保留更大的上升空间,以缓解熵坍缩,防止策略过早收敛到单一表述。
+
+\paragraph{等价实现形式.} 代码中以最大化损失的形式实现,与式~\eqref{eq:pg} 等价:
+\begin{equation}
+\mathcal{L}^{\text{PG}}_{\,l}
+=\max\Bigl(-A\,\rho_l,\ \ -A\,\clip(\rho_l,\,1-\varepsilon_{\text{low}},\,1+\varepsilon_{\text{high}})\Bigr).
+\label{eq:pgcode}
+\end{equation}
+
+\subsection{KL 正则(k3 估计量)}
+
+令 $\Delta^{(i)}_{l}=\log\pi_{\text{ref}}\bigl(y^{(i)}_{l}\mid\cdot\bigr)-\log\pi_{\theta}\bigl(y^{(i)}_{l}\mid\cdot\bigr)$,则
+\begin{equation}
+D^{k3,(i)}_{l}
+=\exp\bigl(\Delta^{(i)}_{l}\bigr)-\Delta^{(i)}_{l}-1\;\ge\;0 .
+\label{eq:k3}
+\end{equation}
+该估计量恒非负且方差低于朴素估计 $-\Delta$。
+
+\subsection{总损失}
+
+\begin{equation}
+\boxed{\;
+\mathcal{L}(\theta)
+=\mathcal{L}^{\text{PG}}(\theta)
++\beta\cdot\frac{1}{\sum_{i}\lvert y^{(i)}\rvert}
+\sum_{i=1}^{K}\sum_{l=1}^{\lvert y^{(i)}\rvert} D^{k3,(i)}_{l}\;},
+\qquad \beta=10^{-3}.
+\label{eq:loss}
+\end{equation}
+
+\paragraph{三点说明.}
+(i) KL 作为\textbf{损失项}而非并入奖励——后者会污染组内相对比较;
+(ii) 聚合方式为 token 级平均(按组内总 token 数归一)而非序列级平均,否则长序列被系统性低估;
+(iii) 每组数据只做一次优化步($\text{ppo\_epochs}=1$)。
+
+\subsection{参考策略的免费获取}
+
+策略以 LoRA 形式训练,关闭适配器即精确等于基座:
+\begin{equation}
+\boxed{\;\pi_{\text{ref}}=\pi_{\theta}\big\rvert_{\text{adapter disabled}}\;}
+\label{eq:ref}
+\end{equation}
+因而无需保存第二份权重,亦无需独立的参考模型进程。
+
+% =====================================================================
+\section{行为策略保真度}
+% =====================================================================
+
+以下三式保证“训练所依据的分布”与“采样时的真实分布”严格一致。
+
+\paragraph{铁律一:同一串 token.}
+采样时记录 $\bigl(\text{prompt\_ids},\ \text{response\_ids}\bigr)$,训练时直接复用:
+\begin{equation}
+y^{\text{train}}=y^{\text{sample}}
+\quad(\text{绝不以文本重新分词,亦不得遗漏对话模板}).
+\label{eq:sametoken}
+\end{equation}
+
+\paragraph{铁律二:同一温度.}
+温度须同样作用于训练时的对数概率:
+\begin{equation}
+\log\pi_\theta\bigl(y_l\mid\cdot\bigr)
+=\log\softmax\bigl(z_l/T_{\text{s}}\bigr)\bigl[\,y_l\,\bigr].
+\label{eq:temp}
+\end{equation}
+
+\paragraph{铁律三:行为分布可解析表达.}
+采样时强制 $\text{top}_p=1$、$\text{top}_k=0$,使
+\begin{equation}
+\pi_{\theta_{\text{old}}}(\cdot\mid s)=\softmax\bigl(z/T_{\text{s}}\bigr).
+\label{eq:notrunc}
+\end{equation}
+一旦采用截断采样,所记录的 $\log\pi_{\theta_{\text{old}}}$ 便不再是真实行为概率,式~\eqref{eq:ratio} 的比值从根本上失效。
+
+\paragraph{显存约定.}
+前向仅保留 completion 位置的 logits:
+\begin{equation}
+\text{num\_logits\_to\_keep}=R+1,
+\qquad R=\lvert y^{(i)}\rvert,
+\label{eq:logitskeep}
+\end{equation}
+使单条序列的相应显存由约 $9.2$~GB 降至约 $0.7$~GB。
+
+% =====================================================================
+\section{半在线训练架构}
+% =====================================================================
+
+\subsection{广播节拍}
+
+每 $B$ 次优化步发布一版适配器,版本号为
+\begin{equation}
+v=\left\lfloor \frac{\text{step}}{B} \right\rfloor .
+\label{eq:version}
+\end{equation}
+
+\subsection{陈旧度与过滤}
+
+一个组的陈旧度定义为“当前已发布版本”与“该组采样时版本”之差:
+\begin{equation}
+\sigma_{\text{stale}}=v_{\text{now}}-v_{\text{group}},
+\qquad
+\sigma_{\text{stale}}>\sigma_{\max}\ \Longrightarrow\ \text{丢弃该组}.
+\label{eq:staleness}
+\end{equation}
+在 $\sigma_{\text{stale}}\le\sigma_{\max}$ 的范围内,off-policy 偏差由式~\eqref{eq:ratio} 的重要性比值与式~\eqref{eq:pg} 的裁剪共同控制。
+
+\subsection{正确性要求:换脑只在镜间}
+
+记第 $t$ 镜采样期间所用的策略版本为 $v(t,i)$,要求
+\begin{equation}
+v(t,1)=v(t,2)=\cdots=v(t,K)
+\qquad \forall\, t .
+\label{eq:safepoint}
+\end{equation}
+若在组采样中途重载适配器,一个组将横跨两个策略版本,式~\eqref{eq:advantage} 的组内相对比较随之被污染,而这种污染在日志上不留任何异常痕迹。
+
+% =====================================================================
+\section{超参数}
+% =====================================================================
+
+\begin{tabular}{lll}
+\hline
+符号 & 含义 & 取值 \\
+\hline
+$K$ & 组大小 & $4$ \\
+$T_{\text{s}}$ & 采样温度(主干 / 分支) & $0.7$ / $0.9$ \\
+$\text{top}_p,\ \text{top}_k$ & 截断参数 & $1.0$,\ $0$ \\
+$\varepsilon_{\text{low}}$ & 裁剪下界幅度 & $0.2$ \\
+$\varepsilon_{\text{high}}$ & 裁剪上界幅度 & $0.3$ \\
+$\beta$ & KL 系数 & $10^{-3}$ \\
+$\epsilon$ & 优势归一化平滑项 & $10^{-6}$ \\
+$B$ & 广播节拍(优化步) & $4$ \\
+$\sigma_{\max}$ & 陈旧度上限 & $5$ \\
+$\eta$ & 学习率 & $10^{-5}$ \\
+$\text{rank}$ / $\alpha$ & LoRA 秩 / 缩放 & $64$ / $128$ \\
+--- & LoRA 作用模块 & $q,k,v,o$ 投影 \\
+\hline
+\end{tabular}
+
+% =====================================================================
+\section{公式索引}
+% =====================================================================
+
+\begin{tabular}{ll}
+\hline
+式 & 内容 \\
+\hline
+\eqref{eq:mdp}--\eqref{eq:seqlogprob} & 问题形式化:MDP、状态、动作、序列对数概率 \\
+\eqref{eq:reward}--\eqref{eq:degrade} & 奖励:总合成、格式、文本、视频、排名转点数、诚实降级 \\
+\eqref{eq:groupstat}--\eqref{eq:skip} & 组相对优势与打平跳过 \\
+\eqref{eq:trunk} & 主干选择 \\
+\eqref{eq:ratio}--\eqref{eq:ref} & 策略目标:比值、非对称裁剪、k3 KL、总损失、参考策略 \\
+\eqref{eq:sametoken}--\eqref{eq:logitskeep} & 行为策略保真度三铁律与显存约定 \\
+\eqref{eq:version}--\eqref{eq:safepoint} & 半在线架构:版本、陈旧度、换脑安全点 \\
+\hline
+\end{tabular}
+
+\end{document}
