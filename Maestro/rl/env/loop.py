@@ -496,8 +496,18 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
                         or f"scene_{prev.scene_idx}")
             _bg_cur = (getattr(entry, "bg_id", "")
                        or f"scene_{entry.scene_idx}")
+            # 交界人物判官(2026-08-21 用户裁决:换冻结 qwen3.8-max)。
+            # 溯源:它不属于 2026-08-06 定义的 video_brain 决策簇
+            # (image_plan + window_generation + orchestrator)——2026-08-07
+            # 加进来时只是【就近取用】了当时手边唯一的 brain。
+            # 为什么该冻结:判断类岗位,输入只有两镜的剧本文字 + cast
+            # 名单(不看菜单、不看槽位、不看图计划产物、不看台账),
+            # 输出只当三叉分诊的分流开关,有确定性兜底(标记提取+集合
+            # 相等,同脸不同名按肖像路径判等),判词永不进训练目标。
+            # 而它决定整条交界走哪一支 —— 让一个正在被训、可能崩掉的
+            # 模型管这个开关,风险与收益完全不对等。
             _same_cast, _cast_reason, _open_cast = W._judge_junction_cast(
-                llm_video_brain, prev, entry, storyboard.cast,
+                frozen_llm, prev, entry, storyboard.cast,
                 storyboard.portraits, prompt_lang)
             if not _same_cast:
                 _junction_kind = "derive"

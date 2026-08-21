@@ -33,6 +33,11 @@ class FakeFrozenLLM:
         self.seen = []                             # 记录收到的 prompt 类型
 
     def complete(self, prompt, temperature=None, max_tokens=None):
+        if '"prev_end_cast"' in prompt:               # 交界人物判官(冻结)
+            self.seen.append("cast_judge")
+            return json.dumps({"prev_end_cast": ["小明"],
+                               "cur_open_cast": ["小明"],
+                               "reason": "同人"}, ensure_ascii=False)
         if "current_shot_opening_script" in prompt:   # 缝合师(冻结底座)
             self.seen.append("stitch")
             return json.dumps(
@@ -59,7 +64,7 @@ class FakePolicy:
 
     def complete(self, prompt, temperature=None, max_tokens=None):
         if '"prev_end_cast"' in prompt:            # 交界人物判官
-            self.calls.append(("cast_judge", temperature))
+            self.calls.append(("cast_judge", temperature))  # ← 不该再发生
             return json.dumps({"prev_end_cast": ["小明"],
                                "cur_open_cast": ["小明"],
                                "reason": "同人"}, ensure_ascii=False)
@@ -390,9 +395,9 @@ def test_stitcher_rides_frozen_model_and_has_its_skill(tmp_path,
     # ② 技能手册真的装上了(0 字符 = 裸奔,正是移植期埋的 bug)
     assert len(js._SKILL_CACHE["junction_stitch"]) > 1000
 
-    # ③ 只搬了缝合师:其余内联岗位仍在策略上(要改必须是明示的)
+    # ③ 策略侧只剩空间视图挑图(人物判官/帧审查已另行迁走)
     kinds = {k for k, _ in pol.calls}
-    assert "cast_judge" in kinds and "space_pick" in kinds
+    assert "space_pick" in kinds
     assert not any(k == "stitch" for k, _ in pol.calls)
 
 
@@ -418,6 +423,28 @@ def test_frame_review_rides_frozen_model(tmp_path, monkeypatch):
     assert got["llm"] is frz, "帧审查裁决端没接到冻结模型"
     assert got["llm"] is not pol, "帧审查仍接在被训策略上"
 
-    # 只搬了帧审查:另外两个内联岗位仍在策略上(要改必须明示)
+    # 策略侧只剩空间视图挑图(要再搬必须是明示动作)
     kinds = {k for k, _ in pol.calls}
-    assert "cast_judge" in kinds and "space_pick" in kinds
+    assert "space_pick" in kinds
+
+
+def test_cast_judge_rides_frozen_model(tmp_path):
+    """2026-08-21 用户裁决:交界人物判官换冻结 qwen3.8-max。
+    溯源:它不属于 2026-08-06 定义的 video_brain 决策簇(image_plan +
+    window_generation + orchestrator)—— 2026-08-07 加进来时只是就近
+    取用当时手边唯一的 brain。它是判断类岗位:输入自成一体(两镜剧本
+    文字 + cast 名单)、有确定性兜底、判词永不进训练目标。"""
+    _run, pol, recs, _res, _vg, _jg, frz = _episode(tmp_path)
+
+    assert "cast_judge" in frz.seen, "人物判官没打到冻结模型"
+    assert not any(k == "cast_judge" for k, _ in pol.calls), \
+        "人物判官仍在打被训策略"
+
+    # 分诊结果不受影响:同人同景 → derive(派生失败退 continue)
+    assert [r["junction_kind"] for r in recs] == [None, "continue", "cut"]
+
+    # 图计划【刻意保留】在策略上:它与条件决策同属一条决策链(图计划
+    # 的产物决定条件菜单与槽位编号),2026-08-06 裁决把两者划进同一个
+    # video_brain 角色 —— 要动它必须是单独的决定。
+    assert any(k == "plan" for k, _ in pol.calls)
+    assert any(k == "cond" for k, _ in pol.calls)
