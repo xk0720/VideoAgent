@@ -33,9 +33,11 @@ RL_ROOT = Path(__file__).resolve().parent.parent
 if str(RL_ROOT) not in sys.path:
     sys.path.insert(0, str(RL_ROOT))
 
+import env.junction_stitcher as _js                           # noqa: E402
 import env.window_core as W                                   # noqa: E402
 from env.junction_stitcher import JunctionStitcherAgent       # noqa: E402
 from env.language import set_output_lang                      # noqa: E402
+from env.skills import skill_body                             # noqa: E402
 from env.logging_utils import brain_log, get_logger, set_brain_log  # noqa: E402
 from env.space_bible import (build_space_views, pick_space_view,    # noqa: E402
                              washed_frame_upgrade)
@@ -307,7 +309,22 @@ def run_episode(*, task_text: str = "", screenplay: str | None = None,
 
     llm_screenwriter = llm_scene_writer = llm = frozen_llm
     llm_video_brain = policy
-    junction_stitcher = (JunctionStitcherAgent(llm=llm_video_brain)
+    # ── 缝合师(2026-08-20 用户裁决:独立 agent → 冻结底座)────────
+    # 独立性依据:自带上下文(上镜 end_state / 片尾报告 / 本镜 opening
+    # / 槽位表,共 5 个字段 —— 看不到台账、菜单、决策历史)、自带四级
+    # 校验、自带降级路径(判死退模板);产物只喂派生视频的 prompt,
+    # 永不进 RL 训练目标。所以它钉在 qwen3.8-max 上,不跟被训策略漂移
+    # —— 这正是生产 crew.junction_stitcher 槽位当初留下的意图。
+    #
+    # 技能手册预置:移植件的 _skill_body() 走生产的相对导入,在 rl/ 下
+    # 必抛异常并被 except 吞成【空手册】(实测 0 字符 vs 生产 3179)——
+    # 缝合师一直在裸奔。从外部把缓存喂上,移植件因此保持逐字不动
+    # (整文件同构锁在岗)。
+    _js._SKILL_CACHE.setdefault("junction_stitch",
+                                skill_body("junction_stitch"))
+    if use_junction_agent and not _js._SKILL_CACHE["junction_stitch"]:
+        log.warning("junction_stitch 技能手册为空 —— 缝合师将裸奔")
+    junction_stitcher = (JunctionStitcherAgent(llm=frozen_llm)
                          if use_junction_agent else None)
 
     # ── §A0 剧本 + 语言 + 声词词典 ───────────────────────────────

@@ -29,13 +29,27 @@ _SB = {"cast": {"小明": "static: 蓝夹克短发男子; dynamic: none"},
 
 
 class FakeFrozenLLM:
+    def __init__(self):
+        self.seen = []                             # 记录收到的 prompt 类型
+
     def complete(self, prompt, temperature=None, max_tokens=None):
+        if "current_shot_opening_script" in prompt:   # 缝合师(冻结底座)
+            self.seen.append("stitch")
+            return json.dumps(
+                {"first_shot_desc":
+                 "画面停在<<<image_1>>>所示的最后一刻,光线不变。",
+                 "second_shot_desc":
+                 "切换到新机位,同一空间从另一侧望去,陈设与光线一致。"},
+                ensure_ascii=False)
         if '"characters"' in prompt[-2000:]:      # character_extract
+            self.seen.append("characters")
             return json.dumps({"characters": _SB["cast"]},
                               ensure_ascii=False)
         if '"cast"' in prompt[-3000:]:            # scene_write
+            self.seen.append("scene_write")
             return json.dumps(_SB, ensure_ascii=False)
         # scene_image / 肖像翻译等 → 任意文本(调用方有确定性兜底)
+        self.seen.append("other")
         return "empty convenience store interior, cold white light"
 
 
@@ -45,12 +59,15 @@ class FakePolicy:
 
     def complete(self, prompt, temperature=None, max_tokens=None):
         if '"prev_end_cast"' in prompt:            # 交界人物判官
+            self.calls.append(("cast_judge", temperature))
             return json.dumps({"prev_end_cast": ["小明"],
                                "cur_open_cast": ["小明"],
                                "reason": "同人"}, ensure_ascii=False)
         if '"view"' in prompt[-200:]:              # pick_space_view
+            self.calls.append(("space_pick", temperature))
             return json.dumps({"view": "master"})
-        if "first_shot_desc" in prompt:            # 缝合师 → 判死退模板
+        if "current_shot_opening_script" in prompt:   # 缝合师
+            self.calls.append(("stitch", temperature))  # ← 不该再发生
             return "no"
         if "single_first_frame" in prompt:         # image plan
             self.calls.append(("plan", temperature))
@@ -156,24 +173,25 @@ class FakeJudges(dict):
 def _episode(tmp_path, group=4, policy=None, judges=None):
     run = tmp_path / "movie_test"
     pol = policy or FakePolicy()
+    frz = FakeFrozenLLM()
     vg = FakeKling()
     jg = judges or FakeJudges()
     res = L.run_episode(
         task_text="深夜便利店的十分钟",
         screenplay="深夜便利店。小明推门进店,拿起饭团说:\"就这个吧\","
                    "结账后走出店门。",
-        run_dir=run, frozen_llm=FakeFrozenLLM(), policy=pol,
+        run_dir=run, frozen_llm=frz, policy=pol,
         video_gen=vg, image_edit=FakeImageEdit(),
         mllm=FakeVLM(), judges=jg, group=group,
         rl_temperature=0.9)
     recs = [json.loads(x) for x in
             (run / "rl_steps.jsonl").read_text().splitlines()]
-    return run, pol, recs, res, vg, jg
+    return run, pol, recs, res, vg, jg, frz
 
 
 def test_group_sampling_and_temperatures(tmp_path):
     """K 组采样:v0 默认温度(None),其余带 rl 温度;image plan 单采。"""
-    _run, pol, recs, _res, _vg, _jg = _episode(tmp_path)
+    _run, pol, recs, _res, _vg, _jg, _frz = _episode(tmp_path)
     assert len(recs) == 3
     assert all(r["group_size"] == 4 and len(r["samples"]) == 4
                for r in recs)
@@ -187,7 +205,7 @@ def test_group_sampling_and_temperatures(tmp_path):
 
 def test_record_schema_and_trunk(tmp_path):
     """记录自包含 + degraded_from 字段回归 + 主干 = reward argmax。"""
-    _run, _pol, recs, _res, _vg, _jg = _episode(tmp_path)
+    _run, _pol, recs, _res, _vg, _jg, _frz = _episode(tmp_path)
     g = recs[1]
     for f in ("kind", "run", "shot_idx", "label", "junction_kind",
               "policy_version", "group_size", "menu", "context",
@@ -213,7 +231,7 @@ def test_record_schema_and_trunk(tmp_path):
 def test_junction_fusion_routing(tmp_path):
     """三叉分诊(生产同构):同人同景 → derive(桩视频派生必败)→
     退 continue;换景 → cut;非首镜菜单锁 ref2v。"""
-    run, _pol, recs, _res, _vg, _jg = _episode(tmp_path)
+    run, _pol, recs, _res, _vg, _jg, _frz = _episode(tmp_path)
     assert [r["junction_kind"] for r in recs] == [None, "continue",
                                                   "cut"]
     assert [m["name"] for m in recs[1]["menu"]] == ["ref2v"]
@@ -230,7 +248,7 @@ def test_fallback_on_bad_policy_reply(tmp_path):
     class BadPolicy:
         def complete(self, prompt, temperature=None, max_tokens=None):
             return "我拒绝输出 JSON"
-    _run, _pol, recs, _res, _vg, _jg = _episode(
+    _run, _pol, recs, _res, _vg, _jg, _frz = _episode(
         tmp_path, group=3, policy=BadPolicy())
     assert recs and all(
         s["via"] == "fallback" and s["r_format"] == 0.0
@@ -262,7 +280,7 @@ def test_collector_aggregates_and_skips_unjudged(tmp_path):
 def test_group_generation_runs_concurrently(tmp_path):
     """轴 A:一组的 4 个候选【并发】生成 —— 峰值并发 >1 即证明不再串行;
     且每个候选拿到的是自己的客户端副本(generate_audio 开关线程私有)。"""
-    _run, _pol, recs, _res, vg, _jg = _episode(tmp_path)
+    _run, _pol, recs, _res, vg, _jg, _frz = _episode(tmp_path)
     sh = vg.shared
     assert sh["peak"] >= 2, f"并发峰值只有 {sh['peak']} —— 仍在串行"
     # 候选生成用的是 clone,不是原客户端(原客户端只在串行阶段用)
@@ -273,7 +291,7 @@ def test_group_generation_runs_concurrently(tmp_path):
 def test_candidate_dirs_isolated(tmp_path):
     """每候选独占工作目录 shotNNN/cK —— 中间产物(上镜尾帧、尾段裁片)
     同名也不会互相覆盖。"""
-    run, _pol, recs, _res, _vg, _jg = _episode(tmp_path)
+    run, _pol, recs, _res, _vg, _jg, _frz = _episode(tmp_path)
     for g in recs:
         vids = [s["video"] for s in g["samples"] if s["video"]]
         assert len(set(vids)) == len(vids)          # 互不重名
@@ -336,9 +354,43 @@ def test_judges_run_concurrently_and_keep_index_order(tmp_path):
                         _exit()
             super().__init__(text=T(), ranker=R(), consistency=C())
 
-    _run, _pol, recs, _res, _vg, _jg = _episode(tmp_path, judges=J())
+    _run, _pol, recs, _res, _vg, _jg, _frz = _episode(tmp_path, judges=J())
     assert seen["peak"] >= 2, "判官仍在串行"
     assert sorted(seen["text_calls"][:4]) == [0, 1, 2, 3]
     # 分数按下标回填:文本判官给 c_i 的分是 0.1*(i+1),严格递增
     r_text = [s["r_text"] for s in recs[0]["samples"]]
     assert r_text == sorted(r_text) and r_text[0] < r_text[-1]
+
+
+def test_stitcher_rides_frozen_model_and_has_its_skill(tmp_path,
+                                                       monkeypatch):
+    """2026-08-20 用户裁决:缝合师是独立 agent(自带上下文、产物不进
+    训练目标)→ 钉在冻结 qwen3.8-max 上,不跟被训策略漂移。
+    同时锁死移植期的静默 bug:它的技能手册必须真的装上(曾是 0 字符)。
+
+    直接验证【接线】而非跑通派生链:派生要先从上镜成片抽尾帧,桩件的
+    假 mp4 解不出来,真链路在单测里到不了缝合师。"""
+    import env.junction_stitcher as js
+    js._SKILL_CACHE.pop("junction_stitch", None)     # 清缓存,验预置
+    got = {}
+    real = L.JunctionStitcherAgent
+
+    class _Rec(real):
+        def __init__(self, llm=None):
+            got["llm"] = llm
+            super().__init__(llm=llm)
+
+    monkeypatch.setattr(L, "JunctionStitcherAgent", _Rec)
+    _run, pol, _recs, _res, _vg, _jg, frz = _episode(tmp_path)
+
+    # ① 缝合师拿到的是冻结实例,不是被训策略
+    assert got["llm"] is frz, "缝合师没接到冻结模型"
+    assert got["llm"] is not pol, "缝合师仍接在被训策略上"
+
+    # ② 技能手册真的装上了(0 字符 = 裸奔,正是移植期埋的 bug)
+    assert len(js._SKILL_CACHE["junction_stitch"]) > 1000
+
+    # ③ 只搬了缝合师:其余内联岗位仍在策略上(要改必须是明示的)
+    kinds = {k for k, _ in pol.calls}
+    assert "cast_judge" in kinds and "space_pick" in kinds
+    assert not any(k == "stitch" for k, _ in pol.calls)
