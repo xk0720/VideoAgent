@@ -24,874 +24,363 @@
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --paper:     #0E1216;
-      --surface:   #161B21;
-      --surface-2: #1C222A;
-      --ink:       #E6EAEF;
-      --ink-soft:  #C2CAD3;
-      --muted:     #96A1AD;
-      --rule:      #2A323B;
-      --rule-soft: #222932;
-      --tally:     #E0695D;
-      --brain:     #8E9AF7;
-      --brain-bg:  #1E2440;
-      --vlm:       #4ECBB7;
-      --vlm-bg:    #12302D;
-      --det:       #9BA6B2;
-      --det-bg:    #232A32;
-      --gen:       #E0A94D;
-      --gen-bg:    #33280F;
+      --paper:#0E1216; --surface:#161B21; --surface-2:#1C222A;
+      --ink:#E6EAEF; --ink-soft:#C2CAD3; --muted:#96A1AD;
+      --rule:#2A323B; --rule-soft:#222932; --tally:#E0695D;
+      --brain:#8E9AF7; --brain-bg:#1E2440; --vlm:#4ECBB7; --vlm-bg:#12302D;
+      --det:#9BA6B2; --det-bg:#232A32; --gen:#E0A94D; --gen-bg:#33280F;
     }
   }
   :root[data-theme="dark"] {
-    --paper:     #0E1216;
-    --surface:   #161B21;
-    --surface-2: #1C222A;
-    --ink:       #E6EAEF;
-    --ink-soft:  #C2CAD3;
-    --muted:     #96A1AD;
-    --rule:      #2A323B;
-    --rule-soft: #222932;
-    --tally:     #E0695D;
-    --brain:     #8E9AF7;
-    --brain-bg:  #1E2440;
-    --vlm:       #4ECBB7;
-    --vlm-bg:    #12302D;
-    --det:       #9BA6B2;
-    --det-bg:    #232A32;
-    --gen:       #E0A94D;
-    --gen-bg:    #33280F;
+    --paper:#0E1216; --surface:#161B21; --surface-2:#1C222A;
+    --ink:#E6EAEF; --ink-soft:#C2CAD3; --muted:#96A1AD;
+    --rule:#2A323B; --rule-soft:#222932; --tally:#E0695D;
+    --brain:#8E9AF7; --brain-bg:#1E2440; --vlm:#4ECBB7; --vlm-bg:#12302D;
+    --det:#9BA6B2; --det-bg:#232A32; --gen:#E0A94D; --gen-bg:#33280F;
   }
 
   body {
-    background: var(--paper);
-    color: var(--ink);
-    font-family: var(--serif);
-    font-size: 16px;
-    line-height: 1.72;
-    margin: 0;
-    padding: 0 20px 96px;
-    -webkit-font-smoothing: antialiased;
+    background: var(--paper); color: var(--ink);
+    font-family: var(--serif); font-size: 16px; line-height: 1.65;
+    margin: 0; padding: 0 20px 90px; -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1120px; margin: 0 auto; }
-  p { margin: 0 0 0.9em; max-width: 74ch; }
-  code, .m { font-family: var(--mono); font-size: 0.86em; }
-  code {
-    background: var(--surface-2);
-    border: 1px solid var(--rule-soft);
-    border-radius: 3px;
-    padding: 0.08em 0.34em;
-    word-break: break-word;
-  }
-  a { color: var(--tally); }
+  .wrap { max-width: 940px; margin: 0 auto; }
+  p { margin: 0 0 0.85em; max-width: 72ch; }
+  code, .m { font-family: var(--mono); }
+  code { font-size: 0.85em; background: var(--surface-2); border: 1px solid var(--rule-soft);
+         border-radius: 3px; padding: 0.06em 0.32em; }
 
-  /* ── 报头 ───────────────────────────────────────── */
-  header {
-    border-bottom: 3px double var(--rule);
-    padding: 64px 0 26px;
-    margin-bottom: 40px;
-  }
-  .slug {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--tally);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    margin-bottom: 20px;
-  }
-  h1 {
-    font-family: var(--mono);
-    font-size: clamp(30px, 5vw, 46px);
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
-    margin: 0 0 14px;
-    text-wrap: balance;
-  }
-  .lede { font-size: 17.5px; color: var(--ink-soft); max-width: 66ch; margin: 0 0 26px; }
-  .runshape {
-    display: flex; flex-wrap: wrap; gap: 7px;
-    font-family: var(--mono); font-size: 11.5px;
-  }
-  .flag {
-    border: 1px solid var(--rule);
-    background: var(--surface);
-    border-radius: 2px;
-    padding: 3px 8px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-  .flag.on  { color: var(--vlm);  border-color: var(--vlm);  background: var(--vlm-bg); }
-  .flag.off { color: var(--muted); opacity: 0.75; text-decoration: line-through; text-decoration-thickness: 1px; }
+  header { border-bottom: 3px double var(--rule); padding: 60px 0 24px; margin-bottom: 34px; }
+  .slug { font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+          color: var(--tally); display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
+  h1 { font-family: var(--mono); font-size: clamp(28px, 5vw, 42px); font-weight: 600;
+       letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 12px; text-wrap: balance; }
+  .lede { font-size: 17px; color: var(--ink-soft); max-width: 64ch; margin: 0; }
 
-  /* ── 章节 ───────────────────────────────────────── */
-  h2 {
-    font-family: var(--mono);
-    font-size: 13px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--ink);
-    margin: 64px 0 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--rule);
-    display: flex; align-items: baseline; gap: 12px;
-  }
+  h2 { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.2em; text-transform: uppercase;
+       margin: 54px 0 6px; padding-bottom: 7px; border-bottom: 1px solid var(--rule);
+       display: flex; align-items: baseline; gap: 12px; }
   h2 .num { color: var(--tally); }
-  .sec-note { color: var(--muted); font-size: 14.5px; margin: 0 0 26px; max-width: 74ch; }
-  h3 {
-    font-family: var(--mono);
-    font-size: 12.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin: 36px 0 14px;
-  }
+  .sec-note { color: var(--muted); font-size: 14.5px; margin: 0 0 22px; max-width: 72ch; }
 
-  /* ── 图例 ───────────────────────────────────────── */
-  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; }
-  .leg {
-    background: var(--surface); border: 1px solid var(--rule);
-    border-left: 3px solid var(--k); border-radius: 3px; padding: 12px 14px;
-  }
-  .leg .t { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--k); letter-spacing: 0.06em; }
-  .leg .d { font-size: 14px; color: var(--muted); line-height: 1.5; margin-top: 3px; }
-
-  /* ── 主脊 ───────────────────────────────────────── */
-  .stage { display: grid; grid-template-columns: 122px 1fr; gap: 20px; margin-bottom: 14px; align-items: start; }
-  .rail { position: sticky; top: 14px; padding-top: 12px; }
-  .tag {
-    font-family: var(--mono); font-size: 15px; font-weight: 600;
-    color: var(--tally); letter-spacing: 0.02em; display: block;
-  }
-  .rail .sub { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
-  .card {
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
-    padding: 16px 18px;
-  }
-  .card + .card { margin-top: 10px; }
-  .card.dim { background: transparent; border-style: dashed; }
-  .chead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 4px; }
-  .cname { font-size: 17px; font-weight: 600; letter-spacing: 0.01em; }
-  .csym { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
-  .kind {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-    padding: 2px 7px; border-radius: 2px; font-weight: 600; white-space: nowrap;
-  }
+  /* ── 图例 ── */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .kind { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+          padding: 2px 7px; border-radius: 2px; font-weight: 600; white-space: nowrap; }
   .k-brain { color: var(--brain); background: var(--brain-bg); }
   .k-vlm   { color: var(--vlm);   background: var(--vlm-bg); }
   .k-det   { color: var(--det);   background: var(--det-bg); }
   .k-gen   { color: var(--gen);   background: var(--gen-bg); }
   .k-opt   { color: var(--muted); background: transparent; border: 1px dashed var(--rule); }
   .k-train { color: var(--tally); background: transparent; border: 1px solid var(--tally); }
+  .legend .lg { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted);
+                background: var(--surface); border: 1px solid var(--rule); border-radius: 3px; padding: 5px 10px; }
 
-  dl { display: grid; grid-template-columns: 62px 1fr; gap: 3px 14px; margin: 10px 0 0; font-size: 14.5px; }
-  dt {
-    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--muted); padding-top: 5px;
+  /* ── 流程节点 ── */
+  .node {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+    padding: 11px 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px;
   }
-  dd { margin: 0; color: var(--ink-soft); line-height: 1.6; }
-  dd.fb { color: var(--muted); }
+  .node .nm { font-size: 16.5px; font-weight: 600; }
+  .node .role { font-size: 13.5px; color: var(--muted); font-family: var(--sans); }
+  .node.train { border: 2px solid var(--tally); background: color-mix(in srgb, var(--tally) 5%, var(--surface)); }
+  .node.gate  { border-style: dashed; border-color: var(--tally); background: transparent; }
+  .node.dim   { background: transparent; border-style: dashed; }
 
-  .arrow { font-family: var(--mono); color: var(--tally); text-align: center; font-size: 14px; line-height: 1; margin: 2px 0 2px 142px; }
-
-  /* ── 每镜循环容器 ───────────────────────────────── */
-  .loopbox {
-    border: 1px solid var(--tally); border-radius: 5px;
-    background: color-mix(in srgb, var(--tally) 4%, transparent);
-    padding: 18px 18px 8px; margin: 8px 0 18px;
+  /* 箭头 + 数据标签 */
+  .flow { position: relative; padding-left: 26px; margin: 0; }
+  .flow::before { content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px;
+                  width: 1px; background: var(--rule); }
+  .edge { position: relative; padding: 7px 0 7px 0; }
+  .edge::before { content: "▼"; position: absolute; left: -25px; top: 8px;
+                  font-size: 9px; color: var(--tally); font-family: var(--mono); }
+  .data {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft);
+    background: var(--surface-2); border: 1px solid var(--rule-soft);
+    border-radius: 2px; padding: 4px 9px; display: inline-block; max-width: 100%;
   }
-  .loophead {
-    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase;
-    color: var(--tally); margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
-  }
-  .loophead .n { font-size: 13px; font-weight: 600; }
+  .data em { font-family: var(--sans); font-style: normal; color: var(--muted); font-size: 12px; }
 
-  /* ── 表 ─────────────────────────────────────────── */
+  /* 并行分支 */
+  .fan { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+  .fan .node { display: block; }
+  .fan .nm { display: block; margin-bottom: 3px; }
+  .fan .out { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px;
+              display: block; line-height: 1.5; }
+
+  /* 每镜盒 */
+  .loopbox { border: 1px solid var(--tally); border-radius: 5px;
+             background: color-mix(in srgb, var(--tally) 4%, transparent);
+             padding: 16px 18px; margin: 10px 0 0; }
+  .loophead { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase;
+              color: var(--tally); margin-bottom: 14px; font-weight: 600; }
+  .sub { border-left: 2px solid var(--rule); margin: 8px 0 8px 8px; padding-left: 14px; }
+  .subhead { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+             color: var(--muted); margin-bottom: 8px; }
+
+  /* 回环 */
+  .loopback { font-family: var(--mono); font-size: 12.5px; color: var(--tally);
+              border: 1px dashed var(--tally); border-radius: 3px; padding: 7px 11px;
+              display: inline-block; margin-top: 8px; }
+
+  /* 表 */
   .tw { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-family: var(--sans); }
-  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
-  th {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-    color: var(--muted); background: var(--surface-2); position: sticky; top: 0; white-space: nowrap;
-  }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+       color: var(--muted); background: var(--surface-2); white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
-  td.m, td .m { font-size: 12px; color: var(--muted); }
-  td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-  .bar { display: inline-block; height: 7px; background: var(--tally); border-radius: 1px; vertical-align: middle; opacity: 0.8; }
-  .real { color: var(--vlm); font-weight: 600; }
-  .prox { color: var(--muted); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  td .m { font-size: 12px; color: var(--muted); }
 
-  /* ── 注意条 ─────────────────────────────────────── */
-  ol.gotchas { padding-left: 0; list-style: none; counter-reset: g; margin: 0; }
-  ol.gotchas li {
-    counter-increment: g; position: relative; padding: 12px 0 12px 46px;
-    border-bottom: 1px solid var(--rule-soft); max-width: 82ch;
-  }
-  ol.gotchas li::before {
-    content: counter(g, decimal-leading-zero);
-    position: absolute; left: 0; top: 13px;
-    font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--tally);
-  }
-  ol.gotchas li:last-child { border-bottom: none; }
+  footer { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--rule);
+           font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+           display: flex; flex-wrap: wrap; gap: 18px; }
 
-  footer {
-    margin-top: 72px; padding-top: 18px; border-top: 1px solid var(--rule);
-    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
-    display: flex; flex-wrap: wrap; gap: 18px;
-  }
-
-  @media (max-width: 720px) {
-    .stage { grid-template-columns: 1fr; gap: 6px; }
-    .rail { position: static; padding-top: 0; display: flex; gap: 10px; align-items: baseline; }
-    .arrow { margin-left: 0; }
-    dl { grid-template-columns: 1fr; gap: 0 0; }
-    dt { padding-top: 8px; }
+  @media (max-width: 640px) {
+    .flow { padding-left: 20px; }
+    .edge::before { left: -19px; }
   }
 </style>
 
 <div class="wrap">
 
 <header>
-  <div class="slug">
-    <span>Maestro · window pipeline</span>
-    <span>dev-music-bailian</span>
-    <span>2026-08-21</span>
-  </div>
+  <div class="slug"><span>Maestro · window pipeline</span><span>dev-music-bailian</span><span>2026-08-21</span></div>
   <h1>生产管线全图</h1>
   <p class="lede">
-    一部片子从一句话到 <code>movie.mp4</code>,中间站着 <strong>25 个模型 agent</strong> 和
-    <strong>10 个确定性组件</strong>。这张图按代码里自己的段号排,每个 agent 写明:
-    吃什么、吐什么契约、坏了退到哪、用哪个模型槽位。入口是
-    <code>scripts/test_window_movie.py</code> → <code>generate_movie_windowed</code>。
+    谁 → 交出什么 → 给谁。一部片子从一句话到 <code>movie.mp4</code>,
+    途经 <strong>25 个模型 agent</strong>,方框之间那一行灰字就是传下去的东西。
   </p>
-  <div class="runshape">
-    <span class="flag on">review 开</span>
-    <span class="flag on">junction-agent 开</span>
-    <span class="flag">--max-turns 3</span>
-    <span class="flag">--n-candidates 1</span>
-    <span class="flag">--patience 2</span>
-    <span class="flag">--repair-mode full</span>
-    <span class="flag">--tail-seconds 2.0</span>
-    <span class="flag off">--transitions</span>
-    <span class="flag off">--bgm / --audio</span>
-    <span class="flag off">--prompt-enhancer</span>
-    <span class="flag off">--with-physics-measure</span>
-    <span class="flag off">--baseline-anchor</span>
-    <span class="flag off">--pin-gate-mad 0</span>
-  </div>
 </header>
 
-<h2><span class="num">§0</span> 图例:四种零件</h2>
-<p class="sec-note">
-  先打个比方:整条线像一个剧组。<strong>脑</strong>动嘴皮子做决定,<strong>眼</strong>看片子挑毛病,
-  <strong>尺</strong>是不带模型的硬规矩(它保证脑抽风时片子照样能拍完),<strong>手</strong>是真花钱出画面的后端。
-</p>
 <div class="legend">
-  <div class="leg" style="--k: var(--brain)">
-    <div class="t">脑 · LLM</div>
-    <div class="d">纯文本严格 JSON 决策。出格/不可解析一律走确定性优先级兜底,并在 <code>brain_calls.jsonl</code> 记 <code>via=fallback</code>。</div>
-  </div>
-  <div class="leg" style="--k: var(--vlm)">
-    <div class="t">眼 · VLM</div>
-    <div class="d">读画面/读视频。铁律是<strong>没看到就不编</strong>——拿不到回包就返回空,由上游诚实记"零证据"。</div>
-  </div>
-  <div class="leg" style="--k: var(--det)">
-    <div class="t">尺 · 确定性</div>
-    <div class="d">不含任何模型的规则、闸门与打分。脑全挂了,这条线仍能出片,只是质量降级且日志刺眼。</div>
-  </div>
-  <div class="leg" style="--k: var(--gen)">
-    <div class="t">手 · 生成后端</div>
-    <div class="d">可灵 / seedance(视频)、flux(t2i)、seedream(图编)、ace-step(音乐)、ffmpeg(剪接)。</div>
-  </div>
+  <span class="lg"><span class="kind k-brain">脑</span> 文本 LLM 决策</span>
+  <span class="lg"><span class="kind k-vlm">眼</span> VLM 看画面</span>
+  <span class="lg"><span class="kind k-det">尺</span> 无模型的硬规矩</span>
+  <span class="lg"><span class="kind k-gen">手</span> 花钱出画面的后端</span>
+  <span class="lg"><span class="kind k-opt">opt</span> 默认关</span>
 </div>
 
-<h2><span class="num">§1</span> 筹备期 · 一次性,全片共享</h2>
-<p class="sec-note">
-  这一段的产物(剧本、人物canon、分镜、肖像、背景板、空间圣经)是后面每一镜共用的<strong>底本</strong>。
-  它跑完之前一帧视频都不生成——因为底本错了,后面每一镜都错。
-</p>
+<h2><span class="num">一</span> 筹备期 · 一次性,全片共享</h2>
+<p class="sec-note">这一段跑完之前,一帧视频都不生成。因为底本错了,后面每一镜都错。</p>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§M</span><span class="sub">memory open</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">跨片记忆开卷</span><span class="csym">EpisodeMemory.guidance_for</span><span class="kind k-det">尺</span></div>
-      <dl>
-        <dt>目标</dt><dd>把历史片子的教训取出来,压成本轮的建议与禁区。</dd>
-        <dt>输入</dt><dd><code>outputs/memory/episodes.jsonl</code> + 本次 idea</dd>
-        <dt>输出</dt><dd><code>{replay_hints, avoid, past_task_shapes, n_episodes_matched}</code> —— 只喂给分镜和图计划当参考,不具约束力</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
+<div class="flow">
 
-<div class="stage">
-  <div class="rail"><span class="tag">§A0</span><span class="sub">screenplay</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">剧本扩写</span><span class="csym">window_loop._write_screenplay:1221</span><span class="kind k-brain">脑</span></div>
-      <dl>
-        <dt>模型</dt><dd class="m">crew.screenwriter → models.llm · skill <code>screenplay/SKILL.md</code></dd>
-        <dt>目标</dt><dd>一句话点子 → 一份能拍的短剧本。</dd>
-        <dt>输入</dt><dd><code>{idea, asset_catalog}</code></dd>
-        <dt>输出</dt><dd><code>{"screenplay": "…与 idea 同语言…"}</code></dd>
-        <dt>兜底</dt><dd class="fb">用户给了 <code>--screenplay</code> ⇒ 原样采用(<code>via=user</code>);LLM 挂 ⇒ <code>via=idea_passthrough</code>,原始点子直接往下走并大声告警</dd>
-      </dl>
-    </div>
-    <div class="card dim">
-      <div class="chead"><span class="cname">语言闩</span><span class="csym">set_output_lang / set_run_sound_lexicon</span><span class="kind k-det">尺</span></div>
-      <dl>
-        <dt>作用</dt><dd>剧本是什么语言,<strong>全片所有模型输出</strong>就锁成什么语言。后面四道语言闸门都对这把闩。</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
+  <div class="node"><span class="nm">用户</span><span class="role">一句话点子 / 或直接给剧本 / 或给角色图与素材</span></div>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§A1</span><span class="sub">cast canon</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">人物抽取</span><span class="csym">window_loop._extract_characters:1345</span><span class="kind k-brain">脑</span></div>
-      <dl>
-        <dt>模型</dt><dd class="m">models.llm(<strong>通用槽,不是 crew.screenwriter</strong>)· skill <code>character_extract</code></dd>
-        <dt>目标</dt><dd>剧本 → 人物圣经 <code>{名字: "static: 长相…; dynamic: 本片变化…"}</code>。static 半句是全片身份锚,后面每一镜的提示词都引用它。</dd>
-        <dt>输出</dt><dd><code>{"characters": {"&lt;name&gt;": "static: …ENGLISH…; dynamic: …"}}</code></dd>
-        <dt>兜底</dt><dd class="fb">2 次尝试;中文名语言闸门重试一次后放行;用户给了角色图 ⇒ <code>_apply_caption_canon</code> 用 VLM 图注<strong>硬覆盖</strong> static 半句(图永远赢过文字)</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
+  <div class="edge"><span class="data">idea 一句话 <em>(+ 用户素材)</em></span></div>
+  <div class="node"><span class="nm">编剧 agent</span><span class="kind k-brain">脑</span><span class="role">点子 → 一份能拍的短剧本</span></div>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§A</span><span class="sub">playwriting</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">分镜编剧</span><span class="csym">window_loop._write_outline:1547</span><span class="kind k-brain">脑</span></div>
-      <dl>
-        <dt>模型</dt><dd class="m">crew.scene_writer → models.llm · skill <code>scene_write/SKILL.md</code>(175 行)</dd>
-        <dt>目标</dt><dd>剧本 → 时间有序的镜头表。<strong>这是全片信息量最大的一次调用</strong>:时长、结束状态、开场画面、对白、背景 id、机位朝向、变化幅度、音乐计划全在这一份 JSON 里。</dd>
-        <dt>输入</dt><dd><code>{user_prompt(=剧本), prompt_language, cast_canon, asset_catalog, episode_guidance, max_shots_hard_cost_cap}</code></dd>
-        <dt>输出</dt><dd><code>{cast, setting, shots:[{description, duration_s 4–10, end_state, variation, opening_frame, dialogue, bg, camera_facing}], music_plan}</code></dd>
-        <dt>闸门</dt><dd>四道独立闸门各带一次纠正重试:<strong>语言 → 对白覆盖 → cast 键语言 → 声音覆盖</strong></dd>
-        <dt>兜底</dt><dd class="fb">全部用尽 ⇒ <code>ScreenwriterAgent.run</code> 机械切句(<code>via=fallback</code>,时长全 <code>None</code>、结束状态全空)</dd>
-      </dl>
-    </div>
-    <div class="card dim">
-      <div class="chead"><span class="cname">DirectorAgent</span><span class="csym">agents/director.py:13</span><span class="kind k-det">尺</span></div>
-      <dl>
-        <dt>目标</dt><dd>大纲 → <code>ShotSpec[]</code>:关键词摄影法、身份/风格参考、事件图、教训注入。<strong>全程确定性</strong>,虽然持有 llm 实例但结果被丢弃;<code>spec.duration</code> 随后被分镜的值覆写。</dd>
-      </dl>
-    </div>
-    <div class="card dim">
-      <div class="chead"><span class="cname">台账开张</span><span class="csym">StoryboardMemory.from_outline → storyboard.json</span><span class="kind k-det">尺</span></div>
-      <dl>
-        <dt>作用</dt><dd>此后<strong>每一次状态变更都立刻回写这个文件</strong>。崩溃可续跑、事后可复盘,全靠它。</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
+  <div class="edge"><span class="data">screenplay_text 剧本全文 <em>· 同时锁定全片输出语言</em></span></div>
+  <div class="node"><span class="nm">人物抽取 agent</span><span class="kind k-brain">脑</span><span class="role">剧本里有谁,长什么样</span></div>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§A′</span><span class="sub">portraits</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">人物肖像册</span><span class="csym">window_loop._ensure_cast_portraits:483</span><span class="kind k-gen">手</span><span class="kind k-vlm">眼</span></div>
-      <dl>
-        <dt>目标</dt><dd>每个角色一张官方肖像 —— 后面所有镜的身份一致性都锚在这张图上。</dd>
-        <dt>取图</dt><dd>用户素材 → <code>CharacterLibrary</code> 跨片复用(static 重合 ≥0.6)→ t2i 现画(flux-kontext-pro)</dd>
-        <dt>输出</dt><dd><code>&lt;run&gt;/portraits/&lt;name&gt;.png</code> + <code>asset_memory.identity_anchors["portrait:&lt;n&gt;"]</code></dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
+  <div class="edge"><span class="data">cast_canon {名字: "static 长相 ; dynamic 本片变化"}</span></div>
+  <div class="node dim"><span class="nm">肖像图注</span><span class="kind k-vlm">眼</span><span class="role">用户给了角色图时,用图注<strong>硬覆盖</strong> static 半句 —— 图永远赢过文字</span></div>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§A2</span><span class="sub">bg plates</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">场景图提示词</span><span class="csym">window_loop._write_bg_prompts:1287</span><span class="kind k-brain">脑</span></div>
-      <dl>
-        <dt>模型</dt><dd class="m">models.llm(<strong>通用槽</strong>)· skill <code>scene_image</code></dd>
-        <dt>目标</dt><dd>每个 <code>bg_id</code> 一句"<strong>空场</strong>"t2i 提示词 —— 背景板上不能有人,有人就会污染后面的身份参考。</dd>
-        <dt>输出</dt><dd><code>{"backgrounds": {"&lt;bg_id&gt;": {"prompt": …}}}</code> → 出图 <code>&lt;run&gt;/anchors/bg_&lt;id&gt;.png</code></dd>
-        <dt>兜底</dt><dd class="fb">模板句 <code>"Establishing frame of the empty location: {setting}…"</code>;<strong>两条路都过</strong> <code>_scrub_bg_prompt</code>:剥人名 + 追加"无主角"后缀</dd>
-      </dl>
-    </div>
-    <div class="card" style="border-color: var(--tally)">
-      <div class="chead"><span class="cname">素材保证闸门</span><span class="csym">window_loop.py:4039</span><span class="kind k-det">尺</span></div>
-      <dl>
-        <dt>作用</dt><dd>任何一镜缺肖像或缺背景板 ⇒ <strong>直接 RuntimeError 中止</strong>。宁可不开工,也不让缺料的镜进生成——那是"人物长相每镜一变"的根源。</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
+  <div class="edge"><span class="data">screenplay_text + cast_canon</span></div>
+  <div class="node"><span class="nm">分镜导演 agent</span><span class="kind k-brain">脑</span><span class="role">全片信息量最大的一次调用</span></div>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§SB</span><span class="sub">space bible</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">空间圣经 · 建册</span><span class="csym">space_bible.build_space_views:61</span><span class="kind k-gen">手</span><span class="kind k-vlm">眼</span></div>
-      <dl>
-        <dt>目标</dt><dd>给每个场景拍一对 180° 摇镜 → 抽帧 → 得到同一空间的多个朝向视图。解决的是"同一个屋子,换个机位就变成另一个屋子"。</dd>
-        <dt>产物</dt><dd><code>spaces/&lt;bg&gt;_pan_{right,left}180.mp4</code> + <code>&lt;bg&gt;_{right,left}_{90,180}.png</code></dd>
-        <dt>图注</dt><dd>每个视图由 VLM 出一句<strong>固定元素清单</strong>(≤400 字符)—— 这是后面挑图和帧审查<strong>唯一</strong>的判据</dd>
-        <dt>去重</dt><dd class="fb">近重复视图(MAD &lt; 12)直接丢弃,记 <code>via=dropped_dup</code></dd>
-      </dl>
-    </div>
+  <div class="edge">
+    <span class="data">shots[] 每镜:描述 · 时长 · 结束状态 · 开场画面 · 对白 · 背景id · 机位朝向<br>
+    cast · setting · music_plan &nbsp;<em>→ 落成台账 storyboard.json</em></span>
   </div>
-</div>
-<div class="arrow">↓</div>
+  <div class="node dim"><span class="nm">DirectorAgent</span><span class="kind k-det">尺</span><span class="role">加摄影法/参考/事件图 → ShotSpec[](确定性,不调模型)</span></div>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§B′</span><span class="sub">image plan</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">图计划</span><span class="csym">window_loop._decide(…, "image-plan"):1947</span><span class="kind k-brain">脑</span></div>
-      <dl>
-        <dt>模型</dt><dd class="m">crew.video_brain → models.llm · skill <code>image_plan/SKILL.md</code></dd>
-        <dt>目标</dt><dd>逐镜决定:<strong>要不要自己的图、要几张(0/1/2)、每张干什么用、从哪来</strong>。首帧?末帧?纯参考?</dd>
-        <dt>输入</dt><dd><code>{shot, prompt_language, cast, setting, storyboard, asset_catalog, episode_guidance}</code> + <code>_image_plan_menu</code> 现算的菜单</dd>
-        <dt>输出</dt><dd><code>{strategy ∈ {none, single_first_frame, single_reference, pair_first_last, pair_reference}, reason, images:[{source ∈ t2i|asset_image|video_extract, description}] ≤2}</code></dd>
-        <dt>兜底</dt><dd class="fb">出菜单/不可解析 ⇒ <code>_PLAN_PRIORITY</code> 顺位取第一个可用者(<code>via=fallback</code>)</dd>
-      </dl>
-    </div>
+  <div class="edge"><span class="data">shots[] + cast_canon &nbsp;<em>三路并行</em></span></div>
+  <div class="fan">
+    <div class="node"><span class="nm">肖像册</span><span class="kind k-gen">手</span><span class="kind k-vlm">眼</span>
+      <span class="out">→ portraits/&lt;名字&gt;.png<br>取图顺序:用户素材 → 跨片肖像库 → t2i 现画</span></div>
+    <div class="node"><span class="nm">场景图 agent</span><span class="kind k-brain">脑</span>
+      <span class="out">→ 每个场景一句"<strong>空场</strong>"提示词<br>→ 出图 anchors/bg_*.png(板上不许有人)</span></div>
+    <div class="node"><span class="nm">素材打标</span><span class="kind k-vlm">眼</span>
+      <span class="out">→ 给每份用户素材一个可检索标签</span></div>
   </div>
+
+  <div class="edge"><span class="data">背景板 anchors/bg_*.png</span></div>
+  <div class="node"><span class="nm">空间圣经</span><span class="kind k-gen">手</span><span class="kind k-vlm">眼</span>
+    <span class="role">拿背景板拍一对 180° 摇镜 → 抽帧得到同一空间的多个朝向 → 每个视图出一句<strong>固定元素清单</strong>图注</span></div>
+
+  <div class="edge"><span class="data">spaces[场景][视图] = {图, 图注} &nbsp;<em>解决"同一个屋子换个机位就变成另一个屋子"</em></span></div>
+  <div class="node gate"><span class="nm">素材保证闸门</span><span class="kind k-det">尺</span>
+    <span class="role">任何一镜缺肖像或缺背景板 ⇒ <strong>直接中止</strong>,不让缺料的镜进生成</span></div>
+
+  <div class="edge"><span class="data">shots[] + 肖像 + 背景板 + 素材目录</span></div>
+  <div class="node"><span class="nm">图计划 agent</span><span class="kind k-brain">脑</span><span class="role">逐镜决定要不要自己的图</span></div>
+
+  <div class="edge"><span class="data">每镜 images[] :几张(0/1/2)· 干什么用(首帧/末帧/纯参考)· 从哪来(t2i / 用户素材 / 视频抽帧)<br><em>→ 出图 keyframes/*.png</em></span></div>
 </div>
 
-<h2><span class="num">§2</span> 每镜循环 · 逐镜重复</h2>
-<p class="sec-note">
-  下面这一整块对<strong>每一镜</strong>跑一遍。顺序是硬的:先判交界(这镜和上镜怎么接)、再定条件(用什么方式生成)、
-  再把提示词过五道闸、然后花钱出片、最后进修复小循环。
-</p>
+<h2><span class="num">二</span> 每镜循环 · 逐镜重复</h2>
+<p class="sec-note">下面这一整块对<strong>每一镜</strong>跑一遍。</p>
 
 <div class="loopbox">
-  <div class="loophead"><span class="n">FOR EACH SHOT</span><span>storyboard.next_pending()</span></div>
+  <div class="loophead">◆ For each shot</div>
 
-  <div class="stage">
-    <div class="rail"><span class="tag">§J</span><span class="sub">junction</span></div>
-    <div>
-      <div class="card">
-        <div class="chead"><span class="cname">交界人物判官</span><span class="csym">window_loop._judge_junction_cast:3185</span><span class="kind k-brain">脑</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m">crew.video_brain → models.llm · 内联提示词(无 skill 文件)</dd>
-          <dt>目标</dt><dd>三选一分诊:上镜结尾<strong>画面里站着谁</strong>、本镜开场<strong>画面里站着谁</strong> ⇒ <code>derive</code>(派生切帧)/ <code>cut</code>(硬切)/ <code>continue</code>(接着演)。</dd>
-          <dt>输出</dt><dd><code>{prev_end_cast:[…], cur_open_cast:[…], reason}</code></dd>
-          <dt>兜底</dt><dd class="fb">确定性集合比对 <code>&lt;name&gt;</code> 标记 + 肖像路径人脸相等;任一边为空 ⇒ 保守判"同人"</dd>
-        </dl>
-      </div>
-      <div class="card">
-        <div class="chead"><span class="cname">接点实况观察</span><span class="csym">window_loop._junction_state:3072</span><span class="kind k-vlm">眼</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m">通用 models.mllm(<strong>不是 crew.reviewer</strong>)· <code>describe_junction_video</code></dd>
-          <dt>目标</dt><dd>只回答一件事:<strong>上一镜实际是怎么结束的</strong>(机位角度 + 每个人在干什么)。剧本写的"结束状态"是意图,这个是事实。</dd>
-          <dt>输入</dt><dd>上镜末 <code>--tail-seconds</code> 秒 + 肖像册</dd>
-          <dt>兜底</dt><dd class="fb">视频读不了 ⇒ 退单帧图注;全失败 ⇒ 返回 <code>""</code> 跳过(不编)。按 <code>(path, mtime)</code> 缓存,每镜只调一次</dd>
-        </dl>
-      </div>
-      <div class="card">
-        <div class="chead"><span class="cname">空间视图挑图</span><span class="csym">space_bible.pick_space_view:246</span><span class="kind k-brain">脑</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m">crew.video_brain → models.llm · 内联提示词</dd>
-          <dt>目标</dt><dd>这一镜该锚在这个场景的<strong>哪个朝向视图</strong>上。</dd>
-          <dt>输入</dt><dd>本镜 <code>camera_facing</code> + <code>[{view, caption}]</code> 菜单</dd>
-          <dt>兜底</dt><dd class="fb">≤1 个视图 ⇒ 取第一个;挑出格 ⇒ 回 <code>master</code> 并记 <code>usable:false</code></dd>
-        </dl>
-      </div>
-      <div class="card">
-        <div class="chead"><span class="cname">缝合师</span><span class="csym">agents/junction_stitcher.py:46</span><span class="kind k-brain">脑</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m"><strong>crew.junction_stitcher</strong> → crew.video_brain → models.llm · skill <code>junction_stitch/SKILL.md</code></dd>
-          <dt>目标</dt><dd>写一段"两镜…切至…"的双镜视频描述,让模型自己推出<strong>切点之后那一帧</strong>长什么样。它有独立 crew 槽位,正因为它上下文自成一体、可以单独换底座。</dd>
-          <dt>输入</dt><dd><code>{prompt_language, prev_end_state_script, prev_tail_report, current_shot_opening_script, slot_table}</code></dd>
-          <dt>输出</dt><dd><code>{first_shot_desc, second_shot_desc}</code></dd>
-          <dt>兜底</dt><dd class="fb">四级校验(非空 / token ⊆ 槽位表 / 无裸人名 / 语言)→ 一次纠正重试 → 确定性模板拼装,<code>_stitch_via="template"</code></dd>
-        </dl>
-      </div>
-      <div class="card">
-        <div class="chead"><span class="cname">帧审查</span><span class="csym">cinegraph/first_frame_factory.frame_review_ok:64</span><span class="kind k-vlm">眼</span><span class="kind k-brain">脑</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m">看图 = 通用 models.mllm(<code>caption_image</code>);裁决 = crew.video_brain</dd>
-          <dt>目标</dt><dd>派生出来的那一帧,和意图<strong>矛盾</strong>才拒。带"布局法条":只比固定元素的空间排布,天色/光线/时辰一律豁免(首跑事故:三连拒全是在拒晚霞颜色)。</dd>
-          <dt>输出</dt><dd><code>{"ok": bool, "reason": str}</code></dd>
-          <dt>兜底</dt><dd class="fb"><strong>失败即放行</strong>(fail-open)。拒 ⇒ 换 seed 778 再派生一次;二拒 ⇒ 返回 <code>None</code> ⇒ 交界降级为硬切</dd>
-        </dl>
-      </div>
-      <div class="card dim">
-        <div class="chead"><span class="cname">派生成功的产物</span><span class="kind k-det">尺</span></div>
-        <dl>
-          <dt>写入</dt><dd><code>entry.images += {source:"pin_frame", role:"reference"}</code>,并把 <code>junction_meta</code> 全量落台账(kind / route_reason / space_view / 缝合师 via / 双镜视频 / 实况报告)</dd>
-        </dl>
+  <div class="flow">
+    <div class="node"><span class="nm">交界人物判官 agent</span><span class="kind k-brain">脑</span>
+      <span class="role">上镜结尾画面里站着谁、本镜开场站着谁</span></div>
+
+    <div class="edge"><span class="data">三选一:derive 派生切帧 / cut 硬切 / continue 接着演</span></div>
+
+    <div class="sub">
+      <div class="subhead">仅当 derive —— 四个 agent 接力造出"切点之后那一帧"</div>
+      <div class="flow">
+        <div class="node"><span class="nm">接点实况观察</span><span class="kind k-vlm">眼</span>
+          <span class="role">看上镜最后 2 秒:<strong>实际</strong>是怎么结束的(剧本写的是意图,这个是事实)</span></div>
+        <div class="edge"><span class="data">机位角度 + 每个人在干什么</span></div>
+
+        <div class="node"><span class="nm">空间视图挑图 agent</span><span class="kind k-brain">脑</span>
+          <span class="role">吃 <strong>空间圣经</strong> 的视图菜单</span></div>
+        <div class="edge"><span class="data">本镜锚定的朝向视图 + 它的图注</span></div>
+
+        <div class="node"><span class="nm">缝合师 agent</span><span class="kind k-brain">脑</span>
+          <span class="role">上下文自成一体,有独立模型槽位</span></div>
+        <div class="edge"><span class="data">{第一镜描述, 第二镜描述} —— 一段"两镜…切至…"的双镜脚本</span></div>
+
+        <div class="node"><span class="nm">双镜视频生成</span><span class="kind k-gen">手</span>
+          <span class="role">让模型自己推出切点之后的空间关系 → 抽出切后那一帧</span></div>
+        <div class="edge"><span class="data">切后帧 junction_derived.png</span></div>
+
+        <div class="node"><span class="nm">帧审查</span><span class="kind k-vlm">眼</span><span class="kind k-brain">脑</span>
+          <span class="role">只比固定元素的空间排布;天色光线时辰一律豁免。<strong>失败即放行</strong>,两次被拒才降级成硬切</span></div>
+        <div class="edge"><span class="data">pin_frame 钉帧参考图 <em>(挂进本镜 images[])</em></span></div>
       </div>
     </div>
-  </div>
-  <div class="arrow">↓</div>
 
-  <div class="stage">
-    <div class="rail"><span class="tag">§C</span><span class="sub">condition</span></div>
-    <div>
-      <div class="card" style="border-color: var(--tally); border-width: 2px">
-        <div class="chead"><span class="cname">条件决策</span><span class="csym">window_loop._decide(…, "generation-condition"):4376</span><span class="kind k-brain">脑</span><span class="kind k-train">RL 训练对象</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m">crew.video_brain → models.llm · skill <code>window_generation/SKILL.md</code>(234 行,"视频提示词法典")</dd>
-          <dt>目标</dt><dd>一次调用干两件事:<strong>挑条件策略</strong> + <strong>写出最终的视频提示词</strong>。这是整条线上最贵、最难、也是我们唯一拿去做 GRPO 训练的那个决策点。</dd>
-          <dt>输入</dt><dd><code>{shot, prompt_language, prev_shot, junction, cast, setting, cast_in_shot, slots_by_strategy, storyboard, episode_guidance}</code> + <code>_condition_menu</code> 按后端能力现算的菜单</dd>
-          <dt>输出</dt><dd><code>{strategy, reason, video_prompt, use_prev_tail_video}</code>(机械字段静默丢弃)</dd>
-          <dt>锁菜单</dt><dd>只要交界判官给了 kind 且后端支持,<strong>菜单锁死 <code>ref2v</code></strong>(window_loop.py:4338)</dd>
-          <dt>兜底</dt><dd class="fb"><code>_CONDITION_PRIORITY</code> 顺位;空菜单守卫 ⇒ <code>t2v</code></dd>
-        </dl>
-      </div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
+    <div class="edge"><span class="data">交界结果 + images[] + 槽位清单 + 上镜信息 + 人物 canon</span></div>
+    <div class="node train"><span class="nm">条件决策 agent</span><span class="kind k-brain">脑</span><span class="kind k-train">RL 训练对象</span>
+      <span class="role">一次调用干两件事:挑生成策略 + 写出视频提示词</span></div>
 
-  <div class="stage">
-    <div class="rail"><span class="tag">§P</span><span class="sub">prompt chain</span></div>
-    <div>
-      <div class="card">
-        <div class="chead"><span class="cname">出关提示词链</span><span class="csym">window_loop._prompt_chain:4401</span><span class="kind k-det">尺</span></div>
-        <dl>
-          <dt>目标</dt><dd>脑写的草稿到真正发出去之间,还要过一串硬规矩。<strong>每一道都是一次事故换来的。</strong></dd>
-          <dt>顺序</dt><dd>
-            ① 润色师(可选)→ ② <code>pin_frame</code> 机械续接句 → ③ 人物 canon 强制(仅无锚路线)→
-            ④ 对白/原生音轨条款 → ⑤ <strong>参考位闸门</strong> <code>validate_references</code> → ⑥ 旁白剥离 → ⑦ 人名换 token
-          </dd>
-          <dt>闸门</dt><dd>出现未知 token ⇒ <strong>整条提示词作废</strong>;有可引用槽位没被提到 ⇒ 自动补一句。<code>pin_frame</code> 行豁免。</dd>
-        </dl>
-      </div>
-      <div class="card dim">
-        <div class="chead"><span class="cname">提示词润色师</span><span class="csym">agents/prompt_enhancer.py:41</span><span class="kind k-brain">脑</span><span class="kind k-opt">--prompt-enhancer</span></div>
-        <dl>
-          <dt>模型</dt><dd class="m">crew.prompt_enhancer → models.llm · skill <code>prompt_enhancer/SKILL.md</code></dd>
-          <dt>目标</dt><dd>发 API 前最后一站:按<strong>条件事实</strong> + 该模型家族的提示词方言重写,30–100 词,token 原样保留。</dd>
-          <dt>兜底</dt><dd class="fb">长度/引用校验失败 ⇒ 点名违规槽位重试一次 ⇒ 仍失败则<strong>保留草稿</strong>;中文项目额外过一道中文闸门</dd>
-        </dl>
-      </div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
+    <div class="edge"><span class="data">strategy 条件策略 + video_prompt 提示词草稿</span></div>
+    <div class="node dim"><span class="nm">润色师 agent</span><span class="kind k-brain">脑</span><span class="kind k-opt">opt</span>
+      <span class="role">按该视频模型的提示词方言重写,token 原样保留</span></div>
 
-  <div class="stage">
-    <div class="rail"><span class="tag">§G</span><span class="sub">generate</span></div>
-    <div>
-      <div class="card">
-        <div class="chead"><span class="cname">条件执行</span><span class="csym">window_loop._generate_with_condition:4593</span><span class="kind k-gen">手</span></div>
-        <dl>
-          <dt>目标</dt><dd>把 §C 选的策略翻译成一次真实的后端调用,并把<strong>每一次降级都记进台账</strong>。</dd>
-          <dt>路线</dt><dd class="m">
-            ref2v / i2v_first → kling-v3-omni · t2v → kling-v3 或 seedance t2v ·
-            flf2v_own_pair / flf2v_bridge → image-to-video(首末双锚)·
-            ti2v_prev_last → i2v + <code>_drop_first_frame</code> · extend_prev → seedance video-extend + <code>_trim_head</code>
-          </dd>
-          <dt>产物</dt><dd><code>&lt;shotdir&gt;/shotNNN_w_s&lt;seed&gt;.mp4</code> + <code>seed_conds[]</code>(含 <code>degraded_from / degraded_reason / final_prompt</code>)</dd>
-          <dt>兜底</dt><dd class="fb">同策略重试 → 诚实降级到下一顺位并记原因;绝不静默换策略</dd>
-        </dl>
-      </div>
-      <div class="card dim">
-        <div class="chead"><span class="cname">钉帧闸门</span><span class="csym">window_loop._pin_frame_mad:396</span><span class="kind k-det">尺</span><span class="kind k-opt">--pin-gate-mad 0 = 关</span></div>
-        <dl>
-          <dt>目标</dt><dd>量开场撕裂(交界 / f0→f1 / f1→f2 的 MAD 取最大)。超阈 ⇒ <code>seed+1000</code> 重掷一次,再超就留下并记账。</dd>
-        </dl>
-      </div>
-    </div>
-  </div>
-  <div class="arrow">↓</div>
+    <div class="edge"><span class="data">video_prompt</span></div>
+    <div class="node gate"><span class="nm">提示词闸门</span><span class="kind k-det">尺</span>
+      <span class="role">人物 canon 强制 → 对白条款 → <strong>参考位校验</strong>(出现未知 token 整条作废)→ 旁白剥离 → 人名换 token</span></div>
 
-  <div class="stage">
-    <div class="rail"><span class="tag">§D</span><span class="sub">repair loop</span></div>
-    <div>
-      <div class="card" style="border-color: var(--tally)">
-        <div class="chead"><span class="cname">修复小循环</span><span class="csym">generate_loop.generate_shot_orchestrated:769</span><span class="kind k-det">尺</span></div>
-        <dl>
-          <dt>目标</dt><dd>一镜生成出来之后的自改进。<strong>这整块在 RL 训练环境里是关掉的</strong>(<code>--max-turns 0</code>)。</dd>
-          <dt>入口</dt><dd>复用窗口已生成的候选(缺分才评审,不重掷)→ 锦标赛挑 <code>best</code> → 建初始缺陷报告与指纹</dd>
-        </dl>
-      </div>
-    </div>
-  </div>
+    <div class="edge"><span class="data">最终提示词 + 条件图/视频</span></div>
+    <div class="node"><span class="nm">视频生成</span><span class="kind k-gen">手</span>
+      <span class="role">可灵 omni / seedance;同策略重试失败则<strong>诚实降级</strong>并记原因</span></div>
 
-  <div class="loopbox" style="margin-left: 142px">
-    <div class="loophead"><span class="n">FOR TURN 1..3</span><span>先看能不能停,再决定怎么修</span></div>
-    <div class="tw">
-      <table>
-        <thead><tr><th>步</th><th>组件</th><th>做什么</th><th>停机条件</th></tr></thead>
-        <tbody>
-          <tr><td class="m">a</td><td>ReviewBoard <span class="kind k-det">尺</span></td><td><code>all_passed</code>:无失败项且无物理判词</td><td class="m">converged</td></tr>
-          <tr><td class="m">b</td><td>DefectReport <span class="kind k-det">尺</span></td><td>把判词+失败项<strong>重新定位</strong>成带帧区间的缺陷</td><td class="m">—</td></tr>
-          <tr><td class="m">c</td><td>质量线 <span class="kind k-det">尺</span></td><td>总分 ≥ bar 且无高危(≥0.7)缺陷</td><td class="m">quality_bar_met</td></tr>
-          <tr><td class="m">d</td><td>容忍线 <span class="kind k-det">尺</span></td><td>最重缺陷 &lt; <code>--repair-severity</code></td><td class="m">minor_defects_tolerated</td></tr>
-          <tr><td class="m">e</td><td>评审整理员 <span class="kind k-brain">脑</span></td><td>把异构批评合成<strong>一份排序简报</strong>:同实体合并、标注证据来源(measured/opinion)、跨类型互证给置信度、<strong>测量优先于观点</strong>、稳定 key 算出 fixed/new/regressed/unchanged、汇出 <code>do_not_repeat</code></td><td class="m">—</td></tr>
-          <tr><td class="m">f</td><td>菜单 <span class="kind k-det">尺</span></td><td>按后端能力 + <code>repair_mode</code> 过滤可用工具</td><td class="m">—</td></tr>
-          <tr><td class="m">g</td><td>修复调度 <span class="kind k-brain">脑</span></td><td><strong>先查技能库</strong>回放已学会的修复步骤(<code>via=skill</code>),没有才问 LLM;出格 ⇒ <code>INVALID</code></td><td class="m">brain_accept</td></tr>
-          <tr><td class="m">h</td><td>越权守卫 <span class="kind k-det">尺</span></td><td>脑说"接受"但缺陷还在且还有回合 ⇒ <strong>否决</strong>,记 <code>accept_overridden</code>,强制走一次路由器兜底</td><td class="m">—</td></tr>
-          <tr><td class="m">i</td><td>执行 <span class="kind k-gen">手</span></td><td>调用选中的修复工具(见下表)</td><td class="m">—</td></tr>
-          <tr><td class="m">j</td><td>验收官 <span class="kind k-vlm">眼</span></td><td><strong>盲评随机位</strong>对比新旧候选 ⇒ 分数 ≥ +1 <strong>且</strong> 最低维度 ≥ −2 才收</td><td class="m">—</td></tr>
-          <tr><td class="m">k</td><td>耐心计数 <span class="kind k-det">尺</span></td><td>连续被拒次数 ≥ <code>--patience</code></td><td class="m">no_improvement</td></tr>
-        </tbody>
-      </table>
+    <div class="edge"><span class="data">shotNNN_w_s&lt;seed&gt;.mp4</span></div>
+    <div class="node dim"><span class="nm">锦标赛评委</span><span class="kind k-vlm">眼</span>
+      <span class="role">多候选时双向对比挑出 best(默认 n=1,空转)</span></div>
+
+    <div class="edge"><span class="data">best 候选片</span></div>
+    <div class="fan">
+      <div class="node"><span class="nm">语义评审</span><span class="kind k-vlm">眼</span>
+        <span class="out">→ checks[] 通过项 + issues[] 问题(带时间区间)</span></div>
+      <div class="node"><span class="nm">物理评审</span><span class="kind k-vlm">眼</span>
+        <span class="out">→ 物理判词(重力/碰撞/穿模/物体恒存…)<br><strong>与语义评审共用一次上传</strong></span></div>
+      <div class="node"><span class="nm">物理测量</span><span class="kind k-det">尺</span><span class="kind k-opt">opt</span>
+        <span class="out">→ 无参考的运动定律核验(不含模型)</span></div>
     </div>
 
-    <h3>修复工具菜单</h3>
-    <div class="tw">
-      <table>
-        <thead><tr><th>工具</th><th>开启条件</th><th>效果</th><th>底层调用</th></tr></thead>
-        <tbody>
-          <tr><td class="m">regenerate</td><td>永远可用</td><td>用<strong>本镜原本的条件方式</strong>整镜重来 + 一句 hint</td><td class="m">_regen_original, seed=300+turn</td></tr>
-          <tr><td class="m">repair_keyframe_identity</td><td>有图编 ∧ 有关键帧 ∧ 条件里有肖像 <em>(插在菜单首位)</em></td><td>把关键帧里的人换成官方肖像的长相(背景/姿势/构图/光照不动),再从修好的帧重跑原条件</td><td class="m">seedream-v4/edit → regen(seed=500+turn)</td></tr>
-          <tr><td class="m">regenerate_segment</td><td>看后端能力</td><td>帧级精修:在缺陷区间切开,<strong>只重生成两个原始边界帧之间的内部</strong>,不涟漪</td><td class="m">ClipTimeline + propagate_repair</td></tr>
-          <tr><td class="m">add_transition</td><td><code>--transitions</code> ∧ 有上镜 ∧ 有 flf2v</td><td>插一段 3 秒过渡桥。<strong>终结型</strong>:成了就停,失败也不复用通用路径</td><td class="m">frame_to_frame(3s, seed=777)</td></tr>
-          <tr><td class="m">simulate_reference</td><td>需 sim_client<em>(当前未接线)</em></td><td>刚体仿真出物理正确的参考片,再据此重生成</td><td class="m">sim.run → reference_video</td></tr>
-          <tr><td class="m">accept</td><td>永远可用</td><td>收工(受步骤 h 越权守卫约束)</td><td class="m">—</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <div class="edge"><span class="data">checks + issues + 物理判词 → 七维打分 <em>(只有语义与物理两维是真 VLM 信号)</em></span></div>
+    <div class="node"><span class="nm">评审整理员 agent</span><span class="kind k-brain">脑</span>
+      <span class="role">把几路互相打架的批评合成一份</span></div>
 
-    <h3>评审团 · 一次上传,两份判词</h3>
-    <div class="tw">
-      <table>
-        <thead><tr><th>评审</th><th>类型</th><th>模型槽</th><th>产出</th><th>拿不到回包时</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>语义评审</td><td><span class="kind k-vlm">眼</span></td><td class="m">crew.reviewer</td>
-            <td>原生视频 + <strong>所有条件图/视频一并内联</strong>,一次调用出 <code>checks[]</code> 与 <code>issues[]</code>(带时间区间、实体、严重度)</td>
-            <td class="m">返回 <code>None</code> = 零条目,<strong>不编造</strong>;窗口层记"评审零证据 → 收敛是空的"</td>
-          </tr>
-          <tr>
-            <td>物理评审(观点)</td><td><span class="kind k-vlm">眼</span></td><td class="m">crew.reviewer</td>
-            <td>切同一份缓存的上传包 —— <strong>一次 API 调用喂两个评审</strong>。出 <code>PhysicsVerdict</code>(重力惯性/碰撞/守恒/物体恒存/穿模/流体)</td>
-            <td class="m">空列表</td>
-          </tr>
-          <tr>
-            <td>物理测量</td><td><span class="kind k-det">尺</span></td><td class="m">CoTracker + GroundingDINO<br><em>无模型</em></td>
-            <td>无参考的"有没有<strong>任何</strong>被动运动定律能解释这条轨迹"</td>
-            <td class="m">静默(记 <code>verifier:"silent"</code>),绝不伪造判词</td>
-          </tr>
-          <tr>
-            <td>锦标赛评委</td><td><span class="kind k-vlm">眼</span></td><td class="m">通用 models.mllm</td>
-            <td>best-of-N 双向对比消序偏</td>
-            <td class="m">全平 ⇒ 取第一个(诚实退化);<code>n_candidates=1</code> 时本就是空转</td>
-          </tr>
-          <tr>
-            <td>验收官</td><td><span class="kind k-vlm">眼</span></td><td class="m">crew.verifier</td>
-            <td>盲评 <code>verify_pair</code>,分数 + 四维分 + 缺陷是否仍在</td>
-            <td class="m"><strong>大声</strong>退到指标闸门:总分高于 +1e-4,或打平时缺陷数更少</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
+    <div class="edge"><span class="data">排序简报:同实体合并 · 测量优先于观点 · fixed/new/regressed · 别再试清单</span></div>
+    <div class="node"><span class="nm">修复调度 agent</span><span class="kind k-brain">脑</span>
+      <span class="role">先查技能库回放学过的修复,没有才问 LLM</span></div>
 
-  <div class="arrow">↓</div>
-  <div class="stage">
-    <div class="rail"><span class="tag">§L</span><span class="sub">ledger</span></div>
-    <div>
-      <div class="card">
-        <div class="chead"><span class="cname">逐镜落账</span><span class="csym">window_loop.py:4978</span><span class="kind k-det">尺</span></div>
-        <dl>
-          <dt>写入</dt><dd>
-            <code>set_condition</code>(胜出者的条件 + <code>decided_strategy/decided_via</code>)·
-            <code>add_review</code>(总分、评审证据、失败数、物理判词、是否收敛、停机原因)·
-            <code>set_result</code> ⇒ 状态定为 <code>verified</code> 或 <code>generated_with_defects</code>
-          </dd>
-          <dt>反哺</dt><dd>空间圣经回流:把本镜尾帧洗掉人 → 出图注 → 追加为该场景的新视图(仍有人或与旧视图重复则跳过)</dd>
-        </dl>
-      </div>
-    </div>
+    <div class="edge"><span class="data">选一个工具:整镜重来 / 换脸修关键帧 / 只重生成缺陷区间 / 接受</span></div>
+    <div class="node"><span class="nm">修复执行</span><span class="kind k-gen">手</span><span class="role">出一个新候选</span></div>
+
+    <div class="edge"><span class="data">新候选 vs 旧 best</span></div>
+    <div class="node"><span class="nm">验收官 agent</span><span class="kind k-vlm">眼</span>
+      <span class="role"><strong>盲评随机位</strong>对比,够好才换掉 best</span></div>
+
+    <div class="edge"><span class="data">收 / 拒</span></div>
+    <div class="loopback">↺ 回到评审 —— 最多 3 回合;连续 2 次被拒即止损。停机原因诚实落账:收敛 / 达标 / 缺陷可容忍 / 无改进 / 脑说收工 / 回合用尽</div>
+
+    <div style="height:14px"></div>
+    <div class="node"><span class="nm">落台账 + 空间圣经回流</span><span class="kind k-det">尺</span>
+      <span class="role">本镜结论写回 storyboard.json;并把本镜尾帧洗掉人 → 出图注 → <strong>追加为该场景的新视图</strong></span></div>
+    <div class="edge"><span class="data">shotNNN 定稿.mp4 &nbsp;·&nbsp; spaces[场景] 多了一个视图 <em>(下一镜就能用上)</em></span></div>
   </div>
 </div>
 
-<h2><span class="num">§3</span> 收尾</h2>
+<h2><span class="num">三</span> 收尾</h2>
 
-<div class="stage">
-  <div class="rail"><span class="tag">§E</span><span class="sub">final cut</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">终剪</span><span class="csym">window_loop._final_cut:599</span><span class="kind k-det">尺</span><span class="kind k-gen">手</span></div>
-      <dl>
-        <dt>目标</dt><dd>时长对账审计 → 有音轨则先归一化 → 拼接。<code>-c copy</code> 只在编码/分辨率/帧率/像素格式全一致<strong>且</strong>帧数与容器时长对得上时才用,否则重编码。</dd>
-        <dt>产物</dt><dd><code>&lt;run&gt;/movie.mp4</code>;缺文件<strong>大声跳过</strong>而不是静默丢镜</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
-<div class="stage">
-  <div class="rail"><span class="tag">§F</span><span class="sub">scoring</span></div>
-  <div>
-    <div class="card dim">
-      <div class="chead"><span class="cname">配乐</span><span class="csym">audio_stage.add_music:193</span><span class="kind k-gen">手</span><span class="kind k-opt">--bgm</span></div>
-      <dl>
-        <dt>目标</dt><dd>按分镜的 <code>music_plan</code> 逐场生成音乐床 → 侧链闪避压缩 → 两遍 loudnorm(I=−14)。</dd>
-        <dt>硬规矩</dt><dd class="fb">场长用 ffprobe 实测;出现 0 长镜头<strong>直接抛错</strong>,不铺一条错位的床</dd>
-      </dl>
-    </div>
-  </div>
-</div>
-<div class="arrow">↓</div>
-<div class="stage">
-  <div class="rail"><span class="tag">§M</span><span class="sub">distill</span></div>
-  <div>
-    <div class="card">
-      <div class="chead"><span class="cname">跨片记忆归档</span><span class="csym">window_loop.py:5132</span><span class="kind k-det">尺</span></div>
-      <dl>
-        <dt>写入</dt><dd><code>outputs/memory/episodes.jsonl</code> 追加 <code>EpisodeRecord</code>(good / bad / ungraded + 完整轨迹 + 参考登记表)</dd>
-        <dt>不写</dt><dd class="fb"><code>--no-review</code> 时<strong>跳过</strong> —— 没评审就没有可信的成败标签,宁可不记</dd>
-      </dl>
-    </div>
-  </div>
+<div class="flow">
+  <div class="node"><span class="nm">终剪</span><span class="kind k-det">尺</span><span class="kind k-gen">手</span>
+    <span class="role">时长对账 → 能直拷就直拷,否则重编码;缺文件<strong>大声跳过</strong>而不是静默丢镜</span></div>
+  <div class="edge"><span class="data">movie.mp4</span></div>
+
+  <div class="node dim"><span class="nm">配乐</span><span class="kind k-gen">手</span><span class="kind k-opt">opt</span>
+    <span class="role">按分镜给的 music_plan 逐场生成 → 侧链闪避 → 响度归一</span></div>
+  <div class="edge"><span class="data">movie_scored.mp4</span></div>
+
+  <div class="node"><span class="nm">跨片记忆归档</span><span class="kind k-det">尺</span>
+    <span class="role">整条轨迹 + 成败标签写进 episodes.jsonl</span></div>
+  <div class="edge"><span class="data">EpisodeRecord</span></div>
+  <div class="loopback">↺ 下一部片开机时,由记忆开卷取出 → 喂给<strong>分镜导演</strong>和<strong>图计划</strong>当参考(建议 + 禁区,不具约束力)</div>
 </div>
 
-<h2><span class="num">§4</span> 全体 agent 名册 · 25 个模型岗位</h2>
+<h2><span class="num">四</span> 25 个 agent 一览</h2>
 <p class="sec-note">
-  模型槽位一栏要特别注意:<strong>并不是每个 agent 都有自己的 crew 槽</strong>。有几个走的是通用 <code>models.llm</code> /
-  <code>models.mllm</code>,想单独换型号得先加槽位。
+  <strong>模型槽位</strong>一栏要注意:并不是每个 agent 都有自己的槽位,有几个走的是通用槽 —— 想单独换型号得先加。
 </p>
 <div class="tw">
   <table>
-    <thead><tr><th>#</th><th>岗位</th><th>类型</th><th>代码</th><th>模型槽位</th><th>skill</th><th>任务目标</th></tr></thead>
+    <thead><tr><th></th><th>Agent</th><th>类型</th><th>模型槽位</th><th>交出什么</th></tr></thead>
     <tbody>
-      <tr><td class="num">1</td><td>剧本扩写</td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:1221</td><td class="m">crew.screenwriter</td><td class="m">screenplay</td><td>点子 → 可拍剧本</td></tr>
-      <tr><td class="num">2</td><td>机械切句(兜底大纲)</td><td><span class="kind k-det">尺</span></td><td class="m">agents/screenwriter.py:8</td><td class="m">—(实例闲置)</td><td class="m">—</td><td>分镜全挂时的最后一道保底</td></tr>
-      <tr><td class="num">3</td><td>人物抽取</td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:1345</td><td class="m"><strong>models.llm</strong></td><td class="m">character_extract</td><td>剧本 → 人物圣经(static/dynamic)</td></tr>
-      <tr><td class="num">4</td><td>分镜编剧</td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:1547</td><td class="m">crew.scene_writer</td><td class="m">scene_write</td><td>镜头表 + 时长 + 对白 + 音乐计划</td></tr>
-      <tr><td class="num">5</td><td>DirectorAgent</td><td><span class="kind k-det">尺</span></td><td class="m">agents/director.py:13</td><td class="m">—(实例闲置)</td><td class="m">—</td><td>大纲 → ShotSpec(摄影法/参考/事件图)</td></tr>
-      <tr><td class="num">6</td><td>场景图提示词</td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:1287</td><td class="m"><strong>models.llm</strong></td><td class="m">scene_image</td><td>每个 bg 一句空场 t2i 提示词</td></tr>
-      <tr><td class="num">7</td><td>空间视图挑图</td><td><span class="kind k-brain">脑</span></td><td class="m">space_bible.py:246</td><td class="m">crew.video_brain</td><td class="m">内联</td><td>本镜锚在哪个朝向视图</td></tr>
-      <tr><td class="num">8</td><td>交界人物判官</td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:3185</td><td class="m">crew.video_brain</td><td class="m">内联</td><td>derive / cut / continue 三选一</td></tr>
-      <tr><td class="num">9</td><td>图计划</td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:1947</td><td class="m">crew.video_brain</td><td class="m">image_plan</td><td>这镜要几张图、什么角色、哪来的</td></tr>
-      <tr style="background: color-mix(in srgb, var(--tally) 6%, transparent)"><td class="num">10</td><td><strong>条件决策</strong></td><td><span class="kind k-brain">脑</span></td><td class="m">window_loop:4376</td><td class="m">crew.video_brain</td><td class="m">window_generation</td><td><strong>选条件策略 + 写视频提示词(RL 训练对象)</strong></td></tr>
-      <tr><td class="num">11</td><td>缝合师</td><td><span class="kind k-brain">脑</span></td><td class="m">agents/junction_stitcher.py:46</td><td class="m"><strong>crew.junction_stitcher</strong></td><td class="m">junction_stitch</td><td>写双镜切换描述,推出切后帧</td></tr>
-      <tr><td class="num">12</td><td>提示词润色师</td><td><span class="kind k-brain">脑</span> <span class="kind k-opt">opt</span></td><td class="m">agents/prompt_enhancer.py:41</td><td class="m">crew.prompt_enhancer</td><td class="m">prompt_enhancer</td><td>按模型方言重写,token 原样保留</td></tr>
-      <tr><td class="num">13</td><td>修复调度</td><td><span class="kind k-brain">脑</span></td><td class="m">agents/orchestrator.py:423</td><td class="m">crew.video_brain</td><td class="m">orchestrator</td><td>每回合选一个修复工具</td></tr>
-      <tr><td class="num">14</td><td>评审整理员</td><td><span class="kind k-brain">脑</span></td><td class="m">agents/review_summarizer.py:96</td><td class="m">orchestrator.llm</td><td class="m">缺失⚠︎</td><td>异构批评 → 一份排序简报(结构部分全确定性,LLM 只润色一句话)</td></tr>
-      <tr><td class="num">15</td><td>基线锚点提示词</td><td><span class="kind k-brain">脑</span> <span class="kind k-opt">opt</span></td><td class="m">window_loop:3649</td><td class="m">models.llm</td><td class="m">内联</td><td>整个故事压成一条 30–100 词单镜提示词(对照组)</td></tr>
-      <tr><td class="num">16</td><td>语义评审</td><td><span class="kind k-vlm">眼</span></td><td class="m">critics/semantic.py:18</td><td class="m">crew.reviewer</td><td class="m">内联⚠︎</td><td>原生视频语义 + 条件遵从审查</td></tr>
-      <tr><td class="num">17</td><td>物理评审(观点)</td><td><span class="kind k-vlm">眼</span></td><td class="m">critics/physics.py:23</td><td class="m">crew.reviewer</td><td class="m">内联⚠︎</td><td>帧定位的物理失效模式判词</td></tr>
-      <tr><td class="num">18</td><td>物理测量</td><td><span class="kind k-det">尺</span> <span class="kind k-opt">opt</span></td><td class="m">critics/physics_consistency.py:53</td><td class="m">CoTracker+DINO</td><td class="m">physics_measure</td><td>无参考的运动定律核验</td></tr>
-      <tr><td class="num">19</td><td>锦标赛评委</td><td><span class="kind k-vlm">眼</span></td><td class="m">critics/tournament.py:35</td><td class="m"><strong>models.mllm</strong></td><td class="m">—</td><td>best-of-N 双向对比</td></tr>
-      <tr><td class="num">20</td><td>验收官</td><td><span class="kind k-vlm">眼</span></td><td class="m">agents/verifier.py:44</td><td class="m">crew.verifier</td><td class="m">内联⚠︎</td><td>盲评修复候选,决定收不收</td></tr>
-      <tr><td class="num">21</td><td>接点实况观察</td><td><span class="kind k-vlm">眼</span></td><td class="m">window_loop:3072</td><td class="m"><strong>models.mllm</strong></td><td class="m">—</td><td>上镜实际怎么结束的事实报告</td></tr>
-      <tr><td class="num">22</td><td>帧审查</td><td><span class="kind k-vlm">眼</span><span class="kind k-brain">脑</span></td><td class="m">first_frame_factory.py:64</td><td class="m">models.mllm + crew.video_brain</td><td class="m">—</td><td>派生帧与意图是否矛盾(fail-open)</td></tr>
-      <tr><td class="num">23</td><td>空间圣经图注</td><td><span class="kind k-vlm">眼</span></td><td class="m">space_bible.py:211</td><td class="m"><strong>models.mllm</strong></td><td class="m">—</td><td>每视图的固定元素清单</td></tr>
-      <tr><td class="num">24</td><td>肖像图注</td><td><span class="kind k-vlm">眼</span></td><td class="m">window_loop:3894</td><td class="m"><strong>models.mllm</strong></td><td class="m">—</td><td>用户角色图 → 权威 static 描述</td></tr>
-      <tr><td class="num">25</td><td>素材打标</td><td><span class="kind k-vlm">眼</span></td><td class="m">window_loop:857</td><td class="m"><strong>models.mllm</strong></td><td class="m">—</td><td>给每份用户素材一个可检索标签</td></tr>
+      <tr><td class="num">1</td><td>编剧</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.screenwriter</td><td>剧本全文</td></tr>
+      <tr><td class="num">2</td><td>人物抽取</td><td><span class="kind k-brain">脑</span></td><td class="m"><strong>通用 models.llm</strong></td><td>人物圣经 static/dynamic</td></tr>
+      <tr><td class="num">3</td><td>分镜导演</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.scene_writer</td><td>镜头表 + cast + setting + 音乐计划</td></tr>
+      <tr><td class="num">4</td><td>场景图</td><td><span class="kind k-brain">脑</span></td><td class="m"><strong>通用 models.llm</strong></td><td>每场一句空场 t2i 提示词</td></tr>
+      <tr><td class="num">5</td><td>图计划</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.video_brain</td><td>每镜要几张图、什么角色、哪来的</td></tr>
+      <tr><td class="num">6</td><td>交界人物判官</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.video_brain</td><td>derive / cut / continue</td></tr>
+      <tr><td class="num">7</td><td>空间视图挑图</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.video_brain</td><td>本镜锚在哪个朝向视图</td></tr>
+      <tr><td class="num">8</td><td>缝合师</td><td><span class="kind k-brain">脑</span></td><td class="m"><strong>crew.junction_stitcher</strong></td><td>双镜切换脚本(两段描述)</td></tr>
+      <tr style="background: color-mix(in srgb, var(--tally) 7%, transparent)">
+        <td class="num">9</td><td><strong>条件决策</strong></td><td><span class="kind k-brain">脑</span></td><td class="m">crew.video_brain</td>
+        <td><strong>生成策略 + 视频提示词 —— RL 训练对象</strong></td></tr>
+      <tr><td class="num">10</td><td>润色师 <span class="kind k-opt">opt</span></td><td><span class="kind k-brain">脑</span></td><td class="m">crew.prompt_enhancer</td><td>按模型方言重写的提示词</td></tr>
+      <tr><td class="num">11</td><td>评审整理员</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.video_brain</td><td>一份排序好的缺陷简报</td></tr>
+      <tr><td class="num">12</td><td>修复调度</td><td><span class="kind k-brain">脑</span></td><td class="m">crew.video_brain</td><td>每回合选一个修复工具</td></tr>
+      <tr><td class="num">13</td><td>基线锚点 <span class="kind k-opt">opt</span></td><td><span class="kind k-brain">脑</span></td><td class="m">通用 models.llm</td><td>整个故事压成一条单镜提示词(对照组)</td></tr>
+      <tr><td class="num">14</td><td>语义评审</td><td><span class="kind k-vlm">眼</span></td><td class="m">crew.reviewer</td><td>通过项 + 问题清单(带时间区间)</td></tr>
+      <tr><td class="num">15</td><td>物理评审</td><td><span class="kind k-vlm">眼</span></td><td class="m">crew.reviewer</td><td>物理失效判词</td></tr>
+      <tr><td class="num">16</td><td>验收官</td><td><span class="kind k-vlm">眼</span></td><td class="m">crew.verifier</td><td>盲评分数 → 收 / 拒</td></tr>
+      <tr><td class="num">17</td><td>锦标赛评委</td><td><span class="kind k-vlm">眼</span></td><td class="m"><strong>通用 models.mllm</strong></td><td>多候选里挑 best</td></tr>
+      <tr><td class="num">18</td><td>接点实况观察</td><td><span class="kind k-vlm">眼</span></td><td class="m"><strong>通用 models.mllm</strong></td><td>上镜实际怎么结束的事实报告</td></tr>
+      <tr><td class="num">19</td><td>帧审查</td><td><span class="kind k-vlm">眼</span><span class="kind k-brain">脑</span></td><td class="m">通用 mllm + crew.video_brain</td><td>派生帧收 / 拒</td></tr>
+      <tr><td class="num">20</td><td>空间圣经图注</td><td><span class="kind k-vlm">眼</span></td><td class="m"><strong>通用 models.mllm</strong></td><td>每个视图的固定元素清单</td></tr>
+      <tr><td class="num">21</td><td>肖像图注</td><td><span class="kind k-vlm">眼</span></td><td class="m"><strong>通用 models.mllm</strong></td><td>用户角色图 → 权威长相描述</td></tr>
+      <tr><td class="num">22</td><td>素材打标</td><td><span class="kind k-vlm">眼</span></td><td class="m"><strong>通用 models.mllm</strong></td><td>每份素材一个可检索标签</td></tr>
+      <tr><td class="num">23</td><td>DirectorAgent</td><td><span class="kind k-det">尺</span></td><td class="m">—(不调模型)</td><td>ShotSpec:摄影法 / 参考 / 事件图</td></tr>
+      <tr><td class="num">24</td><td>机械切句</td><td><span class="kind k-det">尺</span></td><td class="m">—(不调模型)</td><td>分镜全挂时的保底镜头表</td></tr>
+      <tr><td class="num">25</td><td>物理测量 <span class="kind k-opt">opt</span></td><td><span class="kind k-det">尺</span></td><td class="m">CoTracker + DINO</td><td>无参考的运动定律核验</td></tr>
     </tbody>
   </table>
 </div>
 
-<h3>确定性组件 · 10 个不含模型的零件</h3>
-<div class="tw">
-  <table>
-    <thead><tr><th>组件</th><th>代码</th><th>职责</th></tr></thead>
-    <tbody>
-      <tr><td>ReviewBoard</td><td class="m">critics/board.py:19</td><td>每轮重建清单与判词,跑齐所有评审,算 <code>all_passed</code></td></tr>
-      <tr><td>MetricTool</td><td class="m">tools/metric_tool.py:69</td><td>七维打分与加权总分(见 §5)</td></tr>
-      <tr><td>DefectReport</td><td class="m">agents/defect_report.py:120</td><td>判词 + 失败项 → 带帧区间、实体、修复模态的定位缺陷</td></tr>
-      <tr><td>RepairRouter</td><td class="m">agents/repair_router.py:73</td><td>脑失灵时的确定性修复路由(永远有 <code>regenerate_hint</code> 可用)</td></tr>
-      <tr><td>RefinerAgent</td><td class="m">agents/refiner.py:21</td><td>判词聚合成 <code>extra_prompt</code> / 编辑指令(仅旧阶梯管线消费)</td></tr>
-      <tr><td>GeneratorAgent</td><td class="m">agents/generator.py:19</td><td>能力分派的视频调用(窗口路径只在路由器兜底时用到)</td></tr>
-      <tr><td>参考位闸门</td><td class="m">pipeline/ref_slots.py:41</td><td>槽位清单在写提示词<strong>之前</strong>算好并交给脑;未知 token ⇒ 整条作废</td></tr>
-      <tr><td>钉帧闸门</td><td class="m">window_loop.py:396</td><td>开场撕裂 MAD 测量与一次重掷</td></tr>
-      <tr><td>技能库 / 教训库 / 片段记忆</td><td class="m">memory/*.py</td><td>学会的修复流程(带准入 CI)、教训、跨片经验</td></tr>
-      <tr><td>CharacterLibrary</td><td class="m">memory/character_library.py</td><td>跨片肖像复用(static 描述重合 ≥0.6)</td></tr>
-    </tbody>
-  </table>
-</div>
-
-<h2><span class="num">§5</span> 指标权重 · 哪些是真信号</h2>
+<h2><span class="num">五</span> 训练环境少了哪几段</h2>
 <p class="sec-note">
-  权重和为 1.00。<strong>只有 m1 和 p1 带真正的 VLM 信号</strong>;p2 要开 <code>--with-physics-measure</code> 才有值,
-  其余四项是诚实的内容/计划代理量,不是假装出来的分数。这也正是验收官<strong>主判走盲评对比</strong>、指标只当兜底的原因。
+  <code>rl/env/</code> 是这条线的逐字移植。<strong>不一样的只有下面这些</strong>,其余每一段完全相同。
 </p>
 <div class="tw">
   <table>
-    <thead><tr><th>指标</th><th class="num">权重</th><th></th><th>来源</th><th>算法</th></tr></thead>
+    <thead><tr><th>组件</th><th>生产</th><th>RL 训练</th><th>为什么</th></tr></thead>
     <tbody>
-      <tr><td class="m">m1_semantic</td><td class="num">0.22</td><td><span class="bar" style="width:88px"></span></td><td class="real">VLM 真信号</td><td>评审 checks 的通过率</td></tr>
-      <tr><td class="m">p1_physics</td><td class="num">0.22</td><td><span class="bar" style="width:88px"></span></td><td class="real">VLM 真信号</td><td>1 − 最重非测量类判词严重度</td></tr>
-      <tr><td class="m">m2_temporal</td><td class="num">0.13</td><td><span class="bar" style="width:52px"></span></td><td class="prox">内容代理</td><td><code>0.6 + 0.15·首帧锚定 + 0.05·已应用修复数</code></td></tr>
-      <tr><td class="m">id1_identity</td><td class="num">0.13</td><td><span class="bar" style="width:52px"></span></td><td class="prox">内容代理</td><td>有身份参考且真用上 0.9 / 用不上 0.6 / 无参考 0.8</td></tr>
-      <tr><td class="m">p2_law_consistency</td><td class="num">0.10</td><td><span class="bar" style="width:40px"></span></td><td class="real">测量(默认中性)</td><td>mock-track 下无判词 ⇒ 恒 1.0</td></tr>
-      <tr><td class="m">m5_rhythm</td><td class="num">0.10</td><td><span class="bar" style="width:40px"></span></td><td class="prox">计划代理</td><td>有节奏计划 + 音乐 0.9 / 仅节奏 0.7 / 否则 0.5</td></tr>
-      <tr><td class="m">aesthetic</td><td class="num">0.10</td><td><span class="bar" style="width:40px"></span></td><td class="prox">常数 0.7</td><td>没有信号就<strong>不造</strong>假斜坡</td></tr>
+      <tr><td>修复循环(整理员 + 调度 + 验收官)</td><td>开,3 回合</td><td>关</td><td>训练要的是"第一次就写对"的信号,修复会把它洗掉</td></tr>
+      <tr><td>语义/物理评审</td><td>开</td><td>换成奖励判官</td><td>训练用自己的 VLM 评分 skill</td></tr>
+      <tr><td>锦标赛</td><td>开(n=1 空转)</td><td>关</td><td>胜者 = 组内奖励最高者</td></tr>
+      <tr><td>跨片记忆</td><td>开</td><td>关</td><td>不让历史片子污染同分布采样</td></tr>
+      <tr><td>润色师 / 过渡桥 / 配乐 / 基线锚点</td><td>按需开</td><td>全关</td><td>不在训练路径上,纯成本</td></tr>
+      <tr><td>一镜采 K 个候选</td><td>没有</td><td>RL 专有</td><td>GRPO 的组来源</td></tr>
     </tbody>
   </table>
 </div>
-
-<h2><span class="num">§6</span> 磁盘落物 · 数据流的实体形态</h2>
-<p class="sec-note">
-  运行目录 <code>outputs/movie_&lt;ts&gt;/</code>。台账 <code>storyboard.json</code> 每次变更立刻回写,
-  <code>brain_calls.jsonl</code> 记下每一次脑决策的原文、解析结果、skill 字数与上下文 —— 复盘时先看这两个。
-</p>
-<div class="tw">
-  <table>
-    <thead><tr><th>阶段</th><th>落物</th><th>台账变更</th></tr></thead>
-    <tbody>
-      <tr><td>全程</td><td class="m">brain_calls.jsonl · bailian_calls.jsonl</td><td>每次脑决策 / 每次后端调用</td></tr>
-      <tr><td>§A</td><td class="m">storyboard.json</td><td>建表:cast / setting / shots / music_plan</td></tr>
-      <tr><td>§A′</td><td class="m">portraits/&lt;name&gt;.png</td><td><code>storyboard.portraits</code> + identity anchors</td></tr>
-      <tr><td>§A2</td><td class="m">anchors/bg_&lt;id&gt;.png</td><td><code>storyboard.backgrounds[bg_id]</code></td></tr>
-      <tr><td>§SB</td><td class="m">spaces/&lt;bg&gt;_pan_*.mp4 · &lt;bg&gt;_{right,left}_{90,180}.png</td><td><code>storyboard.spaces[bg][view] = {path, caption, src}</code></td></tr>
-      <tr><td>§B′</td><td class="m">keyframes/shotNNN_kfS_{t2i,extract}.png</td><td><code>entry.image_plan</code> / <code>entry.images</code></td></tr>
-      <tr><td>§J</td><td class="m">&lt;shot&gt;/junction_prev_tail.mp4 · junction_two_shot_s777.mp4 · junction_derived_s777.png</td><td><code>entry.junction_meta</code>(kind/route/视图/缝合师/实况)</td></tr>
-      <tr><td>§G</td><td class="m">&lt;shot&gt;/shotNNN_w_s&lt;seed&gt;.mp4</td><td><code>seed_conds[]</code> 含每次降级的原因</td></tr>
-      <tr><td>§D</td><td class="m">&lt;shot&gt;/shotNNN_r&lt;turn&gt;_*.mp4</td><td><code>set_condition</code> / <code>add_review</code> / <code>set_result</code></td></tr>
-      <tr><td>§L</td><td class="m">spaces/&lt;bg&gt;_frame_shotNNN.png</td><td>空间圣经回流新视图</td></tr>
-      <tr><td>§E</td><td class="m">movie.mp4 · concat_norm/*</td><td>时长对账结果</td></tr>
-      <tr><td>§F</td><td class="m">audio_stage/*.mp3 · movie_scored.mp4</td><td>final ← scored</td></tr>
-      <tr><td>§M</td><td class="m">outputs/memory/episodes.jsonl</td><td>追加 EpisodeRecord</td></tr>
-    </tbody>
-  </table>
-</div>
-
-<h2><span class="num">§7</span> 生产 vs RL 训练环境</h2>
-<p class="sec-note">
-  <code>rl/env/</code> 是这条线的逐字移植(带函数级同构锁)。两边<strong>不一样的只有下面这张表</strong>——
-  其余每一段(§A0 到 §E、交界分诊、缝合师、图计划、条件菜单与 <code>ref2v</code> 锁、提示词链、诚实降级)全部逐字相同。
-</p>
-<div class="tw">
-  <table>
-    <thead><tr><th>组件</th><th>生产</th><th>RL 训练环境</th><th>为什么</th></tr></thead>
-    <tbody>
-      <tr><td>修复小循环 §D</td><td class="real">开(3 回合)</td><td class="m">关(整块不导入)</td><td>训练要的是"第一次就写对"的信号,修复会把它洗掉</td></tr>
-      <tr><td>评审团 + 验收官 + 整理员</td><td class="real">开</td><td class="m">换成奖励判官</td><td>训练用我们自己的 VLM 评分 skill,不用生产语义评审</td></tr>
-      <tr><td>锦标赛</td><td class="real">开(n=1 时空转)</td><td class="m">关</td><td>胜者 = 组内奖励 argmax</td></tr>
-      <tr><td>片段记忆 §M</td><td class="real">开</td><td class="m">硬编码为空 guidance</td><td>训练不能让历史片子污染同分布采样</td></tr>
-      <tr><td>润色师 / 过渡桥 / BGM / 基线锚点 / 原生对白</td><td class="m">按需开</td><td class="m">全关</td><td>都不在被训练的决策路径上,纯成本</td></tr>
-      <tr><td>K 路条件采样</td><td class="m">不存在(2026-08-19 移除)</td><td class="real">RL 专有</td><td>GRPO 的组来源</td></tr>
-      <tr><td>并发池</td><td class="m">不存在</td><td class="real">RL 专有</td><td>rollout 吞吐</td></tr>
-    </tbody>
-  </table>
-</div>
-
-<h2><span class="num">§8</span> 六件最容易记错的事</h2>
-<ol class="gotchas">
-  <li><strong>人物抽取和场景图提示词走的是通用 <code>models.llm</code>,不是它们"看起来该有"的 crew 槽。</strong>
-      想给它们单独换型号,得先在 <code>window_loop.py:3912 / :4018</code> 加槽位。</li>
-  <li><strong>锦标赛评委和接点实况观察走通用 <code>models.mllm</code>,不是 <code>crew.reviewer</code>。</strong>
-      换评审模型时这两个不会跟着变。</li>
-  <li><strong>评审/验收的 SKILL.md 只是文档,不是活提示词。</strong>
-      真正发出去的是 <code>mllm_backends.py</code> 里的 <code>_SHOT_REVIEW_INSTRUCTION</code> 和 <code>_VERIFY_PAIR_INSTRUCTION</code>。
-      改了 SKILL.md 而线上没变化,原因就在这。</li>
-  <li><strong>整理员的 skill 文件在 <code>src/maestro/skills/</code> 里不存在</strong>(只在 <code>skills_backup/</code>),
-      所以润色那一步永远走内联兜底。</li>
-  <li><strong>语义评审和物理评审共用一次上传</strong> —— 按 <code>(路径, mtime)</code> 缓存,一次 API 调用出两份判词。别按两次计费估算成本。</li>
-  <li><strong><code>best.accepted = True</code> 只表示"发货了",不表示"没毛病"。</strong>
-      真话在 <code>converged</code> + <code>stop_reason</code> + <code>review_evidence</code> 三个字段里。</li>
-</ol>
 
 <footer>
   <span>src/maestro/pipeline/window_loop.py</span>
   <span>generate_movie_windowed</span>
-  <span>25 模型岗位 · 10 确定性组件</span>
+  <span>25 agent</span>
   <span>2026-08-21</span>
 </footer>
 
