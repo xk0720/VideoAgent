@@ -44,10 +44,12 @@ class FakeModel:
         # 真实可训练叶子:让 logits 确实依赖参数,反向传播才成立
         self.w = torch.zeros(1, requires_grad=True)
 
-    def __call__(self, ids, num_logits_to_keep=None):
+    # 只认新名字 —— 假件刻意【不】接受 num_logits_to_keep,这样一旦代码
+    # 退回旧参数名,探针会判定截断失效并落到全量分支,测试立刻抓到
+    def __call__(self, ids, logits_to_keep=None, use_cache=None, **kw):
         n = ids.shape[1]
-        keep = num_logits_to_keep or n
-        self.calls.append({"len": n, "keep": keep})
+        keep = logits_to_keep or n
+        self.calls.append({"len": n, "keep": keep, "use_cache": use_cache})
         base = torch.arange(self.VOCAB, dtype=torch.float32)
         rows = []
         for pos in range(n - keep, n):
@@ -126,12 +128,49 @@ def test_temperature_is_applied_to_logits():
 
 
 def test_only_completion_logits_are_computed():
-    """num_logits_to_keep = R+1 —— 这是 batch 上不去那堵显存墙的解法。"""
+    """logits_to_keep = R+1 —— 这是 batch 上不去那堵显存墙的解法。"""
     p = _policy()
     ids = p.encode_prompt("x")
     p.seq_logprob(ids, [3, 4, 5], temperature=1.0)
+    assert p.logits_kwarg() == "logits_to_keep", "探针必须认出新参数名"
     assert p.model.calls[-1]["keep"] == 4          # R+1
     assert p.model.calls[-1]["len"] == len(ids) + 3
+    assert p.model.calls[-1]["use_cache"] is False, "训练前向必须关 KV cache"
+
+
+class SwallowingModel(FakeModel):
+    """复刻真实事故:forward 带 **kwargs,截断参数被【静默吞掉】——
+    不报错、不告警,只是默默把全序列 logits 都算出来。"""
+
+    def __call__(self, ids, **kw):                 # 吞掉一切,不截断
+        return FakeModel.__call__(self, ids)
+
+
+def test_correctness_does_not_depend_on_the_truncation_kwarg():
+    """核心回归:截断失效时显存会高,但【算出来的数必须一模一样】。
+    负索引切窗口就是为此 —— 正确性不能押在一个参数名上。"""
+    hp = C.HParams(group=4, max_new_tokens=3)
+    good = LocalPolicy(FakeModel(), FakeTok(), hp, device="cpu")
+    bad = LocalPolicy(SwallowingModel(), FakeTok(), hp, device="cpu")
+    ids = good.encode_prompt("深夜便利店")
+    a = good.seq_logprob(ids, [3, 4, 5], temperature=0.7)
+    b = bad.seq_logprob(ids, [3, 4, 5], temperature=0.7)
+    assert bad.logits_kwarg() is None, "探针必须诚实报告截断没生效"
+    assert torch.allclose(a, b, atol=1e-6), "截断与否不得改变数值"
+
+
+def test_selftest_grad_catches_dead_backward():
+    """PEFT + 梯度检查点少一步设置 → 反向静默不回传、梯度恒零。
+    这个自检就是为拦住它而存在的。"""
+    p = _policy()
+    assert p.selftest_grad() > 0
+
+    class Frozen(FakeModel):
+        def parameters(self):
+            leaf = torch.zeros(1, requires_grad=True)
+            return [leaf]                          # 与图无关的孤立叶子
+    dead = LocalPolicy(Frozen(), FakeTok(), C.HParams(), device="cpu")
+    assert dead.selftest_grad() == 0.0
 
 
 def test_ref_context_toggles_and_restores():

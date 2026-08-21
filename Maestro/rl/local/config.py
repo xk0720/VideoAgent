@@ -50,6 +50,9 @@ class HParams:
     clip_high: float = 0.3         # 非对称裁剪(DAPO clip-higher)
     kl_coef: float = 0.001         # k3 估计量,作损失项、不进奖励
     grad_clip: float = 1.0
+    # 14B/40 层在 7000 token 上的反向激活约 50GB;开检查点后只存层边界
+    # (~4GB),反向多算约 30%。训练器本来就在空等视频,这笔交换近乎白送。
+    grad_checkpoint: bool = True
     broadcast_every: int = 4       # 用户裁决④:每 N 次 optimizer step 广播
     staleness_max: int = 5
     keep_adapters: int = 3         # 磁盘上保留几代
@@ -81,6 +84,8 @@ def add_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--clip-low", type=float, default=d.clip_low)
     ap.add_argument("--clip-high", type=float, default=d.clip_high)
     ap.add_argument("--kl-coef", type=float, default=d.kl_coef)
+    ap.add_argument("--no-grad-checkpoint", action="store_true",
+                    help="关掉梯度检查点(显存换速度;14B 单卡请勿关)")
     ap.add_argument("--broadcast-every", type=int, default=d.broadcast_every)
     ap.add_argument("--staleness-max", type=int, default=d.staleness_max)
     ap.add_argument("--workers", type=int, default=d.workers)
@@ -100,7 +105,8 @@ def from_args(a) -> HParams:
         group=a.group, temp_main=a.temp_main, temp_branch=a.temp_branch,
         max_new_tokens=a.max_new_tokens, enable_thinking=bool(a.thinking),
         lr=a.lr, clip_low=a.clip_low, clip_high=a.clip_high,
-        kl_coef=a.kl_coef, broadcast_every=a.broadcast_every,
+        kl_coef=a.kl_coef, grad_checkpoint=not a.no_grad_checkpoint,
+        broadcast_every=a.broadcast_every,
         staleness_max=a.staleness_max, workers=a.workers, worker_id=a.worker,
         trunk_select=a.trunk_select, task_pool=a.task_pool,
         env_config=a.env_config, out_root=a.out_root)

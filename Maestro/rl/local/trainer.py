@@ -117,8 +117,21 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
     import torch
     from .policy import LocalPolicy
 
-    policy = LocalPolicy.load(hp, device="cuda:0")
+    policy = LocalPolicy.load(hp, device="cuda:0", train=True)
     opt = torch.optim.AdamW(policy.trainable_parameters(), lr=hp.lr)
+
+    # 开跑前先验一次梯度真的在回传 —— PEFT + 梯度检查点少一步设置就会
+    # 静默失效,loss 照跑、梯度恒零,整轮训练白费(2026-08 事故)
+    gn0 = policy.selftest_grad()
+    if not (gn0 > 0):
+        raise RuntimeError(
+            f"梯度自检失败:范数={gn0} —— 反向没有回传到 LoRA。"
+            "多半是梯度检查点缺 enable_input_require_grads,"
+            "或 target_modules 没命中任何层。")
+    n_train = sum(p.numel() for p in policy.trainable_parameters())
+    print(f"[trainer] 梯度自检通过(|g|={gn0:.4e});"
+          f"可训练参数 {n_train/1e6:.1f}M", flush=True)
+
     queue = GroupQueue()
     pub = AdapterPublisher(hp)
     wb = _wandb_init(hp) if wandb_on else None
@@ -155,6 +168,14 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
 
         step += 1
         m["step_s"] = round(time.time() - t0, 1)
+        # 显存实况:OOM 排查全靠它,别再靠估算(单位 GB)
+        if torch.cuda.is_available():
+            m["mem_peak"] = round(torch.cuda.max_memory_allocated() / 2**30, 1)
+            m["n_tok_max"] = max(
+                (len(s.get("prompt_ids") or []) + len(s.get("response_ids")
+                                                      or [])
+                 for s in group.get("samples") or []), default=0)
+            torch.cuda.reset_peak_memory_stats()
         m["queue_depth"] = queue.depth()
         m["policy_version"] = pub.published
         m["staleness"] = pub.published - gv
@@ -163,6 +184,7 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
               f"clipfrac={m['clipfrac']} adv_std={m['adv_std']} "
               f"reward={m['reward_mean']} |g|={m['grad_norm']} "
               f"queue={m['queue_depth']} stale={m['staleness']} "
+              f"mem={m.get('mem_peak', '-')}G tok={m.get('n_tok_max', '-')} "
               f"(skipped={skipped})", flush=True)
         if wb is not None:
             wb.log({f"train/{k}": v for k, v in m.items()

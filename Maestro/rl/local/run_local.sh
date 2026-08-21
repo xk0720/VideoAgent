@@ -55,6 +55,11 @@ python -c "import torch, peft, transformers" 2>/dev/null \
   || fail "训练依赖缺失:pip install torch transformers peft"
 
 mkdir -p "$LOGS" rl/data/queue/claimed rl/state/live_adapter
+
+# 抗显存碎片:长短序列交替会把显存打成筛子,可分配总量够却拿不出连续块。
+# expandable_segments 让分配器按需伸缩段,实测能省下几个 GB 的"虚胖"。
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+
 IFS=',' read -ra GPUS <<< "$STREAM_GPUS"
 N=${#GPUS[@]}
 echo "== 本地 GRPO:训练器 GPU$TRAIN_GPU + $N 条流 (GPU $STREAM_GPUS)"
