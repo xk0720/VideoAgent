@@ -52,9 +52,20 @@ class LocalPolicy:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         tok = AutoTokenizer.from_pretrained(hp.base_model)
+        # 多卡拆分(2026-08-22 用户令):TRAIN_GPU=0,1 时进程能见 2 张卡,
+        # 权重按层切开(朴素流水,同一时刻只有一张卡在算 —— 训练器本来
+        # 就在等视频,吞吐无所谓,要的是显存翻倍)。单卡路径原样不动。
+        n_vis = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        dmap = "auto" if (str(device).startswith("cuda") and n_vis > 1) \
+            else {"": device}
         base = AutoModelForCausalLM.from_pretrained(
-            hp.base_model, torch_dtype=torch.bfloat16,
-            device_map={"": device})
+            hp.base_model, torch_dtype=torch.bfloat16, device_map=dmap)
+        if dmap == "auto":
+            per: dict = {}
+            for mod, dev in getattr(base, "hf_device_map", {}).items():
+                per[str(dev)] = per.get(str(dev), 0) + 1
+            print(f"[policy] 权重按层切到 {n_vis} 张卡(模块数分布 {per});"
+                  "输入仍走 cuda:0,accelerate 钩子负责跨卡搬运", flush=True)
         if train:
             base.config.use_cache = False       # 与检查点互斥,必须关
             # PEFT + 梯度检查点的静默陷阱:检查点段的输入若不 require_grad,

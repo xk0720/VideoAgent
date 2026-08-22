@@ -4,6 +4,8 @@
 #   bash rl/local/run_local.sh              # 1 训练器 + N 条流
 #   bash rl/local/run_local.sh --fresh      # 清零后再起
 #   bash rl/local/run_local.sh --stop       # 一键收摊
+#   TRAIN_GPU=0,1 STREAM_GPUS=2,3,4,5,6,7 bash rl/local/run_local.sh
+#                                           # ↑ 双卡拆分训练 + 6 条流
 #
 # 与旧的 vLLM 路线(rl/run_grpo.sh)完全并存 —— 那条路一行未动,
 # 因为 rl/env/loop.py 的三个钩子默认关闭。
@@ -15,7 +17,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
-TRAIN_GPU=${TRAIN_GPU:-0}          # 训练器占哪张卡
+TRAIN_GPU=${TRAIN_GPU:-0}          # 训练器占哪些卡;"0,1" = 双卡拆分训练
+                                   # (权重按层切开,显存翻倍,吞吐不变)
 STREAM_GPUS=${STREAM_GPUS:-1}      # 流占哪些卡(逗号分隔),流数由此推出
 LOGS=${LOGS:-rl/logs}
 
@@ -51,8 +54,8 @@ fail() { echo "❌ $1"; exit 2; }
 [[ -n "${DASHSCOPE_API_KEY:-}" ]] || fail "DASHSCOPE_API_KEY 缺失(可灵视频 + MaaS 文本)"
 [[ -n "${WAVESPEED_API_KEY:-}" ]] || fail "WAVESPEED_API_KEY 缺失(t2i / 图像编辑)"
 [[ -n "${IDEALAB_API_KEY:-}" ]]   || fail "IDEALAB_API_KEY 缺失(视频判官网关)"
-python -c "import torch, peft, transformers" 2>/dev/null \
-  || fail "训练依赖缺失:pip install torch transformers peft"
+python -c "import torch, peft, transformers, accelerate" 2>/dev/null \
+  || fail "训练依赖缺失:pip install torch transformers peft accelerate"
 
 mkdir -p "$LOGS" rl/data/queue/claimed rl/state/live_adapter
 
@@ -62,7 +65,15 @@ export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:Tr
 
 IFS=',' read -ra GPUS <<< "$STREAM_GPUS"
 N=${#GPUS[@]}
-echo "== 本地 GRPO:训练器 GPU$TRAIN_GPU + $N 条流 (GPU $STREAM_GPUS)"
+
+# 训练卡与流卡不许重叠 —— 重叠不会报错,只会两边一起 OOM,查半天
+for tg in ${TRAIN_GPU//,/ }; do
+  for sg in "${GPUS[@]}"; do
+    [[ "$tg" == "$sg" ]] && fail "GPU$tg 同时出现在 TRAIN_GPU 和 STREAM_GPUS"
+  done
+done
+
+echo "== 本地 GRPO:训练器 GPU[$TRAIN_GPU] + $N 条流 (GPU $STREAM_GPUS)"
 echo "   底座 $BASE_MODEL"
 
 PIDS=()

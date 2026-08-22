@@ -168,14 +168,18 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
 
         step += 1
         m["step_s"] = round(time.time() - t0, 1)
-        # 显存实况:OOM 排查全靠它,别再靠估算(单位 GB)
+        # 显存实况:OOM 排查全靠它,别再靠估算(单位 GB;多卡时逐卡列出)
         if torch.cuda.is_available():
-            m["mem_peak"] = round(torch.cuda.max_memory_allocated() / 2**30, 1)
+            peaks = [round(torch.cuda.max_memory_allocated(i) / 2**30, 1)
+                     for i in range(torch.cuda.device_count())]
+            m["mem_peak"] = (peaks[0] if len(peaks) == 1
+                             else "+".join(str(p) for p in peaks))
             m["n_tok_max"] = max(
                 (len(s.get("prompt_ids") or []) + len(s.get("response_ids")
                                                       or [])
                  for s in group.get("samples") or []), default=0)
-            torch.cuda.reset_peak_memory_stats()
+            for i in range(torch.cuda.device_count()):
+                torch.cuda.reset_peak_memory_stats(i)
         m["queue_depth"] = queue.depth()
         m["policy_version"] = pub.published
         m["staleness"] = pub.published - gv
