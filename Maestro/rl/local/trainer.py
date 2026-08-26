@@ -98,12 +98,16 @@ def train_one_group(policy, opt, group: dict, hp) -> dict:
     opt.step()
     for k in ("loss", "pg", "kl", "ratio", "clipfrac"):
         m[k] = round(m[k] / max(1, total_tok), 5)
+    # 组内奖励的【原始】标准差 —— 归一化前的那个,才有信息量:它衡量
+    # "判官拉得开四个候选吗"。归一化后的优势 RMS 是常数 √((K−1)/K)
+    # (K=4 时恒 0.866),之前打那个纯属同义反复,已换掉。
+    rs = [float(s["reward"]) for s in samples]
+    mr = sum(rs) / len(rs)
     m.update({"grad_norm": round(float(gn), 4),
-              "adv_std": round((sum(x * x for x in adv)
-                                / len(adv)) ** 0.5, 4),
+              "reward_std": round((sum((r - mr) ** 2 for r in rs)
+                                   / (len(rs) - 1)) ** 0.5, 4),
               "group_size": len(samples),
-              "reward_mean": round(sum(float(s["reward"])
-                                       for s in samples) / len(samples), 4)})
+              "reward_mean": round(mr, 4)})
     return m
 
 
@@ -114,6 +118,9 @@ def _mean(vals):
 
 def run_trainer(hp, wandb_on: bool = False) -> int:
     """训练器主循环:认领组 → 陈旧过滤 → 训练 → 按节拍广播 adapter。"""
+    import json
+    from collections import deque
+
     import torch
     from .policy import LocalPolicy
 
@@ -145,6 +152,11 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
           f"rank={hp.rank} clip=[{1 - hp.clip_low:.2f},"
           f"{1 + hp.clip_high:.2f}] kl={hp.kl_coef} "
           f"broadcast_every={hp.broadcast_every}", flush=True)
+
+    # 每版 adapter 的近期奖励/KL 落一行账 —— 这是"按峰值回滚"时找峰值
+    # 的依据;只看终端日志的话,重启一次历史就没了
+    recent_r, recent_kl = deque(maxlen=20), deque(maxlen=20)
+    hist_path = pub.root / "reward_history.jsonl"
 
     step, skipped = 0, 0
     while True:
@@ -185,7 +197,7 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
         m["staleness"] = pub.published - gv
         print(f"[trainer] step={step} ({m['step_s']}s) loss={m['loss']} "
               f"pg={m['pg']} kl={m['kl']} ratio={m['ratio']} "
-              f"clipfrac={m['clipfrac']} adv_std={m['adv_std']} "
+              f"clipfrac={m['clipfrac']} r_std={m['reward_std']} "
               f"reward={m['reward_mean']} |g|={m['grad_norm']} "
               f"queue={m['queue_depth']} stale={m['staleness']} "
               f"mem={m.get('mem_peak', '-')}G tok={m.get('n_tok_max', '-')} "
@@ -194,9 +206,20 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
             wb.log({f"train/{k}": v for k, v in m.items()
                     if isinstance(v, (int, float))}, step=step)
 
+        recent_r.append(m["reward_mean"])
+        recent_kl.append(m["kl"])
         v = pub.maybe_publish(policy, step)
         if v is not None:
-            print(f"[trainer] 广播 adapter v{v}(step {step})", flush=True)
+            rec = {"v": v, "step": step,
+                   "reward_recent": round(sum(recent_r) / len(recent_r), 4),
+                   "kl_recent": round(sum(recent_kl) / len(recent_kl), 5)}
+            with open(hist_path, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+            print(f"[trainer] 广播 adapter v{v}(step {step},"
+                  f"近期奖励 {rec['reward_recent']})", flush=True)
+            if pub.maybe_save_best(v, rec["reward_recent"]):
+                print(f"[trainer] 🏆 新最优:v{v} 已存入 best/"
+                      f"(近期奖励 {rec['reward_recent']})", flush=True)
 
 
 def _wandb_init(hp):

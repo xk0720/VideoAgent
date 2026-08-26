@@ -10,6 +10,7 @@ SkyRL 用的是同一机制)。代价是必须自己处理三件事,下面逐条
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import time
@@ -55,6 +56,14 @@ class AdapterPublisher:
         # 否则覆写 root 时(测试/多实验并存)指针与目录会分家
         _atomic_write_text(self.root / "VERSION", str(v))
         self.published = v
+        # 峰值回滚的物质基础:每 archive_every 版永久归档一份,
+        # 不受下面滚动删除的影响(奖励峰值往往在几十版之前)
+        ae = int(getattr(self.hp, "archive_every", 0) or 0)
+        if ae > 0 and v > 0 and v % ae == 0:
+            arc = self.root / "archive" / f"v{v}"
+            if not arc.exists():
+                arc.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(dst, arc)
         self._prune()
         return v
 
@@ -63,6 +72,30 @@ class AdapterPublisher:
                      if p.name[1:].isdigit()), reverse=True)
         for old in vs[self.hp.keep_adapters:]:
             shutil.rmtree(self.root / f"v{old}", ignore_errors=True)
+
+    def maybe_save_best(self, v: int, reward: float) -> bool:
+        """奖励创新高 → 该版权重复制为 best/(2026-08-25 用户令:
+        始终保留 reward 最优版)。历史最优读自 best/BEST.json,
+        重启不清零;打不过就不动,best/ 里永远是全程峰值。"""
+        best_meta = self.root / "best" / "BEST.json"
+        prev = float("-inf")
+        try:
+            prev = float(json.loads(best_meta.read_text())["reward"])
+        except Exception:
+            pass
+        if reward <= prev:
+            return False
+        stage = self.root / ".staging_best"
+        shutil.rmtree(stage, ignore_errors=True)
+        shutil.copytree(self.root / f"v{v}", stage)
+        (stage / "BEST.json").write_text(json.dumps(
+            {"v": v, "reward": round(float(reward), 4),
+             "ts": time.time()}))
+        dst = self.root / "best"
+        if dst.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+        os.replace(stage, dst)
+        return True
 
 
 class AdapterSubscriber:
@@ -88,6 +121,41 @@ class AdapterSubscriber:
             return None                  # 还没落全,下一镜再来
         policy.reload_adapter(path, v)
         return v
+
+
+def rollback_adapter(version, root: Path = LIVE_ADAPTER) -> int:
+    """峰值回滚:把历史版本重新发布为【新的最新版】。
+
+    version 传数字,或字符串 "best"(= best/ 里那份全程 reward 最优版)。
+    做法不是把 VERSION 往回拨(订阅端只认"版本号变大"),而是把目标
+    版本的内容复制成 v_max+1 再原子换入 —— 流在下一个镜间安全点自然
+    换用。数字版本先在 live 目录找,再到 archive/ 找。
+
+    注意:必须先停训练器再回滚 —— 训练器仍在跑会继续发布更高版本,
+    立刻把回滚盖掉。"""
+    root = Path(root)
+    if str(version) == "best":
+        src = root / "best"
+    else:
+        src = root / f"v{version}"
+        if not (src / "adapter_config.json").exists():
+            src = root / "archive" / f"v{version}"
+    if not (src / "adapter_config.json").exists():
+        raise FileNotFoundError(
+            f"v{version} 在 live/archive/best 中都不存在 —— "
+            f"可回滚版本: live={sorted(p.name for p in root.glob('v*'))} "
+            f"archive={sorted(p.name for p in (root / 'archive').glob('v*'))} "
+            f"best={ (root / 'best' / 'BEST.json').exists() }")
+    cur = max((int(p.name[1:]) for p in root.glob("v*")
+               if p.name[1:].isdigit()), default=0)
+    new = cur + 1
+    stage = root / f".staging_v{new}"
+    if stage.exists():
+        shutil.rmtree(stage, ignore_errors=True)
+    shutil.copytree(src, stage)
+    os.replace(stage, root / f"v{new}")
+    _atomic_write_text(root / "VERSION", str(new))
+    return new
 
 
 # ── 组队列 ───────────────────────────────────────────────────────────

@@ -224,6 +224,10 @@ def test_ratio_clipping_and_kl_are_live():
     assert m["ratio"] > 1.0 and m["clipfrac"] > 0.0
     assert m["kl"] != 0.0, "KL 项必须真的在算"
     assert m["group_size"] == 4
+    # 指标必须是【归一化前】的组内奖励 std —— 归一化后的优势 RMS 是
+    # 常数 √((K−1)/K)=0.866,同义反复(2026-08-25 实测发现后换掉)
+    assert "adv_std" not in m
+    assert abs(m["reward_std"] - 0.5) < 1e-9   # [1,0,0,0] 的无偏 std
 
 
 # ── ③ 广播与队列 ─────────────────────────────────────────────────────
@@ -252,6 +256,58 @@ def test_group_queue_atomic_and_claim_once(tmp_path):
     assert q.claim() == (None, None), "认领过的不该再被拿到"
     q.done(path)
     assert not path.exists()
+
+
+def test_archive_survives_prune_and_rollback_republishes(tmp_path):
+    """峰值回滚三件套:① 归档不受滚动删除影响;② 回滚 = 老版本内容
+    以新版本号重新发布(订阅端只认版本变大);③ 目标不存在时点名报错。"""
+    from rl.local.broadcast import rollback_adapter
+    hp = C.HParams(broadcast_every=1, keep_adapters=2, archive_every=2)
+    pub = AdapterPublisher(hp, root=tmp_path)
+    p = _policy()
+    for s in range(1, 6):
+        pub.maybe_publish(p, s)                     # v1..v5
+    assert not (tmp_path / "v2").exists(), "live 只留 2 代,v2 应被滚掉"
+    assert (tmp_path / "archive/v2/adapter_config.json").exists(), \
+        "v2 是归档版,必须在 archive/ 里活着"
+    assert (tmp_path / "archive/v4").exists()
+    assert not (tmp_path / "archive/v5").exists(), "5 不是归档节拍"
+
+    new = rollback_adapter(2, root=tmp_path)        # 峰值在 v2
+    assert new == 6
+    assert (tmp_path / "VERSION").read_text() == "6"
+    assert (tmp_path / "v6/adapter_config.json").exists()
+    sub = AdapterSubscriber(tmp_path)
+    assert sub.maybe_reload(p) == 6, "订阅端应把回滚版当新版换用"
+
+    with pytest.raises(FileNotFoundError):
+        rollback_adapter(99, root=tmp_path)
+
+
+def test_best_version_is_always_kept(tmp_path):
+    """2026-08-25 用户令:始终保存 reward_mean 最优的那版权重。
+    打擂台:创新高才更新 best/,打不过不动;重启后历史最优仍算数;
+    --to best 可直接回滚到它。"""
+    import json as _json
+
+    from rl.local.broadcast import rollback_adapter
+    hp = C.HParams(broadcast_every=1, keep_adapters=2)
+    pub = AdapterPublisher(hp, root=tmp_path)
+    p = _policy()
+    for s, r in ((1, 0.60), (2, 0.75), (3, 0.70)):   # 峰值在 v2
+        pub.maybe_publish(p, s)
+        pub.maybe_save_best(s, r)
+    meta = _json.loads((tmp_path / "best/BEST.json").read_text())
+    assert meta["v"] == 2 and meta["reward"] == 0.75, "best 必须是峰值版"
+    assert (tmp_path / "best/adapter_config.json").exists()
+
+    # 模拟重启:新 publisher 也打不过盘上的历史最优
+    pub2 = AdapterPublisher(hp, root=tmp_path)
+    pub2.maybe_publish(p, 4)
+    assert pub2.maybe_save_best(4, 0.74) is False
+    assert _json.loads((tmp_path / "best/BEST.json").read_text())["v"] == 2
+
+    assert rollback_adapter("best", root=tmp_path) == 5
 
 
 def test_stale_claims_are_recovered(tmp_path):

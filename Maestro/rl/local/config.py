@@ -55,7 +55,11 @@ class HParams:
     grad_checkpoint: bool = True
     broadcast_every: int = 4       # 用户裁决④:每 N 次 optimizer step 广播
     staleness_max: int = 5
-    keep_adapters: int = 3         # 磁盘上保留几代
+    keep_adapters: int = 3         # live 目录保留几代(滚动删除)
+    # 峰值回滚的物质基础(2026-08-25 用户裁决):每 N 版把 adapter 永久
+    # 归档到 archive/,不受滚动删除影响 —— 否则奖励峰值那一版早被删了,
+    # "按峰值回滚"无版可回。LoRA 一版约 170MB,每 20 版归档成本可忽略。
+    archive_every: int = 20        # 0 = 关闭归档
     poll_s: float = 5.0
 
     # ── 流 ───────────────────────────────────────────────────────
@@ -87,6 +91,8 @@ def add_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--no-grad-checkpoint", action="store_true",
                     help="关掉梯度检查点(显存换速度;14B 单卡请勿关)")
     ap.add_argument("--broadcast-every", type=int, default=d.broadcast_every)
+    ap.add_argument("--archive-every", type=int, default=d.archive_every,
+                    help="每 N 版永久归档一份 adapter(0 关闭)")
     ap.add_argument("--staleness-max", type=int, default=d.staleness_max)
     ap.add_argument("--workers", type=int, default=d.workers)
     ap.add_argument("--worker", type=int, default=d.worker_id)
@@ -106,7 +112,7 @@ def from_args(a) -> HParams:
         max_new_tokens=a.max_new_tokens, enable_thinking=bool(a.thinking),
         lr=a.lr, clip_low=a.clip_low, clip_high=a.clip_high,
         kl_coef=a.kl_coef, grad_checkpoint=not a.no_grad_checkpoint,
-        broadcast_every=a.broadcast_every,
+        broadcast_every=a.broadcast_every, archive_every=a.archive_every,
         staleness_max=a.staleness_max, workers=a.workers, worker_id=a.worker,
         trunk_select=a.trunk_select, task_pool=a.task_pool,
         env_config=a.env_config, out_root=a.out_root)
