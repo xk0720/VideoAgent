@@ -31,6 +31,24 @@ sys.path.insert(0, str(REPO / "src"))
 MODEL_ID = os.environ.get("SEEDANCE_MODEL",
                           "bytedance/seedance-2.5/text-to-video")
 
+# ── 故事源头:user idea 与剧本(demo 叙事链的最上游)─────────────────
+USER_IDEA = "一位老守塔人独自守着悬崖上的灯塔;风暴夜,他点亮塔灯,救下一艘迷航的渔船。"
+
+SCREENPLAY = """《灯塔守夜人》
+
+场景一 悬崖灯塔·清晨(白日)
+海雾未散,海鸥掠过悬崖上的白色灯塔。守塔人——一位穿芥末黄雨衣、
+花白络腮胡的老人——沿塔外螺旋石阶缓步而上。灯室里,他用绒布仔细
+擦拭巨大的菲涅尔透镜,晨光在他脸上流动;粗糙的手转动黄铜旋钮,
+齿轮咬合。他立上环形露台,搭手远眺:海平线尽头,乌云正在压来。
+
+场景二 灯塔灯室·当夜(暴风雨)
+狂风裹着暴雨抽打悬崖,巨浪拍碎在礁石上,闪电中灯塔的剪影漆黑未亮。
+灯室内,雨衣滴水的守塔人奋力摇动黄铜曲柄,齿轮由慢到快——灯芯骤亮,
+雪亮的光束刺破雨幕,扫过怒海。远处,一艘迷航的小渔船在光的指引下
+调转船头,驶离暗礁。守塔人捧起一杯热茶,倚窗望海,微微一笑;
+身后,光束仍在规律地旋转。(全片无台词)"""
+
 # ── 逐字复用的两句(一致性纪律②④:常量单一来源,两段自然逐字相同)──
 STYLE = ("写实电影质感,35mm 胶片色调,浅景深,自然光效,"
          "画面中不出现任何文字。")
@@ -105,7 +123,9 @@ def main() -> None:
     a = ap.parse_args()
 
     if a.dry_run:
-        print("═══ 肖像 t2i ═══\n" + PORTRAIT_PROMPT)
+        print("═══ User Idea ═══\n" + USER_IDEA)
+        print("\n═══ 剧本 ═══\n" + SCREENPLAY)
+        print("\n═══ 肖像 t2i ═══\n" + PORTRAIT_PROMPT)
         print("\n═══ 前 30s(白日)═══\n" + SEG1)
         print("\n═══ 后 30s(风暴夜)═══\n" + SEG2)
         return
@@ -116,6 +136,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=False)
     print("输出目录:", out_dir, "| 模型:", MODEL_ID, "|", a.resolution)
 
+    (out_dir / "story.md").write_text(
+        f"# User Idea\n\n{USER_IDEA}\n\n# 剧本\n\n{SCREENPLAY}\n")
     vg = _build_vg(out_dir, a.resolution)
     ledger: list = []
 

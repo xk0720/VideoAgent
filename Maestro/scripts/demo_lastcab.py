@@ -32,6 +32,28 @@ sys.path.insert(0, str(REPO / "src"))
 MODEL_ID = os.environ.get("SEEDANCE_MODEL",
                           "bytedance/seedance-2.5/text-to-video")
 
+# ── 故事源头:user idea 与剧本(demo 叙事链的最上游)─────────────────
+USER_IDEA = ("雨夜的末班出租车上,演出无人问津的年轻音乐人遇到一位"
+             "年轻时也玩音乐的老司机;一碗深夜的面,让他重新想唱下去。")
+
+SCREENPLAY = """《末班车》
+
+场景一 出租车内·雨夜(行驶中)
+雨夜街道,一辆亮着顶灯的出租车停下。背着酒红色吉他包的青年坐进
+后座,抱着琴包,靠窗无言,霓虹光影流过他的脸。
+  司机(从后视镜看他一眼):"这么晚,去哪?"
+  青年(抬头,轻声):"随便开吧……今晚是我最后一场演出,台下没有人。"
+  司机(双手轻扣方向盘,沉默片刻):"我年轻的时候,也吹小号。"
+红灯,车缓缓停下。两人都没有再说话,雨刷规律摆动,青年望向窗外。
+
+场景二 路边面摊·当夜更深
+街角面摊,暖黄灯串,蒸汽翻滚。出租车停在摊旁,两人对坐,面前各一
+碗热面。
+  司机(放下筷子,看着青年):"再唱一次,唱给我听。"
+青年愣住,筷子停在半空;片刻后轻轻放下,低头一笑,轻声哼起一段
+温柔的旋律——没有歌词。司机靠着椅背静静地听,手指在桌沿打着拍子。
+灯串下,两人相视而笑,摊主在背景里添汤。(终)"""
+
 # ── 逐字复用的三段(常量单一来源 → 两段 prompt 自然逐字相同)─────────
 STYLE = ("写实电影质感,35mm 胶片色调,浅景深,雨夜霓虹的冷暖对比,"
          "画面中不出现任何文字。")
@@ -117,7 +139,9 @@ def main() -> None:
     a = ap.parse_args()
 
     if a.dry_run:
-        print("═══ 肖像 t2i · 司机 ═══\n" + PORTRAIT_DRIVER)
+        print("═══ User Idea ═══\n" + USER_IDEA)
+        print("\n═══ 剧本 ═══\n" + SCREENPLAY)
+        print("\n═══ 肖像 t2i · 司机 ═══\n" + PORTRAIT_DRIVER)
         print("\n═══ 肖像 t2i · 青年 ═══\n" + PORTRAIT_YOUTH)
         print("\n═══ 前 30s(车内)═══\n" + SEG1)
         print("\n═══ 后 30s(面摊)═══\n" + SEG2)
@@ -129,6 +153,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=False)
     print("输出目录:", out_dir, "| 模型:", MODEL_ID, "|", a.resolution)
 
+    (out_dir / "story.md").write_text(
+        f"# User Idea\n\n{USER_IDEA}\n\n# 剧本\n\n{SCREENPLAY}\n")
     vg = _build_vg(out_dir, a.resolution)
     ledger: list = []
 
