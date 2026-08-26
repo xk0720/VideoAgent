@@ -215,6 +215,7 @@ def run_trainer(hp, wandb_on: bool = False) -> int:
                    "kl_recent": round(sum(recent_kl) / len(recent_kl), 5)}
             with open(hist_path, "a") as f:
                 f.write(json.dumps(rec) + "\n")
+            pub.annotate_archive(v, rec)   # 归档版内嵌同一份 reward 信息
             print(f"[trainer] 广播 adapter v{v}(step {step},"
                   f"近期奖励 {rec['reward_recent']})", flush=True)
             if pub.maybe_save_best(v, rec["reward_recent"]):

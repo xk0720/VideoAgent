@@ -73,6 +73,14 @@ class AdapterPublisher:
         for old in vs[self.hp.keep_adapters:]:
             shutil.rmtree(self.root / f"v{old}", ignore_errors=True)
 
+    def annotate_archive(self, v: int, meta: dict) -> None:
+        """给归档版内嵌 META.json(reward/KL/step)—— 让每份归档自含,
+        不依赖中央账本 reward_history.jsonl(后者会被 --fresh 清掉)。"""
+        arc = self.root / "archive" / f"v{v}"
+        if arc.exists():
+            (arc / "META.json").write_text(
+                json.dumps(meta, ensure_ascii=False))
+
     def maybe_save_best(self, v: int, reward: float) -> bool:
         """奖励创新高 → 该版权重复制为 best/(2026-08-25 用户令:
         始终保留 reward 最优版)。历史最优读自 best/BEST.json,

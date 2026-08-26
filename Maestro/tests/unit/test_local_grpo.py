@@ -273,6 +273,14 @@ def test_archive_survives_prune_and_rollback_republishes(tmp_path):
     assert (tmp_path / "archive/v4").exists()
     assert not (tmp_path / "archive/v5").exists(), "5 不是归档节拍"
 
+    # 归档自含 reward 信息:META.json 内嵌,不依赖中央账本
+    pub.annotate_archive(2, {"v": 2, "reward_recent": 0.71})
+    pub.annotate_archive(3, {"v": 3})           # 非归档版:静默跳过
+    import json as _json
+    assert _json.loads((tmp_path / "archive/v2/META.json")
+                       .read_text())["reward_recent"] == 0.71
+    assert not (tmp_path / "archive/v3").exists()
+
     new = rollback_adapter(2, root=tmp_path)        # 峰值在 v2
     assert new == 6
     assert (tmp_path / "VERSION").read_text() == "6"
