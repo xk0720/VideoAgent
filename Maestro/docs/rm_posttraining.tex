@@ -1,0 +1,315 @@
+% =====================================================================
+%  基于用户评分的生成智能体后训练 —— SFT / 奖励模型 / 偏好优化 方法手册
+%
+%  编译(必须 XeLaTeX 或 LuaLaTeX,含中文):
+%      xelatex rm_posttraining.tex && xelatex rm_posttraining.tex
+%  依赖:ctex, amsmath, amssymb, booktabs, geometry(TeX Live 标配)。
+%
+%  内容:以"剧本创作智能体 + 用户满意度评分"为场景,系统整理
+%  (1) 评分信号的性质与整形;(2) SFT 两种用法;(3) 奖励模型的标准
+%  训练法(结构/损失/日程/验收/校准);(4) 偏好优化三路线
+%  (DPO / KTO / RM+RL)及流程;(5) 风险防线与选择判据。
+%  公式均带编号与标签,可整段摘抄。
+% =====================================================================
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage[a4paper, margin=2.5cm]{geometry}
+
+\DeclareMathOperator{\logsigmoid}{log\,\sigma}
+\allowdisplaybreaks
+
+\title{基于用户评分的生成智能体后训练\\[4pt]
+       \large SFT · 奖励模型 · 偏好优化 —— 方法手册}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{问题设定与信号性质}
+% =====================================================================
+
+\subsection{设定}
+
+生成智能体(以剧本创作为例)接收提示 $x$(用户想法),输出文本 $y$(剧本);
+线上收集到用户满意度评分 $s\in\{1,\dots,5\}$。目标:利用三元组数据
+$\mathcal{D}=\{(x_i,\,y_i,\,s_i)\}$ 通过后训练提升生成质量。
+
+\subsection{评分信号的四个性质(方法设计的出发点)}
+
+\begin{enumerate}
+  \item \textbf{稀疏}:一条产出一个标量,数据量远低于监督训练所需;
+  \item \textbf{尺度不一}:同一分值在不同用户处含义不同(评分习惯差异);
+  \item \textbf{噪声大}:主观口味,同人同稿不同时刻打分亦漂移;
+  \item \textbf{有偏}:愿意评分的用户并非随机样本。
+\end{enumerate}
+
+由此得出贯穿全文的原则:\textbf{人类评分的``序''可靠、``值''不可靠;
+一切设计围绕多榨序、少信值。}
+
+\subsection{数据整形}
+
+\paragraph{用户内标准化.} 对用户 $u$ 的全部评分做 z-score:
+\begin{equation}
+\tilde s \;=\; \frac{s-\mu_u}{\sigma_u+\varepsilon},
+\label{eq:zscore}
+\end{equation}
+消除逐用户的尺度平移与伸缩;评分人数过少或方差异常的样本剔除。
+
+\paragraph{三种目标形态.} 整形后的数据组织为:
+(i) \textbf{高分子集} $\mathcal{D}^{+}=\{(x,y)\,\vert\,\tilde s\ge\tau\}$;
+(ii) \textbf{偏好对} $\{(x,\,y_w,\,y_l)\}$ —— 同一提示下两份产出,
+$\tilde s_w-\tilde s_l\ge\delta$ 方成对(分差过小视为噪声);
+(iii) \textbf{二元标签} $\{(x,\,y,\,z)\},\ z\in\{\text{好},\text{差}\}$ ——
+最常见的真实形态(一条提示只有一份产出,凑不成对)。
+三种形态分别对应第 2、4.1、4.2 节的方法。
+
+% =====================================================================
+\section{SFT 路线}
+% =====================================================================
+
+\subsection{拒绝采样 SFT(Filtered / Rejection-sampling SFT)}
+
+只在高分子集上做极大似然:
+\begin{equation}
+\mathcal{L}_{\text{SFT}}(\theta)
+=-\sum_{(x,y)\in\mathcal{D}^{+}}\;\sum_{l=1}^{\lvert y\rvert}
+\log \pi_\theta\bigl(y_l \mid x,\, y_{<l}\bigr),
+\label{eq:sft}
+\end{equation}
+损失只计生成侧 token(提示部分掩蔽)。要点:阈值 $\tau$ 按\textbf{题材分层}
+取分位数而非全局一刀切(防高分题材垄断导致风格坍缩);混入
+10--20\% 通用指令数据防灾难性遗忘;LoRA 即可,1--2 个 epoch。
+
+\subsection{条件化 SFT(score-conditioned)}
+
+不丢弃低分样本,把分数作为控制前缀一同训练:
+\begin{equation}
+\max_\theta\;\sum_{(x,y,s)}\log \pi_\theta\bigl(y \mid [\,\text{分数}{:}\,s\,],\, x\bigr),
+\qquad \text{推理时固定条件于最高分。}
+\label{eq:condsft}
+\end{equation}
+低分样本教会模型``什么是差'',全量数据均被利用,数据稀缺时优于过滤式。
+
+% =====================================================================
+\section{奖励模型(RM)的标准训练法}
+% =====================================================================
+
+\subsection{结构:SFT 底座 + 标量头}
+
+RM 由 SFT 模型改造:去掉词表头(lm\_head),换一个
+$\mathbb{R}^{d}\!\to\!\mathbb{R}$ 的线性头;输入 $(x,y)$ 全文,
+取\textbf{最后一个有效 token} 的隐藏向量 $h_{\text{last}}$(因果注意力下
+唯有末位读完全文)输出标量:
+\begin{equation}
+r_\phi(x,y) \;=\; w^\top h_{\text{last}}(x,y).
+\label{eq:rmhead}
+\end{equation}
+主体继承 SFT 权重(已``懂''该领域),新增参数仅 $d$ 个;RM 规模通常
+不大于被训策略(判断易于生成)。
+
+\subsection{两种损失}
+
+\paragraph{回归(MSE,不推荐为主).}
+\begin{equation}
+\mathcal{L}_{\text{MSE}}=\bigl(r_\phi(x,y)-\tilde s\bigr)^2 .
+\label{eq:mse}
+\end{equation}
+即便目标是归一化分数,MSE 仍强制拟合绝对值,残余尺度噪声全被当作信号。
+
+\paragraph{Bradley--Terry 成对(工业主流).}
+建模``偏好方获胜''的概率只依赖\textbf{分差}:
+\begin{equation}
+P(y_w \succ y_l \mid x)\;=\;\sigma\bigl(\Delta\bigr),
+\qquad
+\Delta = r_\phi(x,y_w)-r_\phi(x,y_l),
+\label{eq:bt-model}
+\end{equation}
+对观测到的人类偏好做极大似然,得
+\begin{equation}
+\boxed{\;
+\mathcal{L}_{\text{BT}}
+=-\,\mathbb{E}_{(x,y_w,y_l)}\;\logsigmoid\!\bigl(\Delta\bigr)\;}
+\label{eq:bt}
+\end{equation}
+逐步解读:$\sigma$ 把分差映为胜率($\Delta{=}0\Rightarrow 0.5$;
+$\Delta{=}2\Rightarrow 0.88$);$-\log$ 是对已发生事实的罚金
+(给事实的概率越低罚越重);其对 $\Delta$ 的梯度
+\begin{equation}
+\frac{\partial \mathcal{L}_{\text{BT}}}{\partial \Delta}
+=-\bigl(1-\sigma(\Delta)\bigr)
+\label{eq:btgrad}
+\end{equation}
+的幅值恰为``分给错误结局的剩余概率''——排反的对猛推、已排对且笃定的对
+几乎不动,力气自动花在难对上。损失仅含 $\Delta$,对逐用户整体平移免疫
+(\textbf{只学序不学值});实现用数值稳定的 \texttt{logsigmoid},
+避免 $\sigma$ 下溢后取对数得 $-\infty$。
+
+\paragraph{带间隔变体(Llama-2).}
+利用评分幅度:分差大的对要求更大间隔,
+\begin{equation}
+\mathcal{L}=-\logsigmoid\bigl(\Delta-m(\tilde s_w-\tilde s_l)\bigr),
+\qquad m(\cdot)\ \text{单调不减},
+\label{eq:margin}
+\end{equation}
+把被 BT 丢弃的``值''信息部分找回。
+
+\subsection{训练日程与工程要点}
+
+\begin{enumerate}
+  \item \textbf{同一排序的所有对置于同一 batch}:一次 $K$ 路排序拆出
+        $\binom{K}{2}$ 个高度相关的对,拆散会对同一提示反复过拟合;
+        同批处理则每份产出仅前向一次;
+  \item \textbf{只训 1 个 epoch}:RM 过拟合极快,第 2 轮起留出准确率回落;
+  \item 学习率取 SFT 的 $1/10$ 量级,早停看留出集;
+  \item 长度偏置治理:配对时长度配平,或损失中加长度惩罚。
+\end{enumerate}
+
+\subsection{验收:成对判对率}
+
+留出偏好对上,RM 给人类偏好方更高分的比例(随机基线 50\%)。
+\textbf{65--75\% 即可投产}:主观任务上人类互评一致率亦仅此量级,
+它是标签自身的噪声天花板;显著``超越''反而提示过拟合了标注人群癖好。
+
+\subsection{分数尺度的控制(校准)}
+
+BT 训得的分数是\textbf{序数}:零点自由(整体平移不变),
+间隔以对数胜率为单位($\Delta{=}1\Leftrightarrow$ 约 73\% 胜率)。
+是否需要校准取决于下游:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+下游用途 & 需要绝对值? & 手段 \\
+\midrule
+同提示 best-of-$N$ & 否 & 无需处理 \\
+GRPO 训练 & 否 & 组内 $(r-\bar r)/\sigma$ 已消零点与尺度 \\
+PPO(裸奖励) & 半 & 运行时白化(滑动均值/方差) \\
+阈值判定 / 对外展示 & 是 & 见下三层 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+三层校准:(i) \textbf{锚定集归一}——固定代表性样本集,报
+$(r-\mu_{\text{anchor}})/s_{\text{anchor}}$,锚定集须版本化;
+(ii) \textbf{Platt 校准}——留出对上拟合 $a,b$ 使 $\sigma(a\Delta+b)$
+对齐真实胜率(可靠性曲线验收);(iii) \textbf{单调映射回人类分}
+(等张回归),供展示;映射必须单调,序不可扭曲。训练期亦可加
+$\lambda(r_w^2+r_l^2)$ 的 L2 项预先钉住零点。
+\textbf{跨训练轮次禁止直接比较裸分}(两支未对零的温度计)。
+
+% =====================================================================
+\section{偏好优化三路线}
+% =====================================================================
+
+\subsection{DPO:有成对数据时的首选}
+
+带 KL 约束的 RLHF 目标存在闭式解,最优策略的隐式奖励为
+$\beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}$;代回 BT 似然即得
+\begin{equation}
+\boxed{\;
+\mathcal{L}_{\text{DPO}}
+=-\,\mathbb{E}_{(x,y_w,y_l)}\log\sigma\!\Bigl(
+\beta\Bigl[\log\tfrac{\pi_\theta(y_w\mid x)}{\pi_{\text{ref}}(y_w\mid x)}
+-\log\tfrac{\pi_\theta(y_l\mid x)}{\pi_{\text{ref}}(y_l\mid x)}\Bigr]\Bigr)\;}
+\label{eq:dpo}
+\end{equation}
+$\pi_{\text{ref}}$ 为冻结的 SFT 模型;$\beta\in[0.1,0.5]$ 是内建的 KL 缰绳。
+
+\paragraph{偏好对来源(按信号强度).}
+(1) 用户编辑对:改后 $\succ$ 原稿(修正行为零噪声);
+(2) 重生成行为对:采纳版 $\succ$ 被弃版;
+(3) 多稿评分对:同提示多份产出,归一分差超阈方成对;
+(4) 主动采集二选一(成本高,但对来自当前策略分布,训练最有效)。
+
+\paragraph{流程.} SFT 复制两份(冻结作 ref / 可训作 $\theta$)
+$\to$ 喂偏好对(损失只计生成侧)$\to$ $\beta$ 自 0.1 起调、
+lr 低 SFT 一个量级、典型 1 epoch $\to$ 监控隐式奖励差(升)、
+chosen 对数似然(不塌)、生成长度(不涨)$\to$ 冻结人评集盲评验收。
+
+\paragraph{坑.} 长度偏置放大(chosen 系统性更长;配平或用长度归一
+变体);``双降''现象(两侧 logp 同落,概率质量外漂);多 epoch 必过拟合。
+
+\subsection{KTO:单样本二元标签的正解}
+
+真实数据常凑不成对(一提示一产出)。KTO 依前景理论,
+以隐式奖励 $r_\theta=\beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}$
+相对参考点 $z_0$(批内 KL 估计)构造:
+\begin{equation}
+\boxed{\;
+\mathcal{L}_{\text{KTO}}
+=\mathbb{E}\Bigl[
+\lambda_D\bigl(1-\sigma(r_\theta-z_0)\bigr)\Big\vert_{\,z=\text{好}}
++\lambda_U\bigl(1-\sigma(z_0-r_\theta)\bigr)\Big\vert_{\,z=\text{差}}
+\Bigr]\;}
+\label{eq:kto}
+\end{equation}
+好样本推上参考点、差样本压下;$\sigma$ 的饱和特性压低极端样本梯度,
+对噪声标注稳健。二值化:$\tilde s\ge+0.5\Rightarrow$ 好,
+$\tilde s\le-0.5\Rightarrow$ 差,中段丢弃;类别不平衡用
+$\lambda_D n_D/(\lambda_U n_U)\in[1,\,4/3]$ 调节而非降采样——
+差样本亦被完整利用。
+
+\subsection{RM + 在线 RL:持续爬坡的上限路线}
+
+两阶段:先以第 3 节方法训 RM 并验收;再做在线策略优化。
+以 GRPO 为例:同一提示采 $K$ 份产出成组,RM 打分
+$\{r^{(i)}\}$,组相对优势
+\begin{equation}
+A^{(i)}=\frac{r^{(i)}-\bar r}{\sigma_r+\epsilon},
+\label{eq:grpoadv}
+\end{equation}
+以裁剪比值目标更新并以 KL 锚定参考模型(免 critic,契合稀疏标量奖励;
+组归一同时消去 RM 分数的零点与尺度,故无需校准)。
+
+\paragraph{Goodhart 双线监控.} RM 分随训练单调上升是常态,
+\textbf{以冻结人评集为准}:RM 升而人评平即过优化点,立即停;
+防线另有 RM 集成取保守分、奖励中显式长度惩罚、
+每轮对新策略产出补标注并\textbf{刷新 RM}(静态 RM 必被钻穿)。
+
+% =====================================================================
+\section{迭代配方与评估纪律}
+% =====================================================================
+
+\begin{enumerate}
+  \item 第 1 轮:高分子集 SFT(把分布拉上合格线);
+  \item 第 2 轮:线上新评分 $\to$ 构造偏好对 / 二元标签 $\to$ DPO 或 KTO;
+  \item 第 3 轮起:部署 $\to$ 收分 $\to$ 再一轮偏好优化(迭代式);
+  \item 数据过万且有在线基建后,切换 RM + RL 持续爬坡。
+\end{enumerate}
+
+评估纪律三条:\textbf{冻结人评集}上盲评 A/B 定代际胜负
+(线上均分会说谎——模型可能只是学会讨好打分人群);
+监控生成长度与熵(长度偏置与风格坍缩的早期信号);
+所有代际在同一把尺上量,防反馈闭环的分布漂移。
+
+% =====================================================================
+\section{选择判据}
+% =====================================================================
+
+\begin{center}
+\begin{tabular}{@{}p{0.30\textwidth}p{0.16\textwidth}p{0.44\textwidth}@{}}
+\toprule
+手头数据形态 & 用什么 & 一句话理由 \\
+\midrule
+几十条评分 & 上下文回流 & 高分范例进 few-shot,零训练成本 \\
+高分子集可辨 & 拒绝采样 SFT & 先把分布拉上合格线 \\
+同提示多稿 / 编辑对 & DPO & 有对直训,免 RM,一晚出结果 \\
+单稿 + 好/差(最常见) & KTO & 不需成对,差样本不浪费,抗噪 \\
+上万条 + 在线基建 & RM + GRPO/PPO & 唯一可持续在线爬坡,须防 Goodhart \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.5em}
+\noindent 贯穿三条铁律:参考模型冻结;损失只计生成侧 token;
+验收只认冻结人评集的盲评。
+
+\end{document}
