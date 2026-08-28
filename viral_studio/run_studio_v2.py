@@ -20,6 +20,7 @@
 import argparse
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -90,6 +91,12 @@ def main() -> int:
     ap.add_argument("--bgm", default=None,
                     help="整片共享音轨(卡里 bgm_source=shared 的段用它切片; "
                          "策略层的默认来源, 此参数仅作覆盖)")
+    ap.add_argument("--execute", action="store_true",
+                    help="执行调用计划并合成整片(会真实调用生成模型、产生费用)")
+    ap.add_argument("--dry-exec", action="store_true",
+                    help="走一遍执行流程但不调模型, 用于检查引用与顺序")
+    ap.add_argument("--yes", action="store_true", help="跳过执行前的费用确认")
+    ap.add_argument("--kling-mode", choices=["std", "pro"], default="std")
     ap.add_argument("--act", choices=["compiler", "agent", "both"], default="compiler",
                     help="Act 通路: compiler=确定性编译(默认) | agent=LLM 编排 | both=两者并跑并 diff")
     ap.add_argument("--out", default=None)
@@ -211,6 +218,29 @@ def main() -> int:
     print(f"计划校验: {'通过' if not errs else f'{len(errs)} 项问题'}")
     for e in errs:
         print(f"  ✗ {e}")
+    # ── ③ 执行(可选) ──────────────────────────────────
+    if args.execute or args.dry_exec:
+        if errs:
+            log.error("调用计划有 %d 项问题, 拒绝执行", len(errs))
+            return 1
+        if args.execute and not args.yes:
+            ans = input(f"\n将真实调用生成模型 {n_remote} 次, "
+                        f"预计计费 视频{cost['video_s']:.0f}s + 音乐{cost['music_s']:.0f}s + "
+                        f"TTS{cost['tts_chars']}字 + 图像{cost['image_calls']}张, 继续? [y/N] ")
+            if ans.strip().lower() != "y":
+                log.info("已取消")
+                return 0
+        from studio.executor import Executor
+        log.info("③ 执行中%s", "(dry-run, 不调模型)" if args.dry_exec else "")
+        ex = Executor(out, dashscope_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+                      wavespeed_key=os.environ.get("WAVESPEED_API_KEY", ""),
+                      dry_run=args.dry_exec, kling_mode=args.kling_mode)
+        res = ex.execute(plan)
+        if res["dropped"]:
+            print(f"\n剔除段落: {', '.join(res['dropped'])}")
+        if res.get("final"):
+            print(f"\n★ 成片: {res['final']} ({res.get('duration_s')}s)")
+
     print(f"\n产物 → {out}")
     for f, desc in (("storyboard.json", "分镜(skill_id + slots)"),
                     ("call_plan.json", "调用计划(可执行形态)"),
