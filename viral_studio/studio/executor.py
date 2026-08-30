@@ -29,9 +29,10 @@ DETERMINISTIC = ("InvalidVideo.", "InvalidParameter", "censor", "DataInspection"
 class Executor:
     def __init__(self, out_dir: Path, dashscope_key: str = "",
                  wavespeed_key: str = "", dry_run: bool = False,
-                 kling_mode: str = "std"):
+                 kling_mode: str = "std", resume: bool = False):
         self.out = out_dir
         self.dry = dry_run
+        self.resume = resume
         self.kling_mode = kling_mode
         self._ds, self._ws = dashscope_key, wavespeed_key
         self._clients: Dict[str, Any] = {}
@@ -75,6 +76,18 @@ class Executor:
         if isinstance(val, dict):
             return {k: Executor._resolve(v, artifacts) for k, v in val.items()}
         return val
+
+    # ── 产物路径 ────────────────────────────────────────
+    def _dst_for(self, seg_id: str, call: dict) -> Path:
+        """产物路径完全由 (段, 步) 决定 —— 这正是断点续跑的前提。"""
+        tool, stem = call["tool"], f"{seg_id}_{call['id']}"
+        if tool in LOCAL:
+            ext = ".wav" if tool in ("isolate_voice", "concat_audio",
+                                     "punch_up") else ".mp4"
+            return self.out / "work" / f"{stem}{ext}"
+        ext = ".png" if tool == "image_generation" else (
+            ".mp3" if tool in ("minimax_tts", "sonilo_text_to_music") else ".mp4")
+        return self.out / "gen" / f"{stem}{ext}"
 
     # ── 单次调用 ─────────────────────────────────────────
     def _invoke(self, seg_id: str, call: dict, params: dict) -> tuple:
@@ -157,6 +170,13 @@ class Executor:
                                 "ok": False, "error": str(e)})
                 log.warning("    %s 跳过: %s", call["id"], e)
                 break
+            cached = self._dst_for(sid, call) if self.resume else None
+            if cached is not None and cached.exists() and cached.stat().st_size > 1024:
+                artifacts[call["id"]] = str(cached)          # 已付费的产物不重买
+                records.append({"id": call["id"], "tool": call["tool"], "ok": True,
+                                "path": str(cached), "cached": True, "elapsed_s": 0.0})
+                log.info("    ◇ %-22s %s (复用)", call["tool"], cached.name)
+                continue
             t0 = time.time()
             rec = self._invoke_with_retry(sid, call, params)
             rec["elapsed_s"] = round(time.time() - t0, 1)
@@ -166,9 +186,21 @@ class Executor:
             if not rec["ok"]:
                 break
             artifacts[call["id"]] = rec["path"]
-        final = records[-1]["path"] if records and records[-1].get("ok") else ""
+        final, degraded = "", False
+        if records and records[-1].get("ok"):
+            final = records[-1]["path"]
+        else:
+            # 一步失败不该让整段作废: 回退到本段最后一个成品视频。收尾的配乐、
+            # 字幕都是锦上添花, 画面本身已经生成(且已计费)——丢掉才是真的亏。
+            for r in reversed(records):
+                if r.get("ok") and str(r.get("path", "")).endswith(".mp4"):
+                    final, degraded = r["path"], True
+                    log.warning("    %s 降级保留: 用 %s 作为本段成品", sid,
+                                Path(final).name)
+                    break
         return {"seg_id": sid, "t0": seg.get("t0"), "t1": seg.get("t1"),
-                "ok": bool(final), "output": final, "calls": records}
+                "ok": bool(final), "degraded": degraded, "output": final,
+                "calls": records}
 
     # ── 整片 ─────────────────────────────────────────────
     def execute(self, plan: dict) -> dict:
@@ -179,7 +211,12 @@ class Executor:
         segs = [self.run_segment(s) for s in plan["segments"]]
         kept = [s["output"] for s in segs if s["ok"]]
         summary = {"product": plan.get("product_name"), "segments": segs,
-                   "dropped": [s["seg_id"] for s in segs if not s["ok"]], "final": ""}
+                   "dropped": [s["seg_id"] for s in segs if not s["ok"]],
+                   "degraded": [s["seg_id"] for s in segs if s.get("degraded")],
+                   "final": ""}
+        if summary["degraded"]:
+            log.warning("降级段落(画面保留, 后期步骤缺失): %s",
+                        ", ".join(summary["degraded"]))
         if not kept:
             log.error("无成功段落, 无法合片")
         elif self.dry:

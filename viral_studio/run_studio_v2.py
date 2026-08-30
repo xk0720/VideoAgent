@@ -97,6 +97,8 @@ def main() -> int:
                     help="走一遍执行流程但不调模型, 用于检查引用与顺序")
     ap.add_argument("--yes", action="store_true", help="跳过执行前的费用确认")
     ap.add_argument("--kling-mode", choices=["std", "pro"], default="std")
+    ap.add_argument("--resume", action="store_true",
+                    help="断点续跑: 复用 --out 目录里已生成的产物, 只补做缺的步骤")
     ap.add_argument("--act", choices=["compiler", "agent", "both"], default="compiler",
                     help="Act 通路: compiler=确定性编译(默认) | agent=LLM 编排 | both=两者并跑并 diff")
     ap.add_argument("--out", default=None)
@@ -234,7 +236,8 @@ def main() -> int:
         log.info("③ 执行中%s", "(dry-run, 不调模型)" if args.dry_exec else "")
         ex = Executor(out, dashscope_key=os.environ.get("DASHSCOPE_API_KEY", ""),
                       wavespeed_key=os.environ.get("WAVESPEED_API_KEY", ""),
-                      dry_run=args.dry_exec, kling_mode=args.kling_mode)
+                      dry_run=args.dry_exec, kling_mode=args.kling_mode,
+                      resume=args.resume)
         res = ex.execute(plan)
         if res["dropped"]:
             print(f"\n剔除段落: {', '.join(res['dropped'])}")

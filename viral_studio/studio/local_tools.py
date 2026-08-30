@@ -98,18 +98,41 @@ def punch_up(audio: str, out: Path, beats: List[float], gain: float = 0.85,
 
 
 # ── 画面 ──────────────────────────────────────────────────
+def has_audio(path) -> bool:
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                        "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True)
+    return bool(p.stdout.strip())
+
+
 def concat_av(videos: List[str], out: Path, voices: Optional[List[str]] = None,
               **_) -> str:
-    """把多段视频顺序拼接; 给了 voices 就逐段换成对应人声轨再拼。"""
+    """把多段视频顺序拼接; 给了 voices 就逐段换成对应人声轨再拼。
+
+    两处必须显式处理, 否则整片会坏在看不见的地方:
+      · 无音轨的片段(纯画面收尾)要铺静音 —— 否则 concat 出来的成片音轨会在
+        它之前就结束, 尾巴几秒彻底没声。
+      · 时长要用 -t 明确切死, 不能靠 -shortest —— 没有音轨时它无从约束,
+        VF_NORM 里那 2 秒 tpad 补帧会原样漏进成片, 变成结尾冻帧。
+    """
     parts = []
     for i, v in enumerate(videos):
         dst = out.parent / f"{out.stem}_p{i}.mp4"
+        vdur = probe_duration(v)
+        voice = voices[i] if voices and i < len(voices) and voices[i] else None
         cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(v)]
-        if voices and i < len(voices) and voices[i]:
-            cmd += ["-i", str(voices[i]), "-map", "0:v:0", "-map", "1:a:0"]
+        if voice:                                   # 人声可略长: tpad 的 2s 用来兜住
+            target = min(probe_duration(voice), vdur + 2.0)
+            cmd += ["-i", str(voice), "-map", "0:v:0", "-map", "1:a:0"]
+        elif has_audio(v):
+            target = vdur
+            cmd += ["-map", "0:v:0", "-map", "0:a:0"]
         else:
-            cmd += ["-map", "0:v:0", "-map", "0:a:0?"]
-        cmd += ["-vf", VF_NORM, *V_ENC, *A_ENC, "-shortest", str(dst)]
+            target = vdur
+            cmd += ["-f", "lavfi", "-t", f"{vdur:.3f}",
+                    "-i", "anullsrc=r=44100:cl=stereo",
+                    "-map", "0:v:0", "-map", "1:a:0"]
+        cmd += ["-vf", VF_NORM, *V_ENC, *A_ENC, "-t", f"{target:.3f}", str(dst)]
         run(cmd)
         parts.append(dst)
     lst = out.with_suffix(".txt")
