@@ -124,12 +124,12 @@ pipelines:
 # 运镜参考视频 prompt: 场景陈设写死(换商品仍是同一间房), 人静止只许呼吸眨眼,
 # 一次匀速直线推近 全身→半身→胸像
 dolly_prompt: |
-  The woman from @Image1 stands completely still in a bright cozy home
+  The woman from <<<image_1>>> stands completely still in a bright cozy home
   room: a large window with sheer white curtains, soft natural daylight, light
   wood floor, one minimalist framed artwork on the beige wall, a green potted
   plant in the corner, a low wooden bench. She stands relaxed facing the camera,
   arms naturally at her sides, gentle smile, like a fashion lookbook pose. She
-  keeps the exact same white shirt-dress from @Image1: cap sleeves, shirt
+  keeps the exact same white shirt-dress from <<<image_1>>>: cap sleeves, shirt
   collar, tied-waist wrap detail and irregular asymmetric hem, with the white
   headband. She does NOT walk, turn, or change pose - only subtle natural
   breathing and blinking.

@@ -24,11 +24,16 @@ def abs_path(rel) -> Optional[str]:
     """卡里的相对路径按 PROJECT_ROOT 解析; 存在才返回绝对路径。"""
     if not rel or not isinstance(rel, str):
         return None
-    p = Path(rel)
-    if p.is_absolute():
-        return str(p) if p.exists() else None
-    q = PROJECT_ROOT / rel
-    return str(q) if q.exists() else None
+    if len(rel) > 250 or "\n" in rel:      # 长文本(prompt 等)不是路径
+        return None
+    try:
+        p = Path(rel)
+        if p.is_absolute():
+            return str(p) if p.exists() else None
+        q = PROJECT_ROOT / rel
+        return str(q) if q.exists() else None
+    except OSError:
+        return None
 
 
 class Renderer:
