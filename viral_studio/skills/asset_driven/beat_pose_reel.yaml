@@ -44,12 +44,18 @@ assets:
 
 pipelines:
   "1":
-    - {id: ref_close, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: close, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
-    - {id: ref_medium, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: medium, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
-    - {id: ref_full, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: full, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
+    - {id: ref_close_raw, tool: crop_ref, local: true,
+       params: {image: $hook_1, frame: close, size: [720, 1280]}}  # 对齐成片画布 9:16: 输出比例跟参考图
+    - {id: ref_close, tool: image_edit,
+       params: {base_image: "@ref_close_raw", prompt: $skill.bg_prompt}}  # 白棚换生活感背景, 人物衣服不动
+    - {id: ref_medium_raw, tool: crop_ref, local: true,
+       params: {image: $hook_1, frame: medium, size: [720, 1280]}}  # 对齐成片画布 9:16: 输出比例跟参考图
+    - {id: ref_medium, tool: image_edit,
+       params: {base_image: "@ref_medium_raw", prompt: $skill.bg_prompt}}  # 白棚换生活感背景, 人物衣服不动
+    - {id: ref_full_raw, tool: crop_ref, local: true,
+       params: {image: $hook_1, frame: full, size: [720, 1280]}}  # 对齐成片画布 9:16: 输出比例跟参考图
+    - {id: ref_full, tool: image_edit,
+       params: {base_image: "@ref_full_raw", prompt: $skill.bg_prompt}}  # 白棚换生活感背景, 人物衣服不动
     - {id: s01, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
@@ -76,12 +82,18 @@ pipelines:
     - {id: out, tool: burn_text, local: true,
        params: {video: "@mixed", text: "{spec_line}", y_frac: 0.74, size: 34}}
   "2":
-    - {id: ref_close, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: close, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
-    - {id: ref_medium, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: medium, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
-    - {id: ref_full, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: full, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
+    - {id: ref_close_raw, tool: crop_ref, local: true,
+       params: {image: $hook_1, frame: close, size: [720, 1280]}}  # 对齐成片画布 9:16: 输出比例跟参考图
+    - {id: ref_close, tool: image_edit,
+       params: {base_image: "@ref_close_raw", prompt: $skill.bg_prompt}}  # 白棚换生活感背景, 人物衣服不动
+    - {id: ref_medium_raw, tool: crop_ref, local: true,
+       params: {image: $hook_1, frame: medium, size: [720, 1280]}}  # 对齐成片画布 9:16: 输出比例跟参考图
+    - {id: ref_medium, tool: image_edit,
+       params: {base_image: "@ref_medium_raw", prompt: $skill.bg_prompt}}  # 白棚换生活感背景, 人物衣服不动
+    - {id: ref_full_raw, tool: crop_ref, local: true,
+       params: {image: $hook_1, frame: full, size: [720, 1280]}}  # 对齐成片画布 9:16: 输出比例跟参考图
+    - {id: ref_full, tool: image_edit,
+       params: {base_image: "@ref_full_raw", prompt: $skill.bg_prompt}}  # 白棚换生活感背景, 人物衣服不动
     - {id: s01, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
@@ -108,6 +120,13 @@ pipelines:
     - {id: out, tool: burn_text, local: true,
        params: {video: "@mixed", text: "{spec_line}", y_frac: 0.74, size: 34}}
   # 双人交替(奇偶镜换 ref)留待后续; 现阶段两人计划也全用 hook_1
+
+# 参考图背景(指令式图像编辑, 底图人物/衣服保留): 三档同一段描述 → 三张图
+# 读作同一房间的不同距离; 描述写死具体陈设, 减少档间漂移
+bg_prompt: |
+  把纯白影棚背景替换为明亮的家居房间: 大落地窗带白色纱帘, 柔和自然日光,
+  浅色木地板, 墙上一幅简约挂画, 角落一盆绿植。人物、发型、衣服、姿势、
+  构图完全保持不变, 光线自然贴合。
 
 text_params:
   spec_line:

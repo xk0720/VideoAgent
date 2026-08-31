@@ -129,8 +129,10 @@ class Executor:
             ext = (".wav" if tool in ("isolate_voice", "concat_audio", "punch_up")
                    else ".jpg" if tool == "crop_ref" else ".mp4")
             return self.out / "work" / f"{stem}{ext}"
-        ext = ".png" if tool == "image_generation" else (
-            ".mp3" if tool in ("minimax_tts", "sonilo_text_to_music") else ".mp4")
+        ext = (".png" if tool == "image_generation"
+               else ".jpg" if tool == "image_edit"
+               else ".mp3" if tool in ("minimax_tts", "sonilo_text_to_music")
+               else ".mp4")
         return self.out / "gen" / f"{stem}{ext}"
 
     # ── 单次调用 ─────────────────────────────────────────
@@ -139,8 +141,10 @@ class Executor:
         tool, cid = call["tool"], call["id"]
         stem = f"{seg_id}_{cid}"
         if self.dry:
-            ext = ".png" if tool == "image_generation" else (
-                ".mp3" if tool in ("minimax_tts", "sonilo_text_to_music") else ".mp4")
+            ext = (".png" if tool == "image_generation"
+                   else ".jpg" if tool == "image_edit"
+                   else ".mp3" if tool in ("minimax_tts", "sonilo_text_to_music")
+                   else ".mp4")
             return str(self.out / "gen" / f"{stem}{ext}"), "dry", ""
 
         if tool in LOCAL:                              # 本地工具
