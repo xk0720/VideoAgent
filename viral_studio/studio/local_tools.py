@@ -389,13 +389,43 @@ REF_FRAMES = {
 }
 
 
-def crop_ref(image: str, out: Path, frame: str = "full", **_) -> str:
-    """按景别档位裁参考图 —— 顺带去掉电商图的品牌页眉(否则会被继承进背景)。"""
+def _fit_aspect(l, t, r, b, W, H, target_a):
+    """把裁剪窗对齐到目标宽高比 —— 只动宽度, 不动高度。
+
+    为什么必须对齐(2026-08-31 实测): animate 把驱动视频上归一化的骨架坐标铺到
+    参考图宽高比的画布上, 人物比例失真恰好等于两宽高比之商 —— hook(3:4) 对
+    610:944 的驱动, 生成人物横向拉宽 1.158x, 与 0.75/0.646=1.161 吻合。
+    为什么只动宽度: 景别就是由纵向范围定义的(头到腰/膝/脚), 动高度等于换档 ——
+    向上扩还会把电商图页眉带回背景。宽度居中收放, 假设人物居中(电商卡通例)。
+    图不够宽收不动时才向下扩高兜底(不向上, 保页眉线)。"""
+    h = b - t
+    need_w = h * target_a
+    c = (l + r) / 2
+    l, r = c - need_w / 2, c + need_w / 2
+    if l < 0 or r > W:                      # 图不够宽 → 贴边 + 向下补高
+        l, r = max(0, l), min(W, r)
+        b = min(H, t + (r - l) / target_a)
+    return int(l), int(t), int(r), int(b)
+
+
+def crop_ref(image: str, out: Path, frame: str = "full",
+             size: Optional[List[int]] = None, **_) -> str:
+    """按景别档位裁参考图, 并对齐到驱动视频的宽高比/分辨率。
+
+    顺带去掉电商图的品牌页眉(否则会被继承进背景)。size=[W,H] 给驱动分辨率;
+    不给则只按档位裁, 不做对齐(不推荐, 见 _fit_aspect 的实测说明)。"""
     from PIL import Image
-    l, t, r, b = REF_FRAMES.get(str(frame), REF_FRAMES["full"])
+    fl, ft, fr, fb = REF_FRAMES.get(str(frame), REF_FRAMES["full"])
     im = Image.open(image).convert("RGB")
-    w, h = im.size
-    im.crop((int(w * l), int(h * t), int(w * r), int(h * b))).save(out, quality=92)
+    W, H = im.size
+    l, t, r, b = W * fl, H * ft, W * fr, H * fb
+    if size:
+        tw, th = int(size[0]), int(size[1])
+        l, t, r, b = _fit_aspect(l, t, r, b, W, H, tw / th)
+        im = im.crop((l, t, r, b)).resize((tw, th), Image.LANCZOS)
+    else:
+        im = im.crop((int(l), int(t), int(r), int(b)))
+    im.save(out, quality=92)
     return str(out)
 
 

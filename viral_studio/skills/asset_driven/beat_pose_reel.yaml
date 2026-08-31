@@ -45,11 +45,11 @@ assets:
 pipelines:
   "1":
     - {id: ref_close, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: close}}
+       params: {image: $hook_1, frame: close, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
     - {id: ref_medium, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: medium}}
+       params: {image: $hook_1, frame: medium, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
     - {id: ref_full, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: full}}
+       params: {image: $hook_1, frame: full, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
     - {id: s01, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
@@ -77,11 +77,11 @@ pipelines:
        params: {video: "@mixed", text: "{spec_line}", y_frac: 0.74, size: 34}}
   "2":
     - {id: ref_close, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: close}}
+       params: {image: $hook_1, frame: close, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
     - {id: ref_medium, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: medium}}
+       params: {image: $hook_1, frame: medium, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
     - {id: ref_full, tool: crop_ref, local: true,
-       params: {image: $hook_1, frame: full}}
+       params: {image: $hook_1, frame: full, size: [610, 944]}}  # 对齐驱动分辨率, 防骨架拉伸
     - {id: s01, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
