@@ -13,13 +13,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 from dotenv import load_dotenv
 load_dotenv(VS / ".env")
 
+import yaml
+
 from studio.skill_store import SkillStore
 from studio.render import Renderer
 from studio.executor import Executor
 
+brief = yaml.safe_load((VS / "examples/product_yike.yaml").read_text(encoding="utf-8"))
 card = SkillStore().get("beat_pose_reel")
 hooks = [str(VS / "examples/new/yike/person_hook1.jpg")]
-pipe = Renderer(card, hooks, person_count=1, t0=0.0, t1=13.267).pipeline(
+pipe = Renderer(card, hooks, person_count=1, t0=0.0, t1=8.566,
+                ref_frames=brief["ref_frames"]).pipeline(
     {"spec_line": "白/蓝 两色可选"})
 out = VS / "outputs/yike_opening"
 ex = Executor(out, dashscope_key=os.environ.get("DASHSCOPE_API_KEY", ""),
@@ -27,7 +31,7 @@ ex = Executor(out, dashscope_key=os.environ.get("DASHSCOPE_API_KEY", ""),
               kling_mode="pro", resume=True)
 ex._sigs_all = {}
 seg = {"seg_id": "seg01", "skill_id": "beat_pose_reel",
-       "t0": 0.0, "t1": 13.267, "calls": pipe}
+       "t0": 0.0, "t1": 8.566, "calls": pipe}
 res = ex.run_segment(seg)
 ex._sig_file.write_text(json.dumps(ex._sigs_all, indent=1), encoding="utf-8")
 (out / "execution.json").write_text(

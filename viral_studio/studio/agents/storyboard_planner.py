@@ -219,7 +219,8 @@ class StoryboardPlanner:
             dur = float((pr.get("durations") or {}).get(str(n)) or pr.get("duration_s") or 0)
             tail = float(pr.get("tail_s", 0))
             r = Renderer(card, hooks, person_count=n, bgm_source=bgm_source,
-                         t0=round(t, 3), t1=round(t + dur, 3))
+                         t0=round(t, 3), t1=round(t + dur, 3),
+                         ref_frames=brief.get("ref_frames"))
             prompts = {k: r.prompt_of_person(k, texts) for k in range(1, n + 1)}
             # 单模板卡(如 closer, 按总人数选版本)走 $prompt; 多人卡走 $prompt_N
             single = r.prompt(texts)

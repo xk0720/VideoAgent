@@ -39,7 +39,9 @@ def abs_path(rel) -> Optional[str]:
 class Renderer:
     def __init__(self, card: dict, hooks: List[str], person_count: int,
                  hook_index: Optional[int] = None, bgm_source: Optional[str] = None,
-                 t0: float = 0.0, t1: float = 0.0):
+                 t0: float = 0.0, t1: float = 0.0,
+                 ref_frames: Optional[Dict[str, str]] = None):
+        self.ref_frames = ref_frames or {}   # 用户预处理好的景别参考图(brief.ref_frames)
         self.card = card
         self.hooks = hooks
         self.n = person_count
@@ -164,6 +166,9 @@ class Renderer:
         if expr == "$hook":
             i = (self.hook_index or 1) - 1
             return self.hooks[i] if i < len(self.hooks) else None
+        m = re.match(r"^\$ref_(\w+)$", expr)
+        if m:                              # 用户预处理好的景别参考图(brief.ref_frames)
+            return abs_path(self.ref_frames.get(m.group(1)))
         m = re.match(r"^\$hook_(\d+)$", expr)
         if m:
             i = int(m.group(1)) - 1

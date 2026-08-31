@@ -44,7 +44,7 @@ def extract_all_frames(video_path, output_dir="frames", image_ext="jpg"):
 
 if __name__ == "__main__":
     extract_all_frames(
-        video_path="/Users/kevin/Desktop/万镜/viral_video1.mp4",
-        output_dir="/Users/kevin/Desktop/万镜/frames",
+        video_path="/Users/kevin/Desktop/万镜/158fee1c5eab49f5a958582d943f178d.mp4",
+        output_dir="/Users/kevin/Desktop/万镜/frames_exp",
         image_ext="png"
     )
