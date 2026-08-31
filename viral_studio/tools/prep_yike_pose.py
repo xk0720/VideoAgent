@@ -17,7 +17,10 @@ VS = Path(__file__).resolve().parents[1]
 SRC = VS / "examples/new/yike/viral_video1.mp4"
 OUT = VS / "memory/assets/yike_pose"
 FPS = 30
-COARSE = [0.8, 1.4, 2.0, 3.0, 4.2, 6.5, 7.0, 7.5, 9.3, 11.2, 11.7, 12.9]
+# 镜头边界 = 用户逐帧裁决(2026-08-31), 闭区间帧号。此前帧差自动检测的边界
+# 普遍晚约1帧, 片段首尾带上了邻镜的跳变帧 —— 帧号硬切在构造上杜绝串帧。
+FRAME_RANGES = [(0, 24), (25, 42), (43, 59), (60, 89), (90, 126),
+                (127, 195), (196, 208), (209, 224), (225, 256)]
 CROP = "610:944:0:0"          # 只裁右侧UI列(按钮+头像脸, 免干扰检测); 左侧不裁, 避免切到走动的人
 MIN_S = 2.1                   # API 时长地板(实测 2s, 留余量)
 
@@ -47,22 +50,22 @@ def refine(t: float) -> float:
 
 
 def main() -> int:
-    (OUT / "shots").mkdir(parents=True, exist_ok=True)
-    cuts = [refine(t) for t in COARSE]
-    total = float(subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(SRC)], capture_output=True, text=True).stdout)
-    bounds = [0.0] + cuts + [round(total, 3)]
-    durs = [round(b - a, 3) for a, b in zip(bounds, bounds[1:])]
-    print("精修切点:", cuts)
+    shots = OUT / "shots"
+    if shots.exists():                     # 旧边界的片段全部作废(用户裁决: 有串帧)
+        for f in shots.iterdir():
+            f.unlink()
+    shots.mkdir(parents=True, exist_ok=True)
+    durs = [round((b - a + 1) / FPS, 3) for a, b in FRAME_RANGES]
+    print("帧号区间:", FRAME_RANGES)
     print("每镜时长:", durs)
 
-    for i, (t0, t1) in enumerate(zip(bounds, bounds[1:]), 1):
+    for i, (fa, fb) in enumerate(FRAME_RANGES, 1):
         raw = OUT / "shots" / f"s{i:02d}_raw.mp4"
         dst = OUT / "shots" / f"s{i:02d}.mp4"
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t0:.3f}",
-                        "-to", f"{t1:.3f}", "-i", str(SRC), "-an",
-                        "-vf", f"crop={CROP},fps={FPS}",
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(SRC), "-an",
+                        "-vf", (f"select='between(n\,{fa}\,{fb})',"
+                                f"setpts=N/{FPS}/TB,crop={CROP}"),
+                        "-r", str(FPS),
                         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                         str(raw)], check=True)
         need = durs[i - 1]
@@ -95,8 +98,9 @@ def main() -> int:
 
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(SRC), "-vn",
                     "-c:a", "copy", str(OUT / "bgm.m4a")], check=True)
-    meta = {"source": str(SRC.relative_to(VS)), "cuts": cuts,
-            "slot_durations": durs, "total_s": round(total, 3),
+    total = round(sum(durs), 3)
+    meta = {"source": str(SRC.relative_to(VS)), "frame_ranges": FRAME_RANGES,
+            "slot_durations": durs, "total_s": total,
             "crop": CROP, "min_drive_s": MIN_S}
     (OUT / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     print(f"完成: {len(durs)} 镜 + bgm.m4a + meta.json → {OUT}")

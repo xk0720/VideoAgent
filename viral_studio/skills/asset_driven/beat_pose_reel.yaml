@@ -10,27 +10,28 @@ applies_to:
   placement: opening
 
 produces:
-  duration_s: 13.267
+  duration_s: 8.566
   audio_mode: none        # 无口播, 纯 BGM 卡点
 
 audio:
   bgm_source: asset       # 直接用原片音轨 —— 保持原片切点时序, 卡点零成本继承
-                          # (原片 12 刀全部命中重音, 实测误差多在 0.05s 内)
 
-# 套路骨架(量化自原片): 13 镜 / 13.267s 变速卡点 —— 开头 0.6s 三连快切抓人,
-# 中段快慢交替; 变化维度: 景别 x 角度 x 姿势。
+# 套路骨架(量化自原片前 9 镜 / 8.566s): 变速卡点, 开头 0.6s 级三连快切抓人;
+# 变化维度: 景别 x 角度 x 姿势。
+# 镜头边界 = 用户逐帧裁决(meta.frame_ranges), 帧号硬切, 构造上无串帧。
+# 景别档位 = cv2 客观测量(脸高/画面高中位数, framing_measure.json), 不再肉眼定档
+#   —— 初版肉眼把 s01 标成全身, 实测 0.249 是全场最紧的近景。
 # 生产分工与实测依据:
-#   · animate 逐镜迁移动作(硬切不能整条喂, 会被抹成渐变); 短镜驱动已回文补帧
-#     过 2s API 地板, 落位只取开头真实时长即原动作
-#   · 输出取景跟随参考图而非驱动(2026-08-31 实测) → 景别在 crop_ref 造:
-#     近景槽喂胸像裁剪, 全景槽喂全身裁剪; 顺带去掉电商图页眉(否则进背景)
-#   · 每镜 optional: FullFace/NoHuman 是确定性拒绝(本素材 13 镜预检 3/3 高危镜
-#     全过, optional 仍保留作保险); 被拒槽位由 assemble_slots 等长补位 ——
-#     跳镜会让后面所有切点错拍, 补位才保得住节拍网格
+#   · animate 逐镜迁移动作(硬切整条喂会被抹成渐变); 短镜驱动已回文补帧过 2s
+#     API 地板, 落位只取开头真实时长即原动作
+#   · 输出取景跟随参考图而非驱动(实测) → 景别由 crop_ref 造: 近景槽喂胸像,
+#     全景槽喂全身; 顺带去掉电商图页眉(否则进背景)
+#   · 每镜 optional: FullFace/NoHuman 是确定性拒绝(预检 3/3 高危镜全过, 仍留
+#     保险); 被拒槽位由 assemble_slots 等长补位 —— 跳镜会让后面所有切点错拍
 
 assets:
   bgm: memory/assets/yike_pose/bgm.m4a
-  slot_durations: [0.85, 0.6, 0.567, 1.0, 1.233, 2.3, 0.433, 0.534, 1.766, 1.9, 0.567, 1.167, 0.35]
+  slot_durations: [0.833, 0.6, 0.567, 1.0, 1.233, 2.3, 0.433, 0.533, 1.067]
   shot_01: memory/assets/yike_pose/shots/s01.mp4
   shot_02: memory/assets/yike_pose/shots/s02.mp4
   shot_03: memory/assets/yike_pose/shots/s03.mp4
@@ -40,10 +41,6 @@ assets:
   shot_07: memory/assets/yike_pose/shots/s07.mp4
   shot_08: memory/assets/yike_pose/shots/s08.mp4
   shot_09: memory/assets/yike_pose/shots/s09.mp4
-  shot_10: memory/assets/yike_pose/shots/s10.mp4
-  shot_11: memory/assets/yike_pose/shots/s11.mp4
-  shot_12: memory/assets/yike_pose/shots/s12.mp4
-  shot_13: memory/assets/yike_pose/shots/s13.mp4
 
 pipelines:
   "1":
@@ -54,7 +51,7 @@ pipelines:
     - {id: ref_full, tool: crop_ref, local: true,
        params: {image: $hook_1, frame: full}}
     - {id: s01, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_01}}
+       params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_02}}
     - {id: s03, tool: animate_move, optional: true,
@@ -62,7 +59,7 @@ pipelines:
     - {id: s04, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_04}}
     - {id: s05, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_05}}
+       params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_05}}
     - {id: s06, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_06}}
     - {id: s07, tool: animate_move, optional: true,
@@ -71,19 +68,11 @@ pipelines:
        params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_08}}
     - {id: s09, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_09}}
-    - {id: s10, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_10}}
-    - {id: s11, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_11}}
-    - {id: s12, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_12}}
-    - {id: s13, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_13}}
     - {id: asm, tool: assemble_slots, local: true, lenient: true,
-       params: {videos: ["@s01", "@s02", "@s03", "@s04", "@s05", "@s06", "@s07", "@s08", "@s09", "@s10", "@s11", "@s12", "@s13"],
+       params: {videos: ["@s01", "@s02", "@s03", "@s04", "@s05", "@s06", "@s07", "@s08", "@s09"],
                 durations: $skill.assets.slot_durations, fill: repeat}}
     - {id: mixed, tool: mix_audio, local: true,
-       params: {video: "@asm", bgm: $skill.assets.bgm, duration: 13.267, bgm_volume: 1.0}}
+       params: {video: "@asm", bgm: $skill.assets.bgm, duration: 8.566, bgm_volume: 1.0}}
     - {id: out, tool: burn_text, local: true,
        params: {video: "@mixed", text: "{spec_line}", y_frac: 0.74, size: 34}}
   "2":
@@ -94,7 +83,7 @@ pipelines:
     - {id: ref_full, tool: crop_ref, local: true,
        params: {image: $hook_1, frame: full}}
     - {id: s01, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_01}}
+       params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_02}}
     - {id: s03, tool: animate_move, optional: true,
@@ -102,7 +91,7 @@ pipelines:
     - {id: s04, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_04}}
     - {id: s05, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_close", driving: $skill.assets.shot_05}}
+       params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_05}}
     - {id: s06, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_06}}
     - {id: s07, tool: animate_move, optional: true,
@@ -111,19 +100,11 @@ pipelines:
        params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_08}}
     - {id: s09, tool: animate_move, optional: true,
        params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_09}}
-    - {id: s10, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_10}}
-    - {id: s11, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_medium", driving: $skill.assets.shot_11}}
-    - {id: s12, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_12}}
-    - {id: s13, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: "@ref_full", driving: $skill.assets.shot_13}}
     - {id: asm, tool: assemble_slots, local: true, lenient: true,
-       params: {videos: ["@s01", "@s02", "@s03", "@s04", "@s05", "@s06", "@s07", "@s08", "@s09", "@s10", "@s11", "@s12", "@s13"],
+       params: {videos: ["@s01", "@s02", "@s03", "@s04", "@s05", "@s06", "@s07", "@s08", "@s09"],
                 durations: $skill.assets.slot_durations, fill: repeat}}
     - {id: mixed, tool: mix_audio, local: true,
-       params: {video: "@asm", bgm: $skill.assets.bgm, duration: 13.267, bgm_volume: 1.0}}
+       params: {video: "@asm", bgm: $skill.assets.bgm, duration: 8.566, bgm_volume: 1.0}}
     - {id: out, tool: burn_text, local: true,
        params: {video: "@mixed", text: "{spec_line}", y_frac: 0.74, size: 34}}
   # 双人交替(奇偶镜换 ref)留待后续; 现阶段两人计划也全用 hook_1
@@ -136,5 +117,6 @@ text_params:
 measured:
   verified: false
   date: 2026-08-31
-  notes: 预检 s02/s03(怼脸近景)/s05(背面) std 全过; 胸像 ref → 近景输出已实证;
-    节拍网格用驱动片段替身实拼, 10/12 切点偏差 ≤0.017s(帧级)
+  notes: 预检 s02/s03(近景)/s05(背面) std 全过; 胸像 ref → 近景输出已实证;
+    节拍网格替身实拼 10/12 切点偏差 ≤0.017s; 边界经用户逐帧裁决后重切,
+    景别经 cv2 客观定档(close=s01-03, medium=s04/05/07/08, full=s06/09)
