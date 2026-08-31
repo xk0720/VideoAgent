@@ -76,8 +76,10 @@ def concat_audio(audios: List[str], out: Path, slots: Optional[List[dict]] = Non
         t0 = float((slots[i] if slots and i < len(slots) else {}).get("t0", 0))
         filters.append(f"[{i}:a]adelay={int(t0*1000)}|{int(t0*1000)}[a{i}]")
         mixes.append(f"[a{i}]")
+    # apad 补静音到目标时长 —— amix 在最后一条人声结束就停流, -t 只封顶不补长:
+    # 实测 20s 的旁白轨只出了 15.97s, 下游 mix 又被它把整段画面裁短
     fc = ";".join(filters) + ";" + "".join(mixes) + \
-         f"amix=inputs={len(audios)}:duration=longest:dropout_transition=0[out]"
+         f"amix=inputs={len(audios)}:duration=longest:dropout_transition=0,apad[out]"
     run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", fc,
          "-map", "[out]", "-t", f"{dur:.3f}", "-ar", "44100", out])
     return str(out)
@@ -168,11 +170,11 @@ def mix_audio(video: str, out: Path, voice: Optional[str] = None,
         inputs += ["-i", str(voice)]
         ln = (f"loudnorm=I={voice_loudnorm}:TP=-1.5:LRA=11,"
               if voice_loudnorm is not None else "")
-        chains.append(f"[{idx}:a]{ln}aresample=44100[v]")
+        chains.append(f"[{idx}:a]{ln}aresample=44100,apad[v]")
         mixes.append("[v]"); idx += 1
     if bgm_path:
         inputs += ["-i", str(bgm_path)]
-        chains.append(f"[{idx}:a]volume={bgm_volume},aresample=44100[b]")
+        chains.append(f"[{idx}:a]volume={bgm_volume},aresample=44100,apad[b]")
         mixes.append("[b]"); idx += 1
 
     cmd = ["ffmpeg", "-y", "-v", "error", *inputs]
@@ -188,7 +190,9 @@ def mix_audio(video: str, out: Path, voice: Optional[str] = None,
     else:                                   # 无音轨 → 铺静音, 保证 concat 流一致
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
                 "-map", "0:v:0", "-map", f"{idx}:a:0"]
-    cmd += ["-vf", VF_NORM, "-t", f"{dur:.3f}", *V_ENC, *A_ENC, "-shortest", str(out)]
+    # 不用 -shortest: 音轨已 apad 到位, -t 是唯一的时长裁决者 —— 之前人声 16s
+    # 撞上 -shortest, 把 20s 的画面硬裁到 16s
+    cmd += ["-vf", VF_NORM, "-t", f"{dur:.3f}", *V_ENC, *A_ENC, str(out)]
     run(cmd)
     return str(out)
 

@@ -103,14 +103,19 @@ class Executor:
             return set().union(*(Executor._refs(v) for v in val)) if val else set()
         return {val[1:]} if isinstance(val, str) and val.startswith("@") else set()
 
-    def _signature(self, call: dict) -> str:
+    def _signature(self, call: dict, artifacts: Optional[Dict[str, str]] = None) -> str:
         """指纹 = 本步(工具+原始参数) + 所有上游步骤的指纹。
 
         只看产物在不在是不够的: 改了 pipeline(比如给口播段插了烧字幕这一步),
         下游 mix_audio 的参数字面量没变、路径也没变, 却会复用到旧内容 ——
         于是跑出一个"没有字幕但报成功"的成片。把上游指纹串进来才挡得住。
         """
-        up = [self._sigs_now.get(r, "?") for r in sorted(self._refs(call["params"]))]
+        # 上游指纹带"产物是否在场": 容缺步骤(assemble)在补位模式与全量模式下的
+        # 输入参数一字不差, 只有 artifacts 的在场集合不同 —— 不编进去, 重跑修复
+        # 后续跑会把补位版拼装当成品复用
+        up = [self._sigs_now.get(r, "?")
+              + ("" if artifacts is None or r in artifacts else ":absent")
+              for r in sorted(self._refs(call["params"]))]
         # 本地工具再带上实现指纹: 改的是代码而不是计划时(比如修好字幕层的分辨率),
         # 参数一字未动, 旧产物却已经不对了。本地步骤重做只要几秒, 宁可多做。
         body = {"t": call["tool"], "p": call["params"], "u": up}
@@ -223,7 +228,7 @@ class Executor:
                 log.warning("    %s 跳过: %s", call["id"], e)
                 break
             key = f"{sid}.{call['id']}"
-            sig = self._signature(call)
+            sig = self._signature(call, artifacts)
             self._sigs_now[call["id"]] = sig
             cached = self._dst_for(sid, call) if self.resume else None
             if cached is not None and self._sigs_prev.get(key) != sig:
