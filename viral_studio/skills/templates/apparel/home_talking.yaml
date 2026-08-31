@@ -34,13 +34,20 @@ pipelines:
       tool: isolate_voice
       local: true
       params: {source: "@vid1", engine: demucs, device: cpu}
+    - id: sub1
+      tool: burn_subtitle
+      local: true
+      # 字来自计划(storyboard 里的台词, 100% 准), 时间由人声轨对齐 ——
+      # 卡里的 0-3/3-6/6-10 是给模型的指令, 不是它实际做到的, 不能直接当字幕时间
+      params: {video: "@vid1", voice: "@voice1",
+               lines: ["{line1_1}", "{line2_1}", "{line3_1}"]}
     - id: music
       tool: sonilo_text_to_music
       params: {prompt: $skill.music_prompt, duration: 12}   # 生成时多 2s, 下一步裁齐
     - id: out
       tool: mix_audio
       local: true
-      params: {video: "@vid1", voice: "@voice1", bgm: "@music",
+      params: {video: "@sub1", voice: "@voice1", bgm: "@music",
                duration: 10, voice_loudnorm: -18, bgm_volume: 0.22}
   "2":
     - id: vid1
@@ -57,10 +64,24 @@ pipelines:
       tool: isolate_voice
       local: true
       params: {source: "@vid2", engine: demucs, device: cpu}
+    - id: sub1
+      tool: burn_subtitle
+      local: true
+      # 字来自计划(storyboard 里的台词, 100% 准), 时间由人声轨对齐 ——
+      # 卡里的 0-3/3-6/6-10 是给模型的指令, 不是它实际做到的, 不能直接当字幕时间
+      params: {video: "@vid1", voice: "@voice1",
+               lines: ["{line1_1}", "{line2_1}", "{line3_1}"]}
+    - id: sub2
+      tool: burn_subtitle
+      local: true
+      # 字来自计划(storyboard 里的台词, 100% 准), 时间由人声轨对齐 ——
+      # 卡里的 0-3/3-6/6-10 是给模型的指令, 不是它实际做到的, 不能直接当字幕时间
+      params: {video: "@vid2", voice: "@voice2",
+               lines: ["{line1_2}", "{line2_2}", "{line3_2}"]}
     - id: joined
       tool: concat_av
       local: true
-      params: {videos: ["@vid1", "@vid2"], voices: ["@voice1", "@voice2"]}
+      params: {videos: ["@sub1", "@sub2"], voices: ["@voice1", "@voice2"]}
     - id: music
       tool: sonilo_text_to_music
       params: {prompt: $skill.music_prompt, duration: 22}   # 20s + 2s 余量
@@ -91,10 +112,31 @@ pipelines:
       tool: isolate_voice
       local: true
       params: {source: "@vid3", engine: demucs, device: cpu}
+    - id: sub1
+      tool: burn_subtitle
+      local: true
+      # 字来自计划(storyboard 里的台词, 100% 准), 时间由人声轨对齐 ——
+      # 卡里的 0-3/3-6/6-10 是给模型的指令, 不是它实际做到的, 不能直接当字幕时间
+      params: {video: "@vid1", voice: "@voice1",
+               lines: ["{line1_1}", "{line2_1}", "{line3_1}"]}
+    - id: sub2
+      tool: burn_subtitle
+      local: true
+      # 字来自计划(storyboard 里的台词, 100% 准), 时间由人声轨对齐 ——
+      # 卡里的 0-3/3-6/6-10 是给模型的指令, 不是它实际做到的, 不能直接当字幕时间
+      params: {video: "@vid2", voice: "@voice2",
+               lines: ["{line1_2}", "{line2_2}", "{line3_2}"]}
+    - id: sub3
+      tool: burn_subtitle
+      local: true
+      # 字来自计划(storyboard 里的台词, 100% 准), 时间由人声轨对齐 ——
+      # 卡里的 0-3/3-6/6-10 是给模型的指令, 不是它实际做到的, 不能直接当字幕时间
+      params: {video: "@vid3", voice: "@voice3",
+               lines: ["{line1_3}", "{line2_3}", "{line3_3}"]}
     - id: joined
       tool: concat_av
       local: true
-      params: {videos: ["@vid1", "@vid2", "@vid3"],
+      params: {videos: ["@sub1", "@sub2", "@sub3"],
                voices: ["@voice1", "@voice2", "@voice3"]}
     - id: music
       tool: sonilo_text_to_music

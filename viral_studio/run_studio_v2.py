@@ -87,6 +87,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--product", required=True, help="商品 brief YAML")
     ap.add_argument("--storyboard", default=None, help="复用已有分镜脚本, 跳过 Planner")
+    ap.add_argument("--rerender", action="store_true",
+                    help="配合 --storyboard: 保留 Planner 的选卡与文案, 只按当前卡片重渲 pipeline")
     ap.add_argument("--hooks", type=int, default=None, help="覆盖人物图数量")
     ap.add_argument("--bgm", default=None,
                     help="整片共享音轨(卡里 bgm_source=shared 的段用它切片; "
@@ -99,6 +101,8 @@ def main() -> int:
     ap.add_argument("--kling-mode", choices=["std", "pro"], default="std")
     ap.add_argument("--resume", action="store_true",
                     help="断点续跑: 复用 --out 目录里已生成的产物, 只补做缺的步骤")
+    ap.add_argument("--redo-remote", action="store_true",
+                    help="配合 --resume: 允许重新生成指纹不符的远程产物(会产生费用)")
     ap.add_argument("--act", choices=["compiler", "agent", "both"], default="compiler",
                     help="Act 通路: compiler=确定性编译(默认) | agent=LLM 编排 | both=两者并跑并 diff")
     ap.add_argument("--out", default=None)
@@ -121,8 +125,26 @@ def main() -> int:
     if args.storyboard:
         sb = Storyboard.model_validate(
             json.loads(Path(args.storyboard).read_text(encoding="utf-8")))
+        if args.rerender:
+            # 卡片改了(比如给口播段加了烧字幕一步)但文案必须原样保留 ——
+            # 视频里说的是这份台词, 重写文案字幕就对不上嘴了。
+            from studio.render import Renderer
+            hooks = list(brief.get("person_hooks") or [])
+            for seg in sb.segments:
+                card = store.get(seg.skill_id)
+                r = Renderer(card, hooks, person_count=sb.person_count,
+                             bgm_source=args.bgm, t0=seg.t0, t1=seg.t1)
+                prompts = {k: r.prompt_of_person(k, seg.texts)
+                           for k in range(1, sb.person_count + 1)}
+                before = len(seg.pipeline)
+                seg.pipeline = r.pipeline(seg.texts,
+                                          prompt=r.prompt(seg.texts) or prompts.get(1, ""),
+                                          prompts=prompts)
+                log.info("  重渲 %s [%s] %d 步 → %d 步", seg.seg_id, seg.skill_id,
+                         before, len(seg.pipeline))
         rep = StoryboardPlanner(store).validate(sb, brief)
-        log.info("① 复用已有分镜: %s", args.storyboard)
+        log.info("① 复用已有分镜%s: %s", " (已按当前卡片重渲)" if args.rerender else "",
+                 args.storyboard)
     else:
         log.info("① Planner 挑卡填空: %s (%d 张人物图)",
                  brief.get("name"), len(brief.get("person_hooks") or []))
@@ -237,7 +259,7 @@ def main() -> int:
         ex = Executor(out, dashscope_key=os.environ.get("DASHSCOPE_API_KEY", ""),
                       wavespeed_key=os.environ.get("WAVESPEED_API_KEY", ""),
                       dry_run=args.dry_exec, kling_mode=args.kling_mode,
-                      resume=args.resume)
+                      resume=args.resume, redo_remote=args.redo_remote)
         res = ex.execute(plan)
         if res["dropped"]:
             print(f"\n剔除段落: {', '.join(res['dropped'])}")

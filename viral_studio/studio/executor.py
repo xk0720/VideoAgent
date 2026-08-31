@@ -11,6 +11,7 @@
   · 网络/超时类失败重试一次
   · 某段失败不影响其他段; 成片由成功的段落拼接而成, 缺段如实记入台账
 """
+import hashlib
 import json
 import logging
 import os
@@ -26,18 +27,32 @@ log = logging.getLogger("viral_studio")
 DETERMINISTIC = ("InvalidVideo.", "InvalidParameter", "censor", "DataInspection")
 
 
+_LOCAL_SRC = hashlib.sha1(
+    Path(__file__).with_name("local_tools.py").read_bytes()).hexdigest()[:12]
+
+
 class Executor:
     def __init__(self, out_dir: Path, dashscope_key: str = "",
                  wavespeed_key: str = "", dry_run: bool = False,
-                 kling_mode: str = "std", resume: bool = False):
+                 kling_mode: str = "std", resume: bool = False,
+                 redo_remote: bool = False):
         self.out = out_dir
         self.dry = dry_run
         self.resume = resume
+        self.redo_remote = redo_remote
+        self._stale_remote: List[str] = []
         self.kling_mode = kling_mode
         self._ds, self._ws = dashscope_key, wavespeed_key
         self._clients: Dict[str, Any] = {}
         (out_dir / "gen").mkdir(parents=True, exist_ok=True)
         (out_dir / "work").mkdir(exist_ok=True)
+        self._sig_file = out_dir / "_resume.json"
+        try:
+            self._sigs_prev = json.loads(self._sig_file.read_text(encoding="utf-8"))
+        except Exception:                              # noqa: BLE001 首跑没有
+            self._sigs_prev = {}
+        self._sigs_now: Dict[str, str] = {}
+        self._sigs_all: Dict[str, str] = {}
 
     # ── 后端懒加载: 计划里没用到的路线不因缺 key 而报错 ──
     def _client(self, name: str):
@@ -76,6 +91,33 @@ class Executor:
         if isinstance(val, dict):
             return {k: Executor._resolve(v, artifacts) for k, v in val.items()}
         return val
+
+    # ── 步骤指纹 ────────────────────────────────────────
+    @staticmethod
+    def _refs(val: Any) -> set:
+        if isinstance(val, dict):
+            return set().union(*(Executor._refs(v) for v in val.values())) if val else set()
+        if isinstance(val, list):
+            return set().union(*(Executor._refs(v) for v in val)) if val else set()
+        return {val[1:]} if isinstance(val, str) and val.startswith("@") else set()
+
+    def _signature(self, call: dict) -> str:
+        """指纹 = 本步(工具+原始参数) + 所有上游步骤的指纹。
+
+        只看产物在不在是不够的: 改了 pipeline(比如给口播段插了烧字幕这一步),
+        下游 mix_audio 的参数字面量没变、路径也没变, 却会复用到旧内容 ——
+        于是跑出一个"没有字幕但报成功"的成片。把上游指纹串进来才挡得住。
+        """
+        up = [self._sigs_now.get(r, "?") for r in sorted(self._refs(call["params"]))]
+        # 本地工具再带上实现指纹: 改的是代码而不是计划时(比如修好字幕层的分辨率),
+        # 参数一字未动, 旧产物却已经不对了。本地步骤重做只要几秒, 宁可多做。
+        body = {"t": call["tool"], "p": call["params"], "u": up}
+        if call["tool"] in LOCAL:
+            # 只加给本地 —— 远程步骤的 payload 必须逐字节稳定, 否则一次无关的
+            # 格式改动就会让所有已付费素材失效, 被"续跑"重买一遍。
+            body["c"] = _LOCAL_SRC
+        payload = json.dumps(body, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
     # ── 产物路径 ────────────────────────────────────────
     def _dst_for(self, seg_id: str, call: dict) -> Path:
@@ -159,6 +201,7 @@ class Executor:
     # ── 逐段执行 ─────────────────────────────────────────
     def run_segment(self, seg: dict) -> dict:
         sid = seg["seg_id"]
+        self._sigs_now = {}                            # 指纹按段内 id 索引
         artifacts: Dict[str, str] = {}
         records: List[dict] = []
         log.info("  ▶ %s [%s] %d 步", sid, seg.get("skill_id", "?"), len(seg["calls"]))
@@ -170,12 +213,27 @@ class Executor:
                                 "ok": False, "error": str(e)})
                 log.warning("    %s 跳过: %s", call["id"], e)
                 break
+            key = f"{sid}.{call['id']}"
+            sig = self._signature(call)
+            self._sigs_now[call["id"]] = sig
             cached = self._dst_for(sid, call) if self.resume else None
+            if cached is not None and self._sigs_prev.get(key) != sig:
+                if call["tool"] not in LOCAL and not self.redo_remote \
+                        and cached.exists() and cached.stat().st_size > 1024:
+                    # 代价不对称: 复用一个可能过时的远程产物, 顶多画面不是最新;
+                    # 重买一次是真金白银加几分钟。默认保守, 要重做得明说。
+                    log.warning("    ⚠ %-22s 指纹不符但产物已存在, 仍复用 "
+                                "(要重新生成请加 --redo-remote)", call["tool"])
+                    self._stale_remote.append(key)
+                else:
+                    cached = None                  # 计划变了, 旧产物作废
+                    log.info("    ✎ %-22s 参数已变, 重做", call["tool"])
             if cached is not None and cached.exists() and cached.stat().st_size > 1024:
                 artifacts[call["id"]] = str(cached)          # 已付费的产物不重买
                 records.append({"id": call["id"], "tool": call["tool"], "ok": True,
                                 "path": str(cached), "cached": True, "elapsed_s": 0.0})
                 log.info("    ◇ %-22s %s (复用)", call["tool"], cached.name)
+                self._sigs_all[key] = sig
                 continue
             t0 = time.time()
             rec = self._invoke_with_retry(sid, call, params)
@@ -186,6 +244,7 @@ class Executor:
             if not rec["ok"]:
                 break
             artifacts[call["id"]] = rec["path"]
+            self._sigs_all[key] = sig
         final, degraded = "", False
         if records and records[-1].get("ok"):
             final = records[-1]["path"]
@@ -208,7 +267,14 @@ class Executor:
                  len(plan["segments"]), plan["cost_estimate"]["video_s"],
                  plan["cost_estimate"]["music_s"], plan["cost_estimate"]["tts_chars"],
                  plan["cost_estimate"]["image_calls"])
+        self._sigs_all: Dict[str, str] = {}
+        self._stale_remote = []
         segs = [self.run_segment(s) for s in plan["segments"]]
+        if self._stale_remote:
+            log.warning("以下远程步骤指纹不符但按原产物复用: %s",
+                        ", ".join(self._stale_remote))
+        self._sig_file.write_text(json.dumps(self._sigs_all, indent=1),
+                                  encoding="utf-8")
         kept = [s["output"] for s in segs if s["ok"]]
         summary = {"product": plan.get("product_name"), "segments": segs,
                    "dropped": [s["seg_id"] for s in segs if not s["ok"]],

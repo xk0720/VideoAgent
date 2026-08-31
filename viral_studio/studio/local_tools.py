@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 log = logging.getLogger("viral_studio")
 
 W, H, FPS = 720, 1280, 30
+PUNCT = "，。！？、,.!?;:；：\"'“”‘’ \t\n"
 V_ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
 A_ENC = ["-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2"]
 FONT = "/System/Library/Fonts/STHeiti Medium.ttc"
@@ -192,31 +193,55 @@ def mix_audio(video: str, out: Path, voice: Optional[str] = None,
     return str(out)
 
 
+def probe_wh(path) -> tuple:
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                        str(path)], capture_output=True, text=True)
+    try:
+        w, h = (int(x) for x in p.stdout.strip().split(",")[:2])
+        return w, h
+    except Exception:                                   # noqa: BLE001
+        return W, H
+
+
 def _text_png(text: str, dst: Path, size: int, y_frac: float,
-              box: bool = True, max_chars: int = 14) -> Path:
-    """Pillow 渲染字幕层 —— 本机 ffmpeg 无 drawtext, 且中文由我们自己写才准确。"""
+              box: bool = True, max_chars: int = 14,
+              wh: Optional[tuple] = None) -> Path:
+    """Pillow 渲染字幕层 —— 本机 ffmpeg 无 drawtext, 且中文由我们自己写才准确。
+
+    字幕层必须按**目标视频的真实尺寸**渲染。这里曾经写死 720x1280, 叠到
+    kling 出的 1080x1920 原片上时 overlay=0:0 只盖住左上角, 字幕整体偏左偏上;
+    收尾段恰好已被 mix_audio 归一到 720x1280, 所以一直没露馅。
+    """
     from PIL import Image, ImageDraw, ImageFont
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    W_, H_ = wh or (W, H)
+    size = max(12, int(round(size * W_ / W)))           # 字号随分辨率等比缩放
+    img = Image.new("RGBA", (W_, H_), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     font = ImageFont.truetype(FONT, size)
     lines, cur = [], ""
     for ch in text:
         cur += ch
-        if len(cur) >= max_chars and ch in "，。！？、 ":
-            lines.append(cur.strip("，。 ")); cur = ""
+        if len(cur) >= max_chars and ch in "，。！？、,.;! ":
+            lines.append(cur.strip("，。,. ")); cur = ""
     if cur:
-        lines.append(cur.strip("，。 "))
+        lines.append(cur.strip("，。,. "))
+    # 缩字兜底: 单行超宽(比如标题没有可断处)就整体缩小字号, 文字绝不许出画 ——
+    # "水彩小马卫衣, 三色可选"曾以 76 号单行渲染, 左右各裁掉一个字才发现这里没设防
+    while size > 16 and max(d.textlength(l, font=font) for l in lines) > W_ * 0.92:
+        size = int(size * 0.92)
+        font = ImageFont.truetype(FONT, size)
     lh = int(size * 1.45)
-    y0 = int(H * y_frac) - lh * len(lines) // 2
+    y0 = int(H_ * y_frac) - lh * len(lines) // 2
     if box and lines:
         wmax = max(d.textlength(l, font=font) for l in lines)
-        pad = 22
-        d.rounded_rectangle([(W - wmax) / 2 - pad, y0 - pad,
-                             (W + wmax) / 2 + pad, y0 + lh * len(lines) + pad // 2],
-                            radius=18, fill=(0, 0, 0, 105))
+        pad = max(12, int(22 * W_ / W))
+        d.rounded_rectangle([(W_ - wmax) / 2 - pad, y0 - pad,
+                             (W_ + wmax) / 2 + pad, y0 + lh * len(lines) + pad // 2],
+                            radius=int(18 * W_ / W), fill=(0, 0, 0, 105))
     for i, line in enumerate(lines):
         w = d.textlength(line, font=font)
-        d.text(((W - w) / 2, y0 + i * lh), line, font=font, fill=(255, 255, 255, 255),
+        d.text(((W_ - w) / 2, y0 + i * lh), line, font=font, fill=(255, 255, 255, 255),
                stroke_width=max(3, size // 14), stroke_fill=(0, 0, 0, 230))
     img.save(dst)
     return dst
@@ -226,17 +251,117 @@ def burn_text(video: str, out: Path, text: str, y_frac: float = 0.16,
               size: int = 76, **_) -> str:
     """整段常驻的标题。"""
     png = _text_png(text, out.parent / f"{out.stem}_title.png", size, y_frac,
-                    box=False, max_chars=10)
+                    box=False, max_chars=10, wh=probe_wh(video))
     run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-i", str(png),
          "-filter_complex", "[0:v][1:v]overlay=0:0[v]", "-map", "[v]", "-map", "0:a?",
          *V_ENC, "-c:a", "copy", str(out)])
     return str(out)
 
 
+_WHISPER: Dict[str, object] = {}
+
+
+def _asr_chars(voice: str, model: str = "small") -> List[tuple]:
+    """人声轨 → [(字, 起, 止)]。词级时间戳按字数均分到每个字。"""
+    import whisper
+    if model not in _WHISPER:
+        _WHISPER[model] = whisper.load_model(model)
+    r = _WHISPER[model].transcribe(str(voice), language="zh",
+                                   word_timestamps=True, fp16=False)
+    chars: List[tuple] = []
+    for seg in r.get("segments", []):
+        for w in seg.get("words", []) or []:
+            tok = "".join(c for c in w["word"] if c.strip() and c not in PUNCT)
+            if not tok:
+                continue
+            dt = (float(w["end"]) - float(w["start"])) / len(tok)
+            for i, c in enumerate(tok):
+                chars.append((c, float(w["start"]) + i * dt,
+                              float(w["start"]) + (i + 1) * dt))
+    return chars
+
+
+def _silences(voice: str, thresh_db: int = -35, min_s: float = 0.12) -> List[tuple]:
+    """人声轨里的停顿区间 [(起, 止)] —— 用来把字幕切换点挪进换气/切镜的空档。"""
+    p = subprocess.run(
+        ["ffmpeg", "-v", "info", "-i", str(voice), "-af",
+         f"silencedetect=noise={thresh_db}dB:d={min_s}", "-f", "null", "-"],
+        capture_output=True, text=True)
+    out, start = [], None
+    for line in p.stderr.splitlines():
+        if "silence_start:" in line:
+            start = float(line.split("silence_start:")[1].split()[0])
+        elif "silence_end:" in line and start is not None:
+            out.append((start, float(line.split("silence_end:")[1].split()[0])))
+            start = None
+    return out
+
+
+def _snap(t: float, gaps: List[tuple], tol: float = 0.8) -> float:
+    """切换点若离某段停顿够近, 就挪到停顿中点 —— 免得字幕在半句话中间跳。"""
+    best, bd = t, tol
+    for g0, g1 in gaps:
+        mid = (g0 + g1) / 2
+        if abs(mid - t) < bd:
+            best, bd = mid, abs(mid - t)
+    return round(best, 2)
+
+
+def align_lines(voice: str, lines: List[str], video_dur: float) -> List[dict]:
+    """把已知台词对到真实语音上。
+
+    字幕的两半来源必须分开:
+      · 字 —— 只能来自计划。ASR 会把"卫衣"听成"位移"、"印花"→"硬花"、
+        "亲肤"→"清敷"; 台词是我们自己写进 storyboard 的, 本来就 100% 准。
+      · 时间 —— 只能来自音频。卡里的 0-3/3-6/6-10 是**给模型的指令**,
+        不是模型实际做到的, 语速一漂字幕就对不上嘴。
+    对齐按字数累计比例映射: 同音错字不改变字数(卫衣/位移 都是 2 字),
+    所以这个比例在中文口播上格外稳。人声轨是流程里本来就有的产物, 零额外成本。
+    """
+    lines = [l for l in (lines or []) if str(l).strip()]
+    if not lines:
+        return []
+    plain = ["".join(c for c in l if c not in PUNCT) for l in lines]
+    total = sum(len(p) for p in plain) or 1
+    try:
+        chars = _asr_chars(voice)
+    except Exception as e:                              # noqa: BLE001
+        log.warning("ASR 对齐失败(%s), 退回按字数均分", str(e)[:80])
+        chars = []
+    segs, acc = [], 0
+    if chars:
+        m = len(chars)
+        for line, pl in zip(lines, plain):
+            i0 = min(int(round(acc * m / total)), m - 1)
+            acc += len(pl)
+            i1 = min(max(int(round(acc * m / total)), i0 + 1), m)
+            segs.append({"t0": round(chars[i0][1], 2),
+                         "t1": round(chars[i1 - 1][2], 2), "text": line})
+    else:                                               # 兜底: 按字数切时间轴
+        for line, pl in zip(lines, plain):
+            t0 = video_dur * acc / total
+            acc += len(pl)
+            segs.append({"t0": round(t0, 2),
+                         "t1": round(video_dur * acc / total, 2), "text": line})
+    gaps = _silences(voice) if chars else []
+    for a, b in zip(segs, segs[1:]):                    # 切换点挪进停顿, 且无缝衔接
+        cut = _snap((a["t1"] + b["t0"]) / 2, gaps)
+        a["t1"], b["t0"] = cut, cut
+    segs[0]["t0"] = 0.0                                 # 开头不留空窗
+    segs[-1]["t1"] = round(video_dur, 2)                # 末句留到画面结束
+    return segs
+
+
 def burn_subtitle(video: str, out: Path, text: Optional[str] = None,
                   segments: Optional[List[dict]] = None, y_frac: float = 0.83,
-                  size: int = 40, max_chars: int = 13, **_) -> str:
-    """字幕: 给 segments 就按时间段分别显示, 只给 text 就全程常驻。"""
+                  size: int = 40, max_chars: int = 13,
+                  voice: Optional[str] = None, lines: Optional[List[str]] = None,
+                  **_) -> str:
+    """字幕: 给 lines+voice 就先对齐再烧; 给 segments 按时间段显示; 只给 text 常驻。"""
+    if lines and voice:
+        segments = align_lines(voice, lines, probe_duration(video))
+        log.info("      字幕对齐: %s", " | ".join(
+            f"{s['t0']:.1f}-{s['t1']:.1f}s {s['text'][:8]}…" for s in segments))
     segs = segments or ([{"t0": 0, "t1": probe_duration(video), "text": text}]
                         if text else [])
     if not segs:
@@ -244,7 +369,7 @@ def burn_subtitle(video: str, out: Path, text: Optional[str] = None,
     inputs, chains, cur = ["-i", str(video)], [], "0:v"
     for i, s in enumerate(segs, start=1):
         png = _text_png(str(s["text"]), out.parent / f"{out.stem}_sub{i}.png",
-                        size, y_frac, max_chars=max_chars)
+                        size, y_frac, max_chars=max_chars, wh=probe_wh(video))
         inputs += ["-i", str(png)]
         nxt = f"v{i}"
         chains.append(f"[{cur}][{i}:v]overlay=0:0:"
