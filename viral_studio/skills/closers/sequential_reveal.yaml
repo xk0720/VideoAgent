@@ -65,15 +65,20 @@ pipelines:
       local: true
       params: {video: "@mixed", text: "{title}", y_frac: 0.16, size: 76}
 
-# ── 2 人版: 0-2s 左, 2-4s 右 ─────────────────────────────────────
+# ── 2 人版: 跳舞出场 —— 0-2s 左人跳入, 2-4s 右人加入, 合跳收尾 ──────
 prompt_2p: |
   Locked-off static camera, vertical 9:16. The exact background of this shot —
   a phone frame over a pink-and-green pastel sunburst with sparkle stickers —
   stays fixed and unchanged for the whole clip. A 4-second video.
-  0-2s: the woman from <<<image_1>>> pops into the frame slightly left of center,
-  landing in a confident standing pose with one hand on her hip.
-  2-4s: the woman from <<<image_2>>> pops in to her right; both stand side by side
-  facing the camera, smiling.
+  0-2s: the woman from <<<image_1>>> dances into the frame from the left with a
+  playful bouncy two-step, arms swinging to the beat, and settles slightly left
+  of center still bouncing lightly in rhythm.
+  2-4s: the woman from <<<image_2>>> dances in from the right with the same bouncy
+  two-step and lands at her side; side by side, the two do the SAME simple dance
+  move in perfect sync — step-touch left, step-touch right, one playful hip sway —
+  facing the camera and smiling, ending together on a final accent pose.
+  Keep the choreography simple and rhythmic; no spins, no jumps off the ground,
+  no complex arm choreography.
   Both women are rendered at exactly the SAME scale and the SAME distance from
   the camera — heads at the same height, bodies the same size, symmetrically
   placed about the center. Neither is larger or closer than the other; they are
@@ -132,4 +137,5 @@ measured:
     - 最后一击需 ~0.55s 衰减 → 音乐多生成 2s、裁到 段长+0.5s、画面同步延长(末帧克隆=定格)
     - 否则拼接后该击被后段音频覆盖, 成片里等于消失(实测强度 0.00)
     - 配乐选型: text-to-music 偏差 0.035s 优于 video-to-music 0.085s; 生成音乐准而不狠, 必须叠 punch_up
-    - 2 人版 prompt 已写死但尚未实跑
+    - 2 人版 2026-08-31 改为跳舞双人出场(用户裁决); 舞步刻意限定简单节奏型
+      (step-touch+hip sway, 禁旋转/跳跃/复杂手部), 降低生成崩坏面; 尚未实跑

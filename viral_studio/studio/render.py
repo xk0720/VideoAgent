@@ -124,8 +124,12 @@ class Renderer:
             if tool == "kling_omni_video" and not params.get("first_frame") \
                     and not params.get("refer"):
                 params.setdefault("aspect_ratio", "9:16")   # 纯文生视频: 可灵硬性要求
-            out.append({"id": step["id"], "tool": tool,
-                        "local": bool(step.get("local")), "params": params})
+            rec = {"id": step["id"], "tool": tool,
+                   "local": bool(step.get("local")), "params": params}
+            for k in ("optional", "lenient"):          # 可失败步骤/容缺引用: 原样带给 executor
+                if step.get(k):
+                    rec[k] = True
+            out.append(rec)
         return out
 
     def _resolve(self, val: Any, fills: Dict[str, str]) -> Any:

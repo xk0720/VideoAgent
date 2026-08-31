@@ -197,7 +197,8 @@ class StoryboardPlanner:
         n = len(hooks) or 1
 
         # 开场/收尾: 各只有一张卡 → 程序直接取; 主体: 问模型
-        opening = self.store.candidates(cat, n, "opening")
+        opening = sorted(self.store.candidates(cat, n, "opening"),
+                         key=lambda c: -float(c.get("priority", 0)))
         ending = self.store.candidates(cat, n, "ending")
         body_id, body_reason = self._select_body(brief, cat, n)
         log.info("① 选卡: 开场=%s 主体=%s 收尾=%s",

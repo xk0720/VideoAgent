@@ -80,16 +80,18 @@ class Executor:
 
     # ── @引用替换 ────────────────────────────────────────
     @staticmethod
-    def _resolve(val: Any, artifacts: Dict[str, str]) -> Any:
+    def _resolve(val: Any, artifacts: Dict[str, str], lenient: bool = False) -> Any:
         if isinstance(val, str) and val.startswith("@"):
             key = val[1:]
             if key not in artifacts:
+                if lenient:                    # 容缺步骤(如 assemble_slots): 缺位传 None, 由工具补位
+                    return None
                 raise KeyError(f"引用 @{key} 尚无产物(前序调用失败?)")
             return artifacts[key]
         if isinstance(val, list):
-            return [Executor._resolve(v, artifacts) for v in val]
+            return [Executor._resolve(v, artifacts, lenient) for v in val]
         if isinstance(val, dict):
-            return {k: Executor._resolve(v, artifacts) for k, v in val.items()}
+            return {k: Executor._resolve(v, artifacts, lenient) for k, v in val.items()}
         return val
 
     # ── 步骤指纹 ────────────────────────────────────────
@@ -124,8 +126,8 @@ class Executor:
         """产物路径完全由 (段, 步) 决定 —— 这正是断点续跑的前提。"""
         tool, stem = call["tool"], f"{seg_id}_{call['id']}"
         if tool in LOCAL:
-            ext = ".wav" if tool in ("isolate_voice", "concat_audio",
-                                     "punch_up") else ".mp4"
+            ext = (".wav" if tool in ("isolate_voice", "concat_audio", "punch_up")
+                   else ".jpg" if tool == "crop_ref" else ".mp4")
             return self.out / "work" / f"{stem}{ext}"
         ext = ".png" if tool == "image_generation" else (
             ".mp3" if tool in ("minimax_tts", "sonilo_text_to_music") else ".mp4")
@@ -142,11 +144,13 @@ class Executor:
             return str(self.out / "gen" / f"{stem}{ext}"), "dry", ""
 
         if tool in LOCAL:                              # 本地工具
-            ext = ".wav" if tool in ("isolate_voice", "concat_audio", "punch_up") else ".mp4"
+            ext = (".wav" if tool in ("isolate_voice", "concat_audio", "punch_up")
+                   else ".jpg" if tool == "crop_ref" else ".mp4")
             dst = self.out / "work" / f"{stem}{ext}"
             fn = LOCAL[tool]
             first = {"isolate_voice": "source", "concat_audio": "audios",
-                     "punch_up": "audio", "concat_av": "videos"}.get(tool, "video")
+                     "punch_up": "audio", "concat_av": "videos",
+                     "assemble_slots": "videos", "crop_ref": "image"}.get(tool, "video")
             args = dict(params)
             positional = args.pop(first, None)
             return fn(positional, dst, **args), "local", ""
@@ -207,7 +211,8 @@ class Executor:
         log.info("  ▶ %s [%s] %d 步", sid, seg.get("skill_id", "?"), len(seg["calls"]))
         for call in seg["calls"]:                      # 顺序即拓扑序(校验器已保证)
             try:
-                params = self._resolve(call["params"], artifacts)
+                params = self._resolve(call["params"], artifacts,
+                                       lenient=bool(call.get("lenient")))
             except KeyError as e:
                 records.append({"id": call["id"], "tool": call["tool"],
                                 "ok": False, "error": str(e)})
@@ -242,6 +247,9 @@ class Executor:
             log.info("    %s %-22s %s %.0fs", "✓" if rec["ok"] else "✗",
                      rec["tool"], Path(rec.get("path", "")).name, rec["elapsed_s"])
             if not rec["ok"]:
+                if call.get("optional"):       # 可选步骤(单镜生成)失败: 记账继续, 缺位由下游补
+                    log.warning("    %s.%s 失败但为可选步骤, 继续", sid, call["id"])
+                    continue
                 break
             artifacts[call["id"]] = rec["path"]
             self._sigs_all[key] = sig

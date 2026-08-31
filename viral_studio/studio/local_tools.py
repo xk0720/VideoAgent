@@ -380,6 +380,76 @@ def burn_subtitle(video: str, out: Path, text: Optional[str] = None,
     return str(out)
 
 
+# 电商全身卡式 hook 的三档景别裁剪(比例经 yike 素材标定)。假设: 人物居中,
+# 顶部可能有品牌页眉。animate 的输出取景跟随参考图, 所以景别在这里造。
+REF_FRAMES = {
+    "close":  (0.22, 0.10, 0.78, 0.60),   # 头到腰: 怼脸/胸像镜头用
+    "medium": (0.14, 0.105, 0.86, 0.82),  # 头到膝
+    "full":   (0.06, 0.105, 0.94, 0.985), # 全身(去页眉与留白)
+}
+
+
+def crop_ref(image: str, out: Path, frame: str = "full", **_) -> str:
+    """按景别档位裁参考图 —— 顺带去掉电商图的品牌页眉(否则会被继承进背景)。"""
+    from PIL import Image
+    l, t, r, b = REF_FRAMES.get(str(frame), REF_FRAMES["full"])
+    im = Image.open(image).convert("RGB")
+    w, h = im.size
+    im.crop((int(w * l), int(h * t), int(w * r), int(h * b))).save(out, quality=92)
+    return str(out)
+
+
+def assemble_slots(videos: List[Optional[str]], out: Path,
+                   durations: Optional[List[float]] = None,
+                   fill: str = "repeat", **_) -> str:
+    """按节拍网格逐帧落位: 第 i 段取 videos[i] 的前 durations[i] 秒。
+
+    这是卡点连拍的最后一步, 两条规则撑住节奏:
+      · 只取每段开头 —— 短镜驱动是回文补帧过 API 地板的, 开头 durations[i] 秒
+        恰好是原始正放动作, 补的部分不进成片。
+      · 缺位(生成被拒, videos[i]=None)不许跳过 —— 跳一镜后面所有切点全部错拍。
+        用最长成功镜头切一片等长的补进坑位, 每次换不同 offset 免得重复感。
+        0.5s 的闪切里重复一个姿势看不出来, 节拍网格错半拍全片就废了。
+    """
+    n = len(videos)
+    durations = list(durations or [])
+    if len(durations) != n:
+        raise RuntimeError(f"assemble_slots: videos {n} 段但 durations {len(durations)} 项")
+    ok_idx = [i for i, v in enumerate(videos) if v]
+    if not ok_idx:
+        raise RuntimeError("assemble_slots: 所有镜头都失败, 无从补位")
+    fdurs = {i: probe_duration(videos[i]) for i in ok_idx}
+    vf = (f"fps={FPS},scale={W}:{H}:force_original_aspect_ratio=decrease,"
+          f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    parts, n_filled = [], 0
+    for i, dur in enumerate(durations):
+        src, off = videos[i], 0.0
+        if not src:
+            # 补位源轮换 + 黄金比例散布 offset, 且避开 0 —— 第一版取 offset 0 时
+            # 补位画面与相邻槽位同帧起步, 观感像"倒带", 不像切镜
+            cand = [j for j in ok_idx if fdurs[j] >= dur + 0.1] or ok_idx
+            cand = [j for j in cand if abs(j - i) > 1] or cand   # 别用紧邻槽位的素材
+            pick = cand[n_filled % len(cand)]
+            src = videos[pick]
+            span = max(fdurs[pick] - dur, 0.0)
+            off = round(span * ((n_filled * 0.618 + 0.37) % 1.0), 3) if span > 0 else 0.0
+            n_filled += 1
+            log.info("      槽位 %d 缺 → %s 自 %.2fs 补 %.2fs", i + 1,
+                     Path(src).name, off, dur)
+
+        dst = out.parent / f"{out.stem}_p{i:02d}.mp4"
+        run(["ffmpeg", "-y", "-v", "error", "-ss", f"{off:.3f}", "-i", str(src),
+             "-vf", vf, *V_ENC, "-an", "-t", f"{dur:.3f}", str(dst)])
+        parts.append(dst)
+    lst = out.with_suffix(".txt")
+    lst.write_text("\n".join(f"file '{q.resolve()}'" for q in parts), encoding="utf-8")
+    run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+         "-i", str(lst), *V_ENC, "-an", str(out)])
+    log.info("      落位 %d 段(补位 %d) → %.2fs", n, n_filled, probe_duration(out))
+    return str(out)
+
+
 REGISTRY = {"isolate_voice": isolate_voice, "concat_audio": concat_audio,
+            "assemble_slots": assemble_slots, "crop_ref": crop_ref,
             "punch_up": punch_up, "concat_av": concat_av, "mix_audio": mix_audio,
             "burn_text": burn_text, "burn_subtitle": burn_subtitle}
