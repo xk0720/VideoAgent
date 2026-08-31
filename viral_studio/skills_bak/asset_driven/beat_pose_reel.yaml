@@ -31,10 +31,6 @@ audio:
 
 assets:
   bgm: memory/assets/yike_pose/bgm.m4a
-  # 三档景别参考图与本卡绑定(用户裁决): 卡即自足, brief 无需再带 ref_frames
-  ref_close: memory/assets/yike_pose/ref_close.png
-  ref_medium: memory/assets/yike_pose/ref_medium.png
-  ref_full: memory/assets/yike_pose/ref_full.png
   slot_durations: [0.833, 0.6, 0.567, 1.0, 1.233, 2.3, 0.433, 0.533, 1.067]
   shot_01: memory/assets/yike_pose/shots/s01.mp4
   shot_02: memory/assets/yike_pose/shots/s02.mp4
@@ -48,25 +44,26 @@ assets:
 
 pipelines:
   "1":
-    # 三档景别参考图为本卡资产(预处理产物, 与驱动片段/BGM 同级), 流程不加工。
+    # 三档景别参考图是用户输入(brief.ref_frames, 预处理产物), 卡不做任何加工。
+    # 预处理建议见 tools/make_ref_frames.py(运镜视频抽帧, 三档同人同房同光)。
     - {id: s01, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_close, driving: $skill.assets.shot_01}}
+       params: {mode: wan-pro, ref: $ref_close, driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_close, driving: $skill.assets.shot_02}}
+       params: {mode: wan-pro, ref: $ref_close, driving: $skill.assets.shot_02}}
     - {id: s03, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_close, driving: $skill.assets.shot_03}}
+       params: {mode: wan-pro, ref: $ref_close, driving: $skill.assets.shot_03}}
     - {id: s04, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_04}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_04}}
     - {id: s05, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_05}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_05}}
     - {id: s06, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_full, driving: $skill.assets.shot_06}}
+       params: {mode: wan-pro, ref: $ref_full, driving: $skill.assets.shot_06}}
     - {id: s07, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_07}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_07}}
     - {id: s08, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_08}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_08}}
     - {id: s09, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_full, driving: $skill.assets.shot_09}}
+       params: {mode: wan-pro, ref: $ref_full, driving: $skill.assets.shot_09}}
     - {id: asm, tool: assemble_slots, local: true, lenient: true,
        params: {videos: ["@s01", "@s02", "@s03", "@s04", "@s05", "@s06", "@s07", "@s08", "@s09"],
                 durations: $skill.assets.slot_durations, fill: repeat}}
@@ -75,25 +72,26 @@ pipelines:
     - {id: out, tool: burn_text, local: true,
        params: {video: "@mixed", text: "{spec_line}", y_frac: 0.74, size: 34}}
   "2":
-    # 三档景别参考图为本卡资产(预处理产物, 与驱动片段/BGM 同级), 流程不加工。
+    # 三档景别参考图是用户输入(brief.ref_frames, 预处理产物), 卡不做任何加工。
+    # 预处理建议见 tools/make_ref_frames.py(运镜视频抽帧, 三档同人同房同光)。
     - {id: s01, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_close, driving: $skill.assets.shot_01}}
+       params: {mode: wan-pro, ref: $ref_close, driving: $skill.assets.shot_01}}
     - {id: s02, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_close, driving: $skill.assets.shot_02}}
+       params: {mode: wan-pro, ref: $ref_close, driving: $skill.assets.shot_02}}
     - {id: s03, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_close, driving: $skill.assets.shot_03}}
+       params: {mode: wan-pro, ref: $ref_close, driving: $skill.assets.shot_03}}
     - {id: s04, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_04}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_04}}
     - {id: s05, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_05}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_05}}
     - {id: s06, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_full, driving: $skill.assets.shot_06}}
+       params: {mode: wan-pro, ref: $ref_full, driving: $skill.assets.shot_06}}
     - {id: s07, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_07}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_07}}
     - {id: s08, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_medium, driving: $skill.assets.shot_08}}
+       params: {mode: wan-pro, ref: $ref_medium, driving: $skill.assets.shot_08}}
     - {id: s09, tool: animate_move, optional: true,
-       params: {mode: wan-pro, ref: $skill.assets.ref_full, driving: $skill.assets.shot_09}}
+       params: {mode: wan-pro, ref: $ref_full, driving: $skill.assets.shot_09}}
     - {id: asm, tool: assemble_slots, local: true, lenient: true,
        params: {videos: ["@s01", "@s02", "@s03", "@s04", "@s05", "@s06", "@s07", "@s08", "@s09"],
                 durations: $skill.assets.slot_durations, fill: repeat}}

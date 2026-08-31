@@ -126,7 +126,7 @@ music_prompt: |
   no vocals.
 
 text_params:
-  title: {lang: zh, chars: [4, 14]}     # 收尾标题, 后期烧(不指望模型写中文)
+  title: {lang: zh, chars: [4, 10]}     # 收尾标题, 后期烧(不指望模型写中文)
 
 measured:
   verified: true

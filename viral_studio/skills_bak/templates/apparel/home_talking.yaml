@@ -159,9 +159,9 @@ prompt_p1: |
   with a large window, soft daylight, plain light-colored wall. A 10-second
   video in three shots, hard cut between shots. The same young woman from
   <<<image_1>>> appears in every shot.
-  Shot 1 (0-3s): {act1_1}, speaking to the camera in Mandarin Chinese, and says: "{line1_1}"
-  Shot 2 (3-6s): {act2_1}, speaking to the camera in Mandarin Chinese, and says: "{line2_1}"
-  Shot 3 (6-10s): {act3_1}, speaking to the camera in Mandarin Chinese, and says: "{line3_1}"
+  Shot 1 (0-3s): she walks in from the left edge of the frame, stops at the center and throws both arms open in a cheerful ta-da presentation, eyes wide with excitement, speaking to the camera in Mandarin Chinese, and says: "{line1_1}"
+  Shot 2 (3-6s): she grabs the hem with both hands and swings it lightly left and right to show the loose cut, glances down at the print then snaps her eyes back up to the camera, speaking to the camera in Mandarin Chinese, and says: "{line2_1}"
+  Shot 3 (6-10s): she flicks one wide sleeve through the air, pivots about 45 degrees to her side, then looks back over her shoulder and winks at the camera, speaking to the camera in Mandarin Chinese, and says: "{line3_1}"
   Same woman, same outfit, same room in all three shots. She speaks continuously
   with natural, accurate lip sync in Mandarin Chinese; clear female voice,
   upbeat and friendly, energetic performance.
@@ -178,9 +178,9 @@ prompt_p2: |
   with a large window, soft daylight, plain light-colored wall. A 10-second
   video in three shots, hard cut between shots. The same young woman from
   <<<image_1>>> appears in every shot.
-  Shot 1 (0-3s): {act1_2}, speaking to the camera in Mandarin Chinese, and says: "{line1_2}"
-  Shot 2 (3-6s): {act2_2}, speaking to the camera in Mandarin Chinese, and says: "{line2_2}"
-  Shot 3 (6-10s): {act3_2}, speaking to the camera in Mandarin Chinese, and says: "{line3_2}"
+  Shot 1 (0-3s): she leans slightly toward the camera and taps the contrast stitching on her collar with one finger, tilting her head, speaking to the camera in Mandarin Chinese, and says: "{line1_2}"
+  Shot 2 (3-6s): she slides both hands into her pockets and rocks her shoulders playfully from side to side, chin lifted, speaking to the camera in Mandarin Chinese, and says: "{line2_2}"
+  Shot 3 (6-10s): she takes two easy steps to her left, turns back to the camera and sweeps her hair off her shoulder with one hand, speaking to the camera in Mandarin Chinese, and says: "{line3_2}"
   Same woman, same outfit, same room in all three shots. She speaks continuously
   with natural, accurate lip sync in Mandarin Chinese; clear female voice,
   upbeat and friendly, energetic performance.
@@ -197,9 +197,9 @@ prompt_p3: |
   with a large window, soft daylight, plain light-colored wall. A 10-second
   video in three shots, hard cut between shots. The same young woman from
   <<<image_1>>> appears in every shot.
-  Shot 1 (0-3s): {act1_3}, speaking to the camera in Mandarin Chinese, and says: "{line1_3}"
-  Shot 2 (3-6s): {act2_3}, speaking to the camera in Mandarin Chinese, and says: "{line2_3}"
-  Shot 3 (6-10s): {act3_3}, speaking to the camera in Mandarin Chinese, and says: "{line3_3}"
+  Shot 1 (0-3s): she holds up three fingers close to the camera, then spreads both arms wide to present the whole outfit, speaking to the camera in Mandarin Chinese, and says: "{line1_3}"
+  Shot 2 (3-6s): she plants one hand on her hip and points straight down toward the bottom of the frame with the other, giving a playful wink, speaking to the camera in Mandarin Chinese, and says: "{line2_3}"
+  Shot 3 (6-10s): she turns halfway away, looks back over her shoulder with a smile, then spins her hands into a small heart shape in front of her chest, speaking to the camera in Mandarin Chinese, and says: "{line3_3}"
   Same woman, same outfit, same room in all three shots. She speaks continuously
   with natural, accurate lip sync in Mandarin Chinese; clear female voice,
   upbeat and friendly, energetic performance.
@@ -211,25 +211,16 @@ prompt_p3: |
   time, changing with each shot, matching exactly what she is saying. No other
   text or graphics, no extra people.
 
-text_params:
-  act1_1: {lang: en, chars: [6, 16], desc: "第1镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act2_1: {lang: en, chars: [6, 16], desc: "第2镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act3_1: {lang: en, chars: [6, 16], desc: "第3镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act1_2: {lang: en, chars: [6, 16], desc: "第1镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act2_2: {lang: en, chars: [6, 16], desc: "第2镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act3_2: {lang: en, chars: [6, 16], desc: "第3镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act1_3: {lang: en, chars: [6, 16], desc: "第1镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act2_3: {lang: en, chars: [6, 16], desc: "第2镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}
-  act3_3: {lang: en, chars: [6, 16], desc: "第3镜动作(英文短语6-16词): 具体可拍、居家室内合理、无道具增删、禁旋转跳跃; 三镜动作要递进不重复"}              # 模板要填的内容 + 实测字数约束(第 N 人一组)
+text_params:              # 模板要填的内容 + 实测字数约束(第 N 人一组)
   line1_1: {lang: zh, chars: [10, 13]}    # 第1人 3秒句
   line2_1: {lang: zh, chars: [10, 13]}
-  line3_1: {lang: zh, chars: [13, 18]}    # 第1人 4秒句
+  line3_1: {lang: zh, chars: [14, 18]}    # 第1人 4秒句
   line1_2: {lang: zh, chars: [10, 13]}    # 第2人
   line2_2: {lang: zh, chars: [10, 13]}
-  line3_2: {lang: zh, chars: [13, 18]}
+  line3_2: {lang: zh, chars: [14, 18]}
   line1_3: {lang: zh, chars: [10, 13]}    # 第3人
   line2_3: {lang: zh, chars: [10, 13]}
-  line3_3: {lang: zh, chars: [13, 18]}
+  line3_3: {lang: zh, chars: [14, 18]}
 
 measured:
   verified: true

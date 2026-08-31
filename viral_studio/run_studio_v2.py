@@ -234,6 +234,16 @@ def main() -> int:
                             for s in plan["segments"]],
                "remote_calls": n_remote, "cost_estimate": cost,
                "storyboard_ok": rep.ok, "call_plan_issues": errs}
+    from studio.pretest import run_pretest
+    pt_errs, pt_warns = run_pretest(out)
+    for w in pt_warns:
+        log.warning("预检 ⚠ %s", w)
+    for e in pt_errs:
+        log.error("预检 ✗ %s", e)
+    summary["pretest"] = {"errors": pt_errs, "warnings": pt_warns}
+    if pt_errs and args.execute:
+        print(f"\n预检发现 {len(pt_errs)} 个错误, 拒绝进入付费执行(详见上方日志)。")
+        args.execute = False
     (out / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 

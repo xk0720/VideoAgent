@@ -19,6 +19,10 @@ log = logging.getLogger("viral_studio")
 
 # 工具契约: 必填参数 + 是否远程(计费)
 TOOL_SPECS: Dict[str, dict] = {
+    "assemble_slots":       {"required": ["videos", "durations"], "remote": False},
+    "crop_ref":             {"required": ["image"],                "remote": False},
+    "grab_frame":           {"required": ["video"],                "remote": False},
+    "image_edit":           {"required": ["base_image", "prompt"], "remote": True},
     "animate_move":         {"required": ["ref", "driving", "mode"], "remote": True},
     "kling_omni_video":     {"required": ["prompt", "duration"],     "remote": True},
     "seedance_t2v":         {"required": ["prompt", "duration"],     "remote": True},

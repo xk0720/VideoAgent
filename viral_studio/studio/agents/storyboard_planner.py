@@ -28,7 +28,13 @@ P = Path(__file__).parents[1] / "prompts"
 SELECT_PROMPT = (P / "storyboard_select.md").read_text(encoding="utf-8")
 WRITE_PROMPT = (P / "storyboard_write.md").read_text(encoding="utf-8")
 CJK = re.compile(r"[一-鿿]")
-BANNED = re.compile(r"\b(360|full turn|spin|rotate quickly)\b", re.I)
+BANNED = re.compile(r"\b(360|full turns?|spins?|twirls?|rotates?|jumps?|leaps?|"
+                    r"backflips?|cartwheels?)\b", re.I)
+# 动作越界: 画面里只有身上穿着的一件衣服, 模型无法凭空变出第二件/道具/换装
+PROPS = re.compile(r"\b(holds? up (both|two)|(another|second|two) (dress|outfit|"
+                   r"garment)|changes? (into|clothes)|takes? (it |the dress )?off|"
+                   r"removes? (the )?(dress|top)|holding (two|both)|(grabs?|picks?"
+                   r" up) (a|the) (bag|prop|hat|coat))\b", re.I)
 MAX_RETRY = 4
 NARRATIVE = {1: "建立(这是什么、什么手感、第一眼感受)",
              2: "深入(设计细节、做工、为什么值)",
@@ -76,21 +82,44 @@ class StoryboardPlanner:
         """
         tpl = card.get(f"prompt_p{person}") or ""
         out = []
-        for m in re.finditer(r"Shot (\d) \((\d+)-(\d+)s\): (.*?)\{(\w+)\}", tpl, re.S):
-            _, t0, t1, body, key = m.groups()
-            act = re.sub(r"\s+", " ", body).strip()
-            act = act.split(", speaking to the camera")[0].strip(' ,"')
-            out.append((key, f"{t0}-{t1}s 画面: {act}"))
+        # 新句式: Shot k (t0-t1s): {actk_N}, ... says: "{linek_N}" —— 动作与台词
+        # 同镜成对, 都由写稿 LLM 产出(动作不再写死在卡里, 用户裁决 2026-08-31)
+        for m in re.finditer(r"Shot (\d) \((\d+)-(\d+)s\): (.*?)(?=\n\s*Shot |\n\s*\n|$)",
+                             tpl, re.S):
+            k, t0, t1, body = m.groups()
+            keys = re.findall(r"\{(\w+)\}", body)
+            act_keys = [x for x in keys if x.startswith("act")]
+            line_keys = [x for x in keys if x.startswith("line")]
+            for ak in act_keys:
+                out.append((ak, f"{t0}-{t1}s 第{k}镜动作(由你设计, 英文, 以 she 开头): "
+                                f"具体可拍、镜头时长内可完成; 与前后镜动作递进不重复; "
+                                f"只能与身上穿着的这一件衣服互动, 不得出现第二件衣服"
+                                f"或任何道具; 禁旋转/跳跃"))
+            for lk in line_keys:
+                ctx = f"{t0}-{t1}s 画面: "
+                if act_keys:
+                    ctx += f"配合你在 {act_keys[0]} 里设计的动作"
+                else:                                  # 旧式卡: 动作写死在正文里
+                    act = re.sub(r"\s+", " ", body).strip()
+                    act = act.split(", speaking to the camera")[0].strip(' ,"')
+                    ctx += act
+                out.append((lk, ctx))
         if not out:                                   # 旁白型: 整段一句
             for key in (card.get("text_params") or {}):
-                if key.endswith(f"_{person}"):
+                if not key.endswith(f"_{person}"):
+                    continue
+                if key.startswith("act"):
+                    scene = re.search(r"shot,(.*?)\. The woman", tpl, re.S)
+                    sc = re.sub(r"\s+", " ", scene.group(1)).strip() if scene else ""
+                    out.append((key, f"整段 10s 动作编排(由你设计, 英文, 以 she 开头): "
+                                     f"场景: {sc}; 慢节奏可持续、展示衣服为主; 只能与"
+                                     f"身上这一件互动, 无第二件衣服/道具; 禁旋转跳跃"))
+                else:
                     scene = re.search(r"vertical 9:16 full-body shot,(.*?)\. The woman",
                                       tpl, re.S)
-                    act = re.search(r"Over the \d+ seconds, (.*?)\. Her expressions",
-                                    tpl, re.S)
-                    ctx = "; ".join(re.sub(r"\s+", " ", g.group(1)).strip()
-                                    for g in (scene, act) if g)
-                    out.append((key, f"整段 10s 画面: {ctx}"))
+                    sc = re.sub(r"\s+", " ", scene.group(1)).strip() if scene else ""
+                    out.append((key, f"整段 10s 旁白, 场景: {sc}; 画面动作即你在"
+                                     f" act_{person} 里设计的编排"))
         return out
 
     def _writing_brief(self, card: dict, brief: dict, n: int) -> Tuple[str, Dict[str, dict]]:
@@ -112,52 +141,67 @@ class StoryboardPlanner:
                     continue
                 need[key] = spec
                 lo, hi = spec.get("chars", [0, 99])
-                rows.append(f"  - `{key}` ({lo}-{hi} 字)  {ctx}")
+                unit = "英文词" if spec.get("lang") == "en" else "字"
+                rows.append(f"  - `{key}` ({lo}-{hi} {unit})  {ctx}")
             blocks.append(head + "\n" + "\n".join(rows))
         # 与人无关的文本参数(如收尾标题)
         for key, spec in tp.items():
             if key not in need and not re.search(r"_\d$", key):
                 need[key] = spec
                 lo, hi = spec.get("chars", [0, 99])
-                blocks.append(f"### 其他\n  - `{key}` ({lo}-{hi} 字)  {spec.get('desc','')}")
+                unit = "英文词" if spec.get("lang") == "en" else "字"
+                blocks.append(f"### 其他\n  - `{key}` ({lo}-{hi} {unit})  {spec.get('desc','')}")
         return "\n\n".join(blocks), need
 
     def _write(self, card: dict, brief: dict, n: int) -> Dict[str, str]:
         body, need = self._writing_brief(card, brief, n)
         if not need:
             return {}
-        skeleton = {k: f"<{v.get('chars',['',''])[0]}-{v.get('chars',['',''])[-1]}字>"
+        skeleton = {k: (f"<{v.get('chars',['',''])[0]}-{v.get('chars',['',''])[-1]}"
+                        + (" English words>" if v.get("lang") == "en" else "字>"))
                     for k, v in need.items()}
         user = (f"## 商品\n{brief.get('name')} — {brief.get('description','')}\n"
                 f"卖点(每个最多用一次, 都要落地):\n"
                 + "\n".join(f"  {i}. {s}" for i, s in
                             enumerate(brief.get("selling_points", []), 1))
                 + f"\n\n## 要写的文案(逐条按画面写)\n{body}\n\n"
-                f"## 输出骨架(键照抄, 值换成你写的中文)\n"
+                f"## 输出骨架(键照抄; lang=en 的写英文, 其余写中文)\n"
                 f"{json.dumps(skeleton, ensure_ascii=False, indent=2)}\n")
         last, prev = "", ""
         texts: Dict[str, str] = {}
         for attempt in range(MAX_RETRY):
             q = user if not last else (
-                user + f"\n## 你上一版的逐条字数(我已替你数好, 直接照做)\n{prev}\n\n"
+                user + f"\n## 你上一版的逐条问题(我已替你核好, 直接照做)\n{prev}\n\n"
                 f"标 ✓ 的原样输出, 标 ✗ 的按提示增删字数后输出。\n")
             raw = chat_json(WRITE_PROMPT, q, temperature=0.7 if not last else 0.3)
             texts = {k: str(v).strip() for k, v in raw.items() if k in need}
-            issues = self._check(texts, need)
+            # 写作循环容差 1: 差 1 字/词的实测听感无碍且模型 ±1 不可靠(4轮死循环),
+            # 只对差 2 以上的真偏差逼重写; 终检仍 tol=2
+            issues = self._check(texts, need, tol=1)
             if not issues:
                 return texts
             last = "; ".join(issues)
-            # 把每条的现字数与差额直接列出来 —— 模型自我计数不可靠(实测 3 轮收敛不了)
+            # 每键的全部问题(字数+定性)都要进反馈 —— 早期版本只回传字数, 定性违规
+            # (she 开头/高危词)的行反被标"保持原样", 模型 4 轮原地踏步
+            by_key: Dict[str, List[str]] = {}
+            for msg in issues:
+                by_key.setdefault(msg.split()[0], []).append(
+                    msg.split(" ", 1)[1] if " " in msg else msg)
             rows = []
             for k in need:
                 v = (texts.get(k) or "").strip()
-                ln = len(CJK.findall(v)) + len(re.findall(r"[A-Za-z0-9]+", v))
+                unit = "词" if need[k].get("lang") == "en" else "字"
+                ln = len(CJK.findall(v)) + len(re.findall(r"[A-Za-z0-9']+", v))
                 lo, hi = need[k].get("chars", [0, 99])
-                if lo <= ln <= hi:
-                    rows.append(f'  "{k}": 现{ln}字 ✓ 保持原样: {v}')
+                probs = list(by_key.get(k, []))
+                if not (lo - 1 <= ln <= hi + 1):
+                    probs.append(f"现{ln}{unit}需{lo}-{hi}{unit}, "
+                                 + (f"要再加 {lo-ln} 个{unit}" if ln < lo
+                                    else f"要删掉 {ln-hi} 个{unit}"))
+                if probs:
+                    rows.append(f'  "{k}": ✗ ' + "; ".join(probs) + f"。原句: {v}")
                 else:
-                    diff = (f"要再加 {lo - ln} 个字" if ln < lo else f"要删掉 {ln - hi} 个字")
-                    rows.append(f'  "{k}": 现{ln}字 ✗ 需{lo}-{hi}字, {diff}。原句: {v}')
+                    rows.append(f'  "{k}": ✓ 保持原样: {v}')
             prev = "\n".join(rows)
             log.info("  文案第%d次: %s", attempt + 1, last[:120])
         # 收敛不了就放宽: 差 1-2 字的实际听感无碍(3秒句 10 vs 9 字 = 0.2 秒),
@@ -186,8 +230,20 @@ class StoryboardPlanner:
                 lo, hi = spec.get("chars", [0, 99])
                 if not (lo - tol <= ln <= hi + tol):
                     out.append(f"{k} 现{ln}字需{lo}-{hi}字")
+            elif spec.get("lang") == "en":              # 动作槽: 英文按词数
+                if CJK.search(v):
+                    out.append(f"{k} 应为英文"); continue
+                wn = len(re.findall(r"[A-Za-z0-9']+", v))
+                lo, hi = spec.get("chars", [0, 99])
+                if not (lo - tol <= wn <= hi + tol):
+                    out.append(f"{k} 现{wn}词需{lo}-{hi}词")
+                if k.startswith("act") and not re.match(r"(she|her)\b", v, re.I):
+                    out.append(f"{k} 动作需以 she 开头(主语统一)")
+                if PROPS.search(v):
+                    out.append(f"{k} 动作越界: 只能与身上穿着的一件互动, "
+                               f"不得出现第二件衣服/道具/换装")
             if BANNED.search(v):
-                out.append(f"{k} 含高危动作词")
+                out.append(f"{k} 含高危动作词(旋转/跳跃类实测易崩)")
         return out
 
     # ── 主流程 ───────────────────────────────────────────

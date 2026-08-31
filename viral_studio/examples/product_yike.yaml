@@ -8,10 +8,6 @@ selling_points:
 person_hooks:
   - examples/new/yike/person_hook1.jpg     # 白色款
   - examples/new/yike/person_hook2.jpg     # 蓝条纹款
-ref_frames:                # 用户预处理的三档景别参考图(卡直接引用, 不做任何加工)
-  close: examples/new/yike/ref_close.png
-  medium: examples/new/yike/ref_medium.png
-  full: examples/new/yike/ref_full.png
 product_images:
   - examples/new/yike/item_hook1.jpg
   - examples/new/yike/item_hook2.jpg

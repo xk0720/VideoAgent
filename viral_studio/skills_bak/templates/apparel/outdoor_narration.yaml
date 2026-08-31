@@ -130,7 +130,10 @@ pipelines:
 prompt_p1: |
   Handheld camera with a subtle natural sway, vertical 9:16 full-body shot,
   under blooming cherry blossom trees in a spring park, soft warm sunlight
-  filtering through pink petals, gentle breeze. The woman from <<<image_1>>> is the only person in frame. Over the 10 seconds, {act_1}. Her
+  filtering through pink petals, gentle breeze. The woman from <<<image_1>>> is the only person in frame. Over the 10
+  seconds, she walks toward the camera and stops, tilts her head with a bright
+  surprised smile, sweeps a strand of hair behind her ear, then spreads the hem
+  of the sweatshirt with both hands and gives a small playful shrug. Her
   expressions are lively and varied — she smiles, raises her eyebrows, and
   looks straight into the lens. Cinematic natural light, shallow depth of
   field. Same woman and same outfit throughout. No text, no captions, no
@@ -140,7 +143,10 @@ prompt_p1: |
 prompt_p2: |
   Handheld camera with a subtle natural sway, vertical 9:16 full-body shot, on
   a grassy lawn beside a tree-lined path in a botanical garden, dappled green
-  light, blurred foliage in the background. The woman from <<<image_1>>> is the only person in frame. Over the 10 seconds, {act_2}. Her
+  light, blurred foliage in the background. The woman from <<<image_1>>> is the only person in frame. Over the 10
+  seconds, she strolls a few steps along the path, turns back to the camera
+  with a mischievous raised eyebrow, points at the contrast stitching on her
+  cuff, then slips both hands into her pockets and rocks her shoulders. Her
   expressions are lively and varied — she smiles, raises her eyebrows, and
   looks straight into the lens. Cinematic natural light, shallow depth of
   field. Same woman and same outfit throughout. No text, no captions, no
@@ -151,7 +157,9 @@ prompt_p3: |
   Handheld camera with a subtle natural sway, vertical 9:16 full-body shot, on
   a white terrace overlooking the sea, clear blue sky and ocean horizon behind
   her, bright natural daylight. The woman from <<<image_1>>> is the only person in frame. 
-  Over the 10 seconds, {act_3}. Her expressions are lively and varied — she smiles, raises
+  Over the 10 seconds, she leans on the railing and looks out at the sea, turns around with wind in her
+  hair, opens both arms wide to present the outfit, then makes a heart shape
+  with her hands. Her expressions are lively and varied — she smiles, raises
   her eyebrows, and looks straight into the lens. Cinematic natural light,
   shallow depth of field. Same woman and same outfit throughout. No text, no
   captions, no subtitles, no extra people.
@@ -162,9 +170,6 @@ music_prompt: |
   narration can sit on top, no vocals, no sudden drops.
 
 text_params:
-  act_1: {lang: en, chars: [12, 28], desc: "整段10s动作编排(英文12-28词): 与该人场景自然互动、慢节奏可持续、展示衣服的走动/转身/裙摆动作, 禁快速旋转"}
-  act_2: {lang: en, chars: [12, 28], desc: "整段10s动作编排(英文12-28词): 与该人场景自然互动、慢节奏可持续、展示衣服的走动/转身/裙摆动作, 禁快速旋转"}
-  act_3: {lang: en, chars: [12, 28], desc: "整段10s动作编排(英文12-28词): 与该人场景自然互动、慢节奏可持续、展示衣服的走动/转身/裙摆动作, 禁快速旋转"}
   narration_1: {lang: zh, chars: [24, 32]}  # TTS 约 5 字/秒, 10s 上限约 45 字
   narration_2: {lang: zh, chars: [24, 32]}
   narration_3: {lang: zh, chars: [24, 32]}
