@@ -127,7 +127,7 @@ class Executor:
         tool, stem = call["tool"], f"{seg_id}_{call['id']}"
         if tool in LOCAL:
             ext = (".wav" if tool in ("isolate_voice", "concat_audio", "punch_up")
-                   else ".jpg" if tool == "crop_ref" else ".mp4")
+                   else ".jpg" if tool in ("crop_ref", "grab_frame") else ".mp4")
             return self.out / "work" / f"{stem}{ext}"
         ext = (".png" if tool == "image_generation"
                else ".jpg" if tool == "image_edit"
@@ -149,7 +149,7 @@ class Executor:
 
         if tool in LOCAL:                              # 本地工具
             ext = (".wav" if tool in ("isolate_voice", "concat_audio", "punch_up")
-                   else ".jpg" if tool == "crop_ref" else ".mp4")
+                   else ".jpg" if tool in ("crop_ref", "grab_frame") else ".mp4")
             dst = self.out / "work" / f"{stem}{ext}"
             fn = LOCAL[tool]
             first = {"isolate_voice": "source", "concat_audio": "audios",

@@ -430,6 +430,38 @@ def crop_ref(image: str, out: Path, frame: str = "full",
     return str(out)
 
 
+def grab_frame(video: str, out: Path, window: Optional[List[float]] = None,
+               **_) -> str:
+    """在时间窗内取最清晰的一帧存图 —— 运镜参考视频 → 三档景别参考图。
+
+    参考图来自同一条连续运镜(人不动镜头推近), 三档的人/房间/光线由构造保证
+    一致(用户裁决 2026-08-31, 取代抠图合成与整图重绘两条路)。取"最清晰"而非
+    定点: 运镜有轻微运动模糊, 窗内 Laplacian 方差最大的帧就是最稳的那帧。"""
+    import cv2
+    t0, t1 = (window or [0.0, 0.5])[:2]
+    cap = cv2.VideoCapture(str(video))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24
+    best, best_v, idx = None, -1.0, 0
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        t = idx / fps
+        idx += 1
+        if t < t0:
+            continue
+        if t > t1:
+            break
+        v = cv2.Laplacian(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+        if v > best_v:
+            best, best_v = f, v
+    cap.release()
+    if best is None:
+        raise RuntimeError(f"grab_frame: {video} 在窗 {window} 内无帧")
+    cv2.imwrite(str(out), best, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return str(out)
+
+
 def assemble_slots(videos: List[Optional[str]], out: Path,
                    durations: Optional[List[float]] = None,
                    fill: str = "repeat", **_) -> str:
@@ -482,5 +514,6 @@ def assemble_slots(videos: List[Optional[str]], out: Path,
 
 REGISTRY = {"isolate_voice": isolate_voice, "concat_audio": concat_audio,
             "assemble_slots": assemble_slots, "crop_ref": crop_ref,
+            "grab_frame": grab_frame,
             "punch_up": punch_up, "concat_av": concat_av, "mix_audio": mix_audio,
             "burn_text": burn_text, "burn_subtitle": burn_subtitle}
