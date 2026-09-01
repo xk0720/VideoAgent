@@ -6,8 +6,8 @@ selling_points:
   - 白色清爽 / 蓝条纹知性, 两色可选
   - 胸前小熊挂饰, 细节有记忆点
 person_hooks:
-  - examples/new/yike/person_hook1.jpg     # 白色款
-  - examples/new/yike/person_hook2.jpg     # 蓝条纹款
+  - examples/hooks/person_hook_1.png
+  - examples/hooks/person_hook_2.png
 product_images:
-  - examples/new/yike/item_hook1.jpg
-  - examples/new/yike/item_hook2.jpg
+  - examples/hooks/person_hook_1.png
+  - examples/hooks/person_hook_3.png
