@@ -41,12 +41,17 @@ class SkillStore:
         return self.skills.get(skill_id)
 
     def candidates(self, category: str, person_count: int,
-                   placement: str) -> List[dict]:
-        """按商品类目 + hook 人数 + 段落位置筛出可选 skill。"""
+                   placement: str, product_name: str = "") -> List[dict]:
+        """按商品类目 + hook 人数 + 段落位置(+可选的商品绑定)筛出可选 skill。"""
         out = []
         for c in self.skills.values():
             a = c.get("applies_to", {})
             if a.get("placement") != placement:
+                continue
+            # 资产绑定: 卡内烘了专属素材(驱动片段/参考图/BGM)的, 只许绑定商品用 ——
+            # 否则换个商品还会拍出上一个商品的人和衣服
+            bound = a.get("products")
+            if bound and not any(b in (product_name or "") for b in bound):
                 continue
             cats = a.get("categories", [])
             if cats and category not in cats and "任何" not in " ".join(cats):

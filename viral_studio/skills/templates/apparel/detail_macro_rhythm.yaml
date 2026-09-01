@@ -45,8 +45,8 @@ pipelines:
 prompt_main: |
   Macro product cinematography, vertical 9:16, an 8-second video in FOUR
   shots with a HARD CUT between each shot, two seconds per shot. The product
-  is the shirt-dress from <<<image_1>>> (white) and <<<image_2>>> (blue
-  striped), shot flat-laid or on an invisible mannequin against a clean
+  is the garment shown in <<<image_1>>> and <<<image_2>>> (two colorways of
+  the same item), shot flat-laid or on an invisible mannequin against a clean
   soft-lit neutral background.
   Shot 1 (0-2s): extreme close-up of {det1}, slow gentle camera drift.
   Shot 2 (2-4s): extreme close-up of {det2}, fabric moving softly as if in
@@ -65,7 +65,7 @@ music_prompt: |
 
 text_params:
   det1: {lang: en, chars: [4, 12], desc: "第1镜(0-2s)拍哪个细节(英文名词短语):
-    从卖点清单选最有质感证据的一个, 如 the tied waist knot"}
+    从卖点清单选最有质感证据的一个, 如领口缝线/印花纹理"}
   det2: {lang: en, chars: [4, 12], desc: "第2镜(2-4s)细节, 与第1镜不重复, 适合布料飘动表现"}
   det3: {lang: en, chars: [4, 12], desc: "第3镜(4-6s)细节, 与前两镜不重复"}
   det4: {lang: en, chars: [4, 12], desc: "第4镜(6-8s)收束: 两色并列相关的画面描述"}

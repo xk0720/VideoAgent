@@ -47,7 +47,8 @@ class StoryboardPlanner:
 
     # ── ① 选卡 ───────────────────────────────────────────
     def _select_body(self, brief: dict, cat: str, n: int) -> Tuple[str, str]:
-        cands = [c for c in self.store.candidates(cat, n, "body")]
+        cands = [c for c in self.store.candidates(cat, n, "body",
+                                                   brief.get("name", ""))]
         if not cands:
             raise RuntimeError(f"没有适用于「{cat} / {n} 人」的主体 skill")
         if len(cands) == 1:
@@ -257,9 +258,9 @@ class StoryboardPlanner:
         n = len(hooks) or 1
 
         # 开场/收尾: 各只有一张卡 → 程序直接取; 主体: 问模型
-        opening = sorted(self.store.candidates(cat, n, "opening"),
+        opening = sorted(self.store.candidates(cat, n, "opening", brief.get("name", "")),
                          key=lambda c: -float(c.get("priority", 0)))
-        ending = self.store.candidates(cat, n, "ending")
+        ending = self.store.candidates(cat, n, "ending", brief.get("name", ""))
         body_id, body_reason = self._select_body(brief, cat, n)
         log.info("① 选卡: 开场=%s 主体=%s 收尾=%s",
                  opening[0]["skill_id"] if opening else "(无)", body_id,

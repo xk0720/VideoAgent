@@ -8,6 +8,7 @@ applies_to:
   categories: [服装]
   person_count: [1, 2]
   placement: opening
+  products: ["13DE MARZO", "衬衫裙"]   # 资产(驱动片段/参考图/BGM)为该商品专属
 
 produces:
   duration_s: 8.566

@@ -20,7 +20,7 @@ prompt_source:
   "1": prompt_clip1          # 借用 person→prompt 通道: 第 N 条片段用第 N 段模板
   "2": prompt_clip2
 
-# 结构 = 闺蜜安利: A(白裙)提问替观众开口, B(蓝裙)回答落卖点, 一答一层递进。
+# 结构 = 闺蜜安利: A 提问替观众开口, B 回答落卖点, 一答一层递进。
 # 每条 10s 装两对问答(问 ~2.5s + 答 ~2.5s, 5字/秒语速窗), 字幕窗与 TTS 落位同表。
 pipelines:
   "2":
@@ -59,9 +59,8 @@ pipelines:
 
 prompt_clip1: |
   Locked-off static camera, vertical 9:16 full-body shot, a bright cozy living
-  room with a large window and soft daylight. The woman from <<<image_1>>> in the
-  white shirt-dress and the woman from <<<image_2>>> in the blue striped
-  shirt-dress stand together, casually chatting like close friends. A
+  room with a large window and soft daylight. The woman from <<<image_1>>> and the woman from <<<image_2>>>, each
+  wearing her outfit exactly as in her reference image, stand together, casually chatting like close friends. A
   10-second continuous take, no cuts. Over the 10 seconds, {act_1}.
   Both women are rendered at exactly the SAME scale and the SAME distance
   from the camera, heads at the same height. Each keeps her own face,
@@ -72,8 +71,7 @@ prompt_clip1: |
 
 prompt_clip2: |
   Locked-off static camera, vertical 9:16 full-body shot, the same bright
-  living room, same two women: <<<image_1>>> in white, <<<image_2>>> in blue
-  striped. A 10-second continuous take, no cuts, continuing their chat. Over
+  living room, same two women from <<<image_1>>> and <<<image_2>>>, outfits unchanged. A 10-second continuous take, no cuts, continuing their chat. Over
   the 10 seconds, {act_2}.
   Both women at exactly the SAME scale and SAME distance from the camera,
   heads at the same height. Each keeps her own face, hairstyle and outfit
@@ -87,25 +85,23 @@ music_prompt: |
   dialogue voices sit on top, no vocals, no sudden drops.
 
 text_params:
-  q1: {lang: zh, chars: [8, 12], desc: "第1问(0-2.5s, 白裙人问): 替观众开口的疑问, 如版型/显胖/场合"}
-  a1: {lang: zh, chars: [12, 16], desc: "第1答(2.5-5s, 蓝裙人答): 用一个卖点正面回应第1问"}
+  q1: {lang: zh, chars: [8, 12], desc: "第1问(0-2.5s, 第一人问): 替观众开口的疑问, 如版型/显胖/场合"}
+  a1: {lang: zh, chars: [12, 16], desc: "第1答(2.5-5s, 第二人答): 用一个卖点正面回应第1问"}
   q2: {lang: zh, chars: [8, 12], desc: "第2问(5-7.5s): 追问细节或材质"}
   a2: {lang: zh, chars: [12, 16], desc: "第2答(7.5-10s): 落第二个卖点"}
-  q3: {lang: zh, chars: [8, 12], desc: "第3问(10-12.5s): 问两色怎么选"}
-  a3: {lang: zh, chars: [12, 16], desc: "第3答(12.5-15s): 两色气质对比"}
+  q3: {lang: zh, chars: [8, 12], desc: "第3问(10-12.5s): 问颜色/款式怎么选"}
+  a3: {lang: zh, chars: [12, 16], desc: "第3答(12.5-15s): 不同颜色或款式的气质对比"}
   q4: {lang: zh, chars: [8, 12], desc: "第4问(15-17.5s): 问值不值/在哪买"}
   a4: {lang: zh, chars: [12, 16], desc: "第4答(17.5-20s): 收束+轻转化(别硬广)"}
   act_1: {lang: en, chars: [12, 28],
-    must_match: 'the woman in (white|blue)',
-    must_match_hint: '双人同框动作必须用 the woman in white / the woman in blue 指名谁做什么, 不许只写 she',
-    desc: "前10s两人互动编排(英文): 必须用
-    the woman in white / the woman in blue 指名谁做什么; 仅用指/看/比/递/点头
+    must_match: 'the woman (in [a-z]+|on the (left|right))',
+    must_match_hint: '双人同框动作必须指名道姓(the woman in <颜色> 或 on the left/right), 不许只写 she',
+    desc: "前10s两人互动编排(英文): 必须按参考图衣着颜色指名谁做什么(如 the woman in pink); 仅用指/看/比/递/点头
     四类低崩坏动作; 无道具无换装, 禁旋转跳跃"}
   act_2: {lang: en, chars: [12, 28],
-    must_match: 'the woman in (white|blue)',
-    must_match_hint: '双人同框动作必须用 the woman in white / the woman in blue 指名谁做什么, 不许只写 she',
-    desc: "后10s互动编排(英文): the woman in blue
-    展示细节(腰结/下摆), the woman in white 靠近细看点头; 主语指名道姓, 同前约束"}
+    must_match: 'the woman (in [a-z]+|on the (left|right))',
+    must_match_hint: '双人同框动作必须指名道姓(the woman in <颜色> 或 on the left/right), 不许只写 she',
+    desc: "后10s互动编排(英文): 第二人展示商品细节(按卖点选), 第一人靠近细看点头; 主语按衣着颜色指名, 同前约束"}
 
 measured:
   verified: false

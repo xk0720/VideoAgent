@@ -12,8 +12,8 @@ product_images: []          # 暂无独立商品图; 人物图中商品清晰可
 hook_colors: [pink, green, blue_white]   # 与 person_hooks 一一对应
 garment_en: sweatshirt with a watercolor horse print
 person_hooks:
-  - /Users/kevin/Desktop/viral_studio/examples/hooks/person_hook_1.png   # 粉色配色
-  - /Users/kevin/Desktop/viral_studio/examples/hooks/person_hook_2.png   # 浅绿配色
-  - /Users/kevin/Desktop/viral_studio/examples/hooks/person_hook_3.png   # 白蓝配色
+  - examples/hooks/person_hook_1.png   # 粉色配色
+  - examples/hooks/person_hook_2.png   # 浅绿配色
+  - examples/hooks/person_hook_3.png   # 白蓝配色
 duration_target_s: 18
 language: en
