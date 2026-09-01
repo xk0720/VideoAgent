@@ -51,6 +51,12 @@ class StoryboardPlanner:
                                                    brief.get("name", ""))]
         if not cands:
             raise RuntimeError(f"没有适用于「{cat} / {n} 人」的主体 skill")
+        pin = (brief.get("skill_overrides") or {}).get("body")
+        if pin:                             # 策略点单: 约束高于 LLM 品味
+            if pin in {c["skill_id"] for c in cands}:
+                return pin, "brief.skill_overrides 点单"
+            log.warning("点单 body=%s 不在候选 %s, 回落 LLM 选卡",
+                        pin, [c["skill_id"] for c in cands])
         if len(cands) == 1:
             return cands[0]["skill_id"], "该段位只有这一张卡"
         lines = []
@@ -260,7 +266,12 @@ class StoryboardPlanner:
         # 开场/收尾: 各只有一张卡 → 程序直接取; 主体: 问模型
         opening = sorted(self.store.candidates(cat, n, "opening", brief.get("name", "")),
                          key=lambda c: -float(c.get("priority", 0)))
-        ending = self.store.candidates(cat, n, "ending", brief.get("name", ""))
+        pins = brief.get("skill_overrides") or {}
+        if pins.get("opening"):
+            opening = ([c for c in opening if c["skill_id"] == pins["opening"]]
+                       or opening)         # 点了名且在候选内 → 唯一; 否则保持原序
+        ending = (lambda e: ([c for c in e if c["skill_id"] == (brief.get("skill_overrides") or {}).get("ending")] or e))(
+            self.store.candidates(cat, n, "ending", brief.get("name", "")))
         body_id, body_reason = self._select_body(brief, cat, n)
         log.info("① 选卡: 开场=%s 主体=%s 收尾=%s",
                  opening[0]["skill_id"] if opening else "(无)", body_id,

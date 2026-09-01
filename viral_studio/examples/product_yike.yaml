@@ -5,6 +5,10 @@ selling_points:
   - 不规则裙摆, 走动更灵动
   - 白色清爽 / 蓝条纹知性, 两色可选
   - 胸前小熊挂饰, 细节有记忆点
+skill_overrides:             # 策略点单(用户指定则钉死, 缺省才由 LLM 挑)
+  opening: beat_pose_reel
+  body: outdoor_narration
+  ending: sequential_reveal
 person_hooks:
   - examples/hooks/person_hook_1.png
   - examples/hooks/person_hook_2.png

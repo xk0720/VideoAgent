@@ -23,15 +23,21 @@ brief = yaml.safe_load((VS / "examples/product_yike.yaml").read_text(encoding="u
 store = SkillStore()
 card = store.get("sequential_reveal")
 _saved = VS / "outputs/yike_closer/texts.json"
-if _saved.exists():          # 写稿只发生一次(Planner 阶段); 执行期重写会让语音与字幕分家
-    texts = json.loads(_saved.read_text(encoding="utf-8"))
+saved = json.loads(_saved.read_text(encoding="utf-8")) if _saved.exists() else {}
+need_keys = set((card.get("text_params") or {}))
+if saved and need_keys - set(saved):     # 卡片后来新增了槽(如动作): LLM 补缺, 存稿优先
+    texts = {**StoryboardPlanner(store)._write(card, brief, 2), **saved}
+    print("存稿+补缺:", json.dumps({k: v for k, v in texts.items() if k not in saved},
+                                  ensure_ascii=False))
+elif saved:
+    texts = saved
     print("使用存稿:", json.dumps(texts, ensure_ascii=False))
 else:
     texts = StoryboardPlanner(store)._write(card, brief, 2)
 print("── LLM 标题 ──", json.dumps(texts, ensure_ascii=False))
 
-hooks = [str(VS / "examples/new/yike/person_hook1.jpg"),
-         str(VS / "examples/new/yike/person_hook2.jpg")]
+hooks = [str((VS / h) if not Path(h).is_absolute() else Path(h))
+         for h in brief["person_hooks"]]   # 人物来源=brief(产品给的图), 不写死
 r = Renderer(card, hooks, person_count=2, t0=28.566, t1=32.566,
              ref_frames=brief.get("ref_frames"))
 pipe = r.pipeline(texts, prompt=r.prompt(texts))

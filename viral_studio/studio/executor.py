@@ -239,6 +239,11 @@ class Executor:
                     log.warning("    ⚠ %-22s 指纹不符但产物已存在, 仍复用 "
                                 "(要重新生成请加 --redo-remote)", call["tool"])
                     self._stale_remote.append(key)
+                    # 指纹必须绑内容而非参数愿望: 复用的是旧内容, 下游看到的
+                    # 就得是旧指纹 —— 否则新指纹记在旧内容头上, 等真重生成时
+                    # 下游反而判"没变化"把陈旧拼装当成品(实测踩过)
+                    sig = self._sigs_prev[key]
+                    self._sigs_now[call["id"]] = sig
                 else:
                     cached = None                  # 计划变了, 旧产物作废
                     log.info("    ✎ %-22s 参数已变, 重做", call["tool"])
