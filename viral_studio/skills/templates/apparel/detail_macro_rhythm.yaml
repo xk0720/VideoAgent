@@ -1,0 +1,82 @@
+skill_id: detail_macro_rhythm
+kind: template
+name: 商品细节特写卡点流
+source: brainstorm 2026-08-31; 单次生成内硬切为 kling 实测能力(±0.2s),
+  卡点强化用 punch_up 实测组合
+
+applies_to:
+  categories: [服装]
+  person_count: [1, 2, 3]    # 商品本位, 与人数无关
+  placement: body
+
+produces:
+  durations: {"1": 8, "2": 8, "3": 8}
+  audio_mode: music_only
+
+audio:
+  bgm_source: generated      # 现生成音乐 + punch_up 在切点砸实
+
+prompt_source:
+  "1": prompt_main
+  "2": prompt_main
+  "3": prompt_main
+
+# 结构 = 说服力层的质感证据: 4 个 2s 大特写(细节由写稿 LLM 从卖点清单选配),
+# 单次生成内硬切(切点 2/4/6s), 字幕逐镜钉一个卖点短语。
+# 全程 kling: 特写画面无人脸, animate 路线(NoHuman 必拒)不可用。
+pipelines:
+  "1": &pipe
+    - {id: vid, tool: kling_omni_video,
+       params: {prompt: $prompt, audio: false, duration: 8,
+                refer: [$item_1, $item_2], aspect_ratio: "9:16"}}
+    - {id: music, tool: sonilo_text_to_music,
+       params: {prompt: $skill.music_prompt, duration: 10}}
+    - {id: punch, tool: punch_up, local: true,
+       params: {audio: "@music", beats: [2, 4, 6], gain: 0.85, trim_to: 8.0}}
+    - {id: mixed, tool: mix_audio, local: true,
+       params: {video: "@vid", bgm: "@punch", duration: 8, bgm_volume: 1.0}}
+    - {id: out, tool: burn_subtitle, local: true,
+       params: {video: "@mixed",
+                segments: [{t0: 0, t1: 2, text: "{cap1}"}, {t0: 2, t1: 4, text: "{cap2}"},
+                           {t0: 4, t1: 6, text: "{cap3}"}, {t0: 6, t1: 8, text: "{cap4}"}]}}
+  "2": *pipe
+  "3": *pipe
+
+prompt_main: |
+  Macro product cinematography, vertical 9:16, an 8-second video in FOUR
+  shots with a HARD CUT between each shot, two seconds per shot. The product
+  is the shirt-dress from <<<image_1>>> (white) and <<<image_2>>> (blue
+  striped), shot flat-laid or on an invisible mannequin against a clean
+  soft-lit neutral background.
+  Shot 1 (0-2s): extreme close-up of {det1}, slow gentle camera drift.
+  Shot 2 (2-4s): extreme close-up of {det2}, fabric moving softly as if in
+  a light breeze.
+  Shot 3 (4-6s): extreme close-up of {det3}, slow gentle camera drift.
+  Shot 4 (6-8s): close-up of {det4}, both colorways visible side by side.
+  Shallow depth of field, crisp textile texture, soft studio light,
+  photorealistic commercial quality. The garment details must match the
+  reference images exactly. No people, no hands, no text, no captions,
+  no logos invented.
+
+music_prompt: |
+  Minimal elegant product-showcase music, 100 BPM, soft electronic pulse
+  with clean percussive accents landing exactly on 2, 4 and 6 seconds,
+  airy pads, premium and modern, no vocals.
+
+text_params:
+  det1: {lang: en, chars: [4, 12], desc: "第1镜(0-2s)拍哪个细节(英文名词短语):
+    从卖点清单选最有质感证据的一个, 如 the tied waist knot"}
+  det2: {lang: en, chars: [4, 12], desc: "第2镜(2-4s)细节, 与第1镜不重复, 适合布料飘动表现"}
+  det3: {lang: en, chars: [4, 12], desc: "第3镜(4-6s)细节, 与前两镜不重复"}
+  det4: {lang: en, chars: [4, 12], desc: "第4镜(6-8s)收束: 两色并列相关的画面描述"}
+  cap1: {lang: zh, chars: [6, 10], desc: "第1镜字幕: 对应 det1 的卖点短语"}
+  cap2: {lang: zh, chars: [6, 10], desc: "第2镜字幕: 对应 det2"}
+  cap3: {lang: zh, chars: [6, 10], desc: "第3镜字幕: 对应 det3"}
+  cap4: {lang: zh, chars: [6, 10], desc: "第4镜字幕: 两色可选/收束转化短语"}
+
+measured:
+  verified: false
+  date: 2026-08-31
+  notes: |
+    未实跑。依据两条实测 —— kling 单次生成内硬切落点 ±0.2s(对无口型的字幕
+    无碍); punch_up 落点强化为 demo_v01 验证组合。首张使用 item_hook 商品图的卡。

@@ -237,11 +237,15 @@ class StoryboardPlanner:
                 lo, hi = spec.get("chars", [0, 99])
                 if not (lo - tol <= wn <= hi + tol):
                     out.append(f"{k} 现{wn}词需{lo}-{hi}词")
-                if k.startswith("act") and not re.match(r"(she|her)\b", v, re.I):
-                    out.append(f"{k} 动作需以 she 开头(主语统一)")
+                if k.startswith("act") and not re.match(
+                        r"(she|her|they|both|the wom[ae]n)\b", v, re.I):
+                    out.append(f"{k} 动作主语需明确(she/they/the woman in ...)")
                 if PROPS.search(v):
                     out.append(f"{k} 动作越界: 只能与身上穿着的一件互动, "
                                f"不得出现第二件衣服/道具/换装")
+            mm = spec.get("must_match")
+            if mm and not re.search(mm, v, re.I):
+                out.append(f"{k} {spec.get('must_match_hint', '需匹配卡片约定句式')}")
             if BANNED.search(v):
                 out.append(f"{k} 含高危动作词(旋转/跳跃类实测易崩)")
         return out
@@ -276,7 +280,8 @@ class StoryboardPlanner:
             tail = float(pr.get("tail_s", 0))
             r = Renderer(card, hooks, person_count=n, bgm_source=bgm_source,
                          t0=round(t, 3), t1=round(t + dur, 3),
-                         ref_frames=brief.get("ref_frames"))
+                         ref_frames=brief.get("ref_frames"),
+                         items=brief.get("product_images"))
             prompts = {k: r.prompt_of_person(k, texts) for k in range(1, n + 1)}
             # 单模板卡(如 closer, 按总人数选版本)走 $prompt; 多人卡走 $prompt_N
             single = r.prompt(texts)

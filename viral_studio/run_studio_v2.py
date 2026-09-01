@@ -134,7 +134,8 @@ def main() -> int:
                 card = store.get(seg.skill_id)
                 r = Renderer(card, hooks, person_count=sb.person_count,
                              bgm_source=args.bgm, t0=seg.t0, t1=seg.t1,
-                             ref_frames=brief.get("ref_frames"))
+                             ref_frames=brief.get("ref_frames"),
+                             items=brief.get("product_images"))
                 prompts = {k: r.prompt_of_person(k, seg.texts)
                            for k in range(1, sb.person_count + 1)}
                 before = len(seg.pipeline)

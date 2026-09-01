@@ -1,0 +1,114 @@
+skill_id: duo_interaction
+kind: template
+name: 双人同框对话种草(问答体)
+source: brainstorm 2026-08-31, 同框约束沿用 sequential_reveal 实测措辞
+
+applies_to:
+  categories: [服装]
+  person_count: [2]          # 对话体只在恰好两人时成立
+  placement: body
+
+produces:
+  durations: {"2": 20}       # 两条 10s 同框场景
+  audio_mode: voiceover      # 对话走 TTS 双音色, 声画解耦 —— 双人口型对位是
+                             # 高危区(谁在说话模型会糊), 不开 kling audio
+
+audio:
+  bgm_source: generated
+
+prompt_source:
+  "1": prompt_clip1          # 借用 person→prompt 通道: 第 N 条片段用第 N 段模板
+  "2": prompt_clip2
+
+# 结构 = 闺蜜安利: A(白裙)提问替观众开口, B(蓝裙)回答落卖点, 一答一层递进。
+# 每条 10s 装两对问答(问 ~2.5s + 答 ~2.5s, 5字/秒语速窗), 字幕窗与 TTS 落位同表。
+pipelines:
+  "2":
+    - {id: vid1, tool: kling_omni_video,
+       params: {prompt: $prompt_1, audio: false, duration: 10,
+                refer: [$hook_1, $hook_2]}}
+    - {id: vid2, tool: kling_omni_video,
+       params: {prompt: $prompt_2, audio: false, duration: 10,
+                refer: [$hook_1, $hook_2]}}
+    - {id: joined, tool: concat_av, local: true,
+       params: {videos: ["@vid1", "@vid2"]}}
+    - {id: q1v, tool: minimax_tts, params: {text: "{q1}", voice_id: Lively_Girl}}
+    - {id: a1v, tool: minimax_tts, params: {text: "{a1}", voice_id: Sweet_Girl_2}}
+    - {id: q2v, tool: minimax_tts, params: {text: "{q2}", voice_id: Lively_Girl}}
+    - {id: a2v, tool: minimax_tts, params: {text: "{a2}", voice_id: Sweet_Girl_2}}
+    - {id: q3v, tool: minimax_tts, params: {text: "{q3}", voice_id: Lively_Girl}}
+    - {id: a3v, tool: minimax_tts, params: {text: "{a3}", voice_id: Sweet_Girl_2}}
+    - {id: q4v, tool: minimax_tts, params: {text: "{q4}", voice_id: Lively_Girl}}
+    - {id: a4v, tool: minimax_tts, params: {text: "{a4}", voice_id: Sweet_Girl_2}}
+    - {id: vo, tool: concat_audio, local: true,
+       params: {audios: ["@q1v", "@a1v", "@q2v", "@a2v", "@q3v", "@a3v", "@q4v", "@a4v"],
+                slots: [{t0: 0}, {t0: 2.5}, {t0: 5}, {t0: 7.5},
+                        {t0: 10}, {t0: 12.5}, {t0: 15}, {t0: 17.5}],
+                duration: 20}}
+    - {id: music, tool: sonilo_text_to_music,
+       params: {prompt: $skill.music_prompt, duration: 22}}
+    - {id: mixed, tool: mix_audio, local: true,
+       params: {video: "@joined", voice: "@vo", bgm: "@music",
+                duration: 20, voice_loudnorm: -18, bgm_volume: 0.2}}
+    - {id: out, tool: burn_subtitle, local: true,
+       params: {video: "@mixed",
+                segments: [{t0: 0, t1: 2.5, text: "{q1}"}, {t0: 2.5, t1: 5, text: "{a1}"},
+                           {t0: 5, t1: 7.5, text: "{q2}"}, {t0: 7.5, t1: 10, text: "{a2}"},
+                           {t0: 10, t1: 12.5, text: "{q3}"}, {t0: 12.5, t1: 15, text: "{a3}"},
+                           {t0: 15, t1: 17.5, text: "{q4}"}, {t0: 17.5, t1: 20, text: "{a4}"}]}}
+
+prompt_clip1: |
+  Locked-off static camera, vertical 9:16 full-body shot, a bright cozy living
+  room with a large window and soft daylight. The woman from <<<image_1>>> in the
+  white shirt-dress and the woman from <<<image_2>>> in the blue striped
+  shirt-dress stand together, casually chatting like close friends. A
+  10-second continuous take, no cuts. Over the 10 seconds, {act_1}.
+  Both women are rendered at exactly the SAME scale and the SAME distance
+  from the camera, heads at the same height. Each keeps her own face,
+  hairstyle and outfit exactly as in her reference image. No morphing between
+  people, no blending of faces, no extra people. Their mouths move naturally
+  in casual conversation but no on-screen text. Warm lifestyle atmosphere,
+  photorealistic. No captions.
+
+prompt_clip2: |
+  Locked-off static camera, vertical 9:16 full-body shot, the same bright
+  living room, same two women: <<<image_1>>> in white, <<<image_2>>> in blue
+  striped. A 10-second continuous take, no cuts, continuing their chat. Over
+  the 10 seconds, {act_2}.
+  Both women at exactly the SAME scale and SAME distance from the camera,
+  heads at the same height. Each keeps her own face, hairstyle and outfit
+  exactly as in her reference image. No morphing, no face blending, no extra
+  people. Natural conversational mouth movement, no on-screen text, warm
+  photorealistic lifestyle look. No captions.
+
+music_prompt: |
+  Cozy acoustic pop background for two friends chatting about clothes, light
+  guitar and soft shaker, warm and friendly, steady and unobtrusive so
+  dialogue voices sit on top, no vocals, no sudden drops.
+
+text_params:
+  q1: {lang: zh, chars: [8, 12], desc: "第1问(0-2.5s, 白裙人问): 替观众开口的疑问, 如版型/显胖/场合"}
+  a1: {lang: zh, chars: [12, 16], desc: "第1答(2.5-5s, 蓝裙人答): 用一个卖点正面回应第1问"}
+  q2: {lang: zh, chars: [8, 12], desc: "第2问(5-7.5s): 追问细节或材质"}
+  a2: {lang: zh, chars: [12, 16], desc: "第2答(7.5-10s): 落第二个卖点"}
+  q3: {lang: zh, chars: [8, 12], desc: "第3问(10-12.5s): 问两色怎么选"}
+  a3: {lang: zh, chars: [12, 16], desc: "第3答(12.5-15s): 两色气质对比"}
+  q4: {lang: zh, chars: [8, 12], desc: "第4问(15-17.5s): 问值不值/在哪买"}
+  a4: {lang: zh, chars: [12, 16], desc: "第4答(17.5-20s): 收束+轻转化(别硬广)"}
+  act_1: {lang: en, chars: [12, 28],
+    must_match: 'the woman in (white|blue)',
+    must_match_hint: '双人同框动作必须用 the woman in white / the woman in blue 指名谁做什么, 不许只写 she',
+    desc: "前10s两人互动编排(英文): 必须用
+    the woman in white / the woman in blue 指名谁做什么; 仅用指/看/比/递/点头
+    四类低崩坏动作; 无道具无换装, 禁旋转跳跃"}
+  act_2: {lang: en, chars: [12, 28],
+    must_match: 'the woman in (white|blue)',
+    must_match_hint: '双人同框动作必须用 the woman in white / the woman in blue 指名谁做什么, 不许只写 she',
+    desc: "后10s互动编排(英文): the woman in blue
+    展示细节(腰结/下摆), the woman in white 靠近细看点头; 主语指名道姓, 同前约束"}
+
+measured:
+  verified: false
+  date: 2026-08-31
+  notes: 未实跑。同框同尺寸/不串脸约束抄自 sequential_reveal 实测版; 对话走
+    TTS 双音色声画解耦, 刻意避开双人口型对位; 问答窗 2.5s 对应 5字/秒语速。
