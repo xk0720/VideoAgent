@@ -1,0 +1,25 @@
+# 三人策略: 第一阶段借用 beat_pose_reel 的爆款卡点节奏(姐妹卡
+# beat_pose_reel_hoodie, 换绑本商品 ref 三图), 第二阶段户外旁白三人轮流出镜。
+# 与 product_pink_tee.yaml 的区别只在 skill_overrides(用户裁决 2026-09-03)。
+name: 水彩小马印花卫衣(三色)
+description: >
+  宽松落肩长袖卫衣, 前胸水彩小马印花, 缝线撞色设计; 粉色/浅绿/白蓝三个配色;
+  面料水洗棉, 软糯亲肤; 适合日常通勤与轻运动场景, 学生党友好价。
+selling_points:
+  - 三个低饱和配色, 一件三穿的搭配感
+  - 水彩小马印花, 甜而不腻
+  - 水洗棉面料, 上身软糯
+category: 服装
+product_images: []          # 暂无独立商品图; 人物图中商品清晰可见
+hook_colors: [pink, green, blue_white]   # 与 person_hooks 一一对应
+garment_en: sweatshirt with a watercolor horse print
+person_hooks:
+  - examples/hooks/person_hook_1.png   # 粉色配色
+  - examples/hooks/person_hook_2.png   # 浅绿配色
+  - examples/hooks/person_hook_3.png   # 白蓝配色
+duration_target_s: 18
+language: en
+
+skill_overrides:              # 策略点单(约束高于 LLM 品味); 未点名的段位仍由 LLM 挑
+  opening: beat_pose_reel_hoodie   # 爆款卡点节奏(9镜/8.566s), ref 三图见该卡 assets
+  body: outdoor_narration          # 三人户外轮流出镜 + 旁白, 每人 10s

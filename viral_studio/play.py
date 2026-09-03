@@ -44,7 +44,27 @@ def extract_all_frames(video_path, output_dir="frames", image_ext="jpg"):
 
 if __name__ == "__main__":
     extract_all_frames(
-        video_path="/Users/kevin/Desktop/case2.mp4",
-        output_dir="/Users/kevin/Desktop/frames_exp",
+        video_path="/Users/kevin/Desktop/TMP/pred1.mp4",
+        output_dir="/Users/kevin/Desktop/TMP/pred1_frames_exp",
+        image_ext="png"
+    )
+    extract_all_frames(
+        video_path="/Users/kevin/Desktop/TMP/pred2.mp4",
+        output_dir="/Users/kevin/Desktop/TMP/pred2_frames_exp",
+        image_ext="png"
+    )
+    extract_all_frames(
+        video_path="/Users/kevin/Desktop/TMP/pred3.mp4",
+        output_dir="/Users/kevin/Desktop/TMP/pred3_frames_exp",
+        image_ext="png"
+    )
+    extract_all_frames(
+        video_path="/Users/kevin/Desktop/TMP/_cider_talk_haul.mp4",
+        output_dir="/Users/kevin/Desktop/TMP/_cider_talk_haul_frames_exp",
+        image_ext="png"
+    )
+    extract_all_frames(
+        video_path="/Users/kevin/Desktop/TMP/_transition_cta_haul.mp4",
+        output_dir="/Users/kevin/Desktop/TMP/_transition_cta_haul_frames_exp",
         image_ext="png"
     )
