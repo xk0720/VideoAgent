@@ -55,28 +55,100 @@ LLM 仅用于三个环节：技能卡选择、文案生成、超出既定规则�
 
 ## 4. 技能卡示例
 
-**beat_pose_reel（资产驱动型 · 开场段）**。源自一条 13 秒 13 个镜头、切点与音乐重音对齐的爆款。该卡将原片按帧号切分为 9 个驱动片段，逐镜头进行人物动作迁移；参考图按近、中、全身三档景别分配（实测生成画面的取景由参考图决定）；不足 2 秒的片段以回文方式补帧至接口时长下限，合成时仅取原始正放部分；背景音乐沿用原片音轨，保持原切点时序。合成后切点位置误差不超过 0.017 秒（10/12 个切点）。
+一张技能卡由四部分构成：筛选条件（`applies_to`）、产出声明（`produces`/`audio`）、生成管线（`pipelines`，按人数分版本）、文案合同（`text_params`，编剧 Agent 写稿的依据）。以下以双人对话卡为例，注释说明各字段的作用与取值依据。
 
 ```yaml
-assets:
-  bgm: memory/assets/yike_pose/bgm.m4a
-  slot_durations: [0.833, 0.6, 0.567, 1.0, 1.233, 2.3, 0.433, 0.533, 1.067]
-  ref_close: memory/assets/.../ref_close.png   # 三档景别参考图, 与卡绑定
+skill_id: duo_interaction
+kind: template                # 模板型: 结构固定, 问答内容与动作由编剧 Agent 填写
+name: 双人同框对话种草(问答体)
+
+applies_to:                   # 选卡阶段的筛选条件
+  categories: [服装]
+  person_count: [2]           # 对话体仅在恰好两人时成立: 一人无对话, 三人分工混乱
+  placement: body             # 展示段
+
+produces:
+  durations: {"2": 20}        # 两条 10 秒同框片段
+  audio_mode: voiceover       # 对话由 TTS 双音色合成, 与画面分离。不启用生成模型
+                              # 的原生口型: 双人同框时模型难以区分当前说话者,
+                              # 口型对位不稳定
+
+audio:
+  bgm_source: generated       # 背景乐现场生成, 混音时压低音量垫底
+
+prompt_source:                # 第 N 条片段使用第 N 段提示词模板
+  "1": prompt_clip1
+  "2": prompt_clip2
+
 pipelines:
-  "1":
-    - {id: s01, tool: animate_move, optional: true,
-       params: {ref: $skill.assets.ref_close, driving: $skill.assets.shot_01}}
-    # s02–s09 同构, 按景别档位取参考图
-    - {id: asm, tool: assemble_slots, local: true,
-       params: {videos: ["@s01", ...], durations: $skill.assets.slot_durations}}
+  "2":                        # 两人版管线, 共 15 步
+    # 两条同框画面: 两张人物图同时挂参考; 提示词内固化同尺寸、同景深、
+    # 不串脸的约束语句(沿用多人同框卡的已验证版本)
+    - {id: vid1, tool: kling_omni_video,
+       params: {prompt: $prompt_1, audio: false, duration: 10,
+                refer: [$hook_1, $hook_2]}}
+    - {id: vid2, tool: kling_omni_video,   # 同构, 取 prompt_clip2
+       params: {prompt: $prompt_2, audio: false, duration: 10,
+                refer: [$hook_1, $hook_2]}}
+    - {id: joined, tool: concat_av, local: true,
+       params: {videos: ["@vid1", "@vid2"]}}   # "@id" 引用前序步骤的产物
+    # 四对问答共 8 条语音: 问句与答句使用不同音色区分说话者
+    - {id: q1v, tool: minimax_tts, params: {text: "{q1}", voice_id: Lively_Girl}}
+    - {id: a1v, tool: minimax_tts, params: {text: "{a1}", voice_id: Sweet_Girl_2}}
+    # ...... q2v/a2v/q3v/a3v/q4v/a4v 同构, 共 8 步 ......
+    # 语音按 2.5 秒窗落位到 20 秒时间轴, 空隙补静音;
+    # 落位表与字幕窗完全一致, 保证声音、字幕、画面三方对齐
+    - {id: vo, tool: concat_audio, local: true,
+       params: {audios: ["@q1v", "@a1v", "@q2v", "@a2v", "@q3v", "@a3v", "@q4v", "@a4v"],
+                slots: [{t0: 0}, {t0: 2.5}, {t0: 5}, {t0: 7.5},
+                        {t0: 10}, {t0: 12.5}, {t0: 15}, {t0: 17.5}],
+                duration: 20}}
+    - {id: music, tool: sonilo_text_to_music,
+       params: {prompt: $skill.music_prompt, duration: 22}}  # 多生成 2s 作裁剪余量
     - {id: mixed, tool: mix_audio, local: true,
-       params: {video: "@asm", bgm: $skill.assets.bgm, duration: 8.566}}
+       params: {video: "@joined", voice: "@vo", bgm: "@music",
+                duration: 20, voice_loudnorm: -18, bgm_volume: 0.2}}
+                              # 人声先归一至 -18LUFS 再混; BGM 压至 0.2 不抢人声
+    - {id: out, tool: burn_subtitle, local: true,   # 字幕本地渲染烧录, 中文零差错
+       params: {video: "@mixed",
+                segments: [{t0: 0, t1: 2.5, text: "{q1}"},
+                           {t0: 2.5, t1: 5, text: "{a1}"}]}}  # ... 共 8 窗
+
+text_params:                  # 文案合同: 每槽声明语言、长度域与写作语境
+  q1: {lang: zh, chars: [8, 12],       # 2.5s 窗按 5 字/秒 → 上限 12 字
+       desc: "第1问(0-2.5s, 第一人问): 替观众开口的疑问, 如版型/显胖/场合"}
+  a1: {lang: zh, chars: [12, 16], desc: "第1答: 用一个卖点正面回应第1问"}
+  # ... 四对问答逐对递进: 版型 → 细节材质 → 颜色选择 → 价值收束 ...
+  act_1: {lang: en, chars: [12, 28],   # 英文动作槽按词计数
+    must_match: 'the woman (in [a-z]+|on the (left|right))',
+    must_match_hint: '双人动作必须指名道姓, 不允许只写 she',
+    desc: "前10s两人互动编排: 仅用指/看/比/递/点头等低风险动作;
+      不得出现参考图之外的服装或道具; 禁旋转跳跃"}
 ```
 
-**outdoor_narration（模板型 · 展示段）**。每人 10 秒户外场景，采用声画分离方案：画面静音生成，旁白由 TTS 单独合成，字幕后期本地烧录。旁白与动作描述由编剧 Agent 在同一次调用中生成，保证二者内容对应。口播语速按 5 字/秒校验，超出镜头时长的台词在预检阶段报错。
-
-**sequential_reveal（收尾型 · 转化段）**。多人依次入镜或双人共舞。提示词中固化两条经验参数：多人场景需声明同一比例与景深，否则后入镜人物易被渲染为缩小的卡片形态；音乐生成时长比段长多 2 秒，重音强化后裁剪至段长加 0.55 秒衰减尾，防止段落拼接时末尾重音被截断。
+其余卡片按同一规格组织：`beat_pose_reel`（资产驱动型，内嵌爆款驱动片段与帧号时长表）、`home_talking`（音画同出口播型）、`outdoor_narration`（声画分离旁白型）、`sequential_reveal`（多人收尾型），在案例部分结合成片说明。
 
 ## 5. Demo 结果
 
-（占位：待补充各成片与量化指标——切点精度、口播准确率、单片成本与生产耗时。）
+两条样片位于 `yike-demo/`，商品均为水彩小马印花卫衣（三色），人物与商品图为同一组输入。
+
+**案例一（case1.mp4，41.1 秒）**——三段式全流程：
+
+| 时间 | 段位 | 技能卡 | 生成方式 |
+|---|---|---|---|
+| 0–6.1s | 钩子 | sequential_reveal | 三人同框依次入镜，单次生成；配卡点音乐并做重音强化 |
+| 6.1–11.1s | 动作引导 | beat_reel | 真实爆款片段驱动人物动作迁移，沿用素材自带 BGM |
+| 11.1–41.1s | 展示 | home_talking ×3 | 三个配色各 10 秒室内口播，音画同出；人声分离后垫生成 BGM，字幕本地烧录 |
+
+本片同时验证段落重组：收尾卡前置作钩子（运营指定）。九句口播经语音识别逐句核对，与脚本完全一致。
+
+**案例二（case2.mp4，38.4 秒）**——爆款节奏复刻与存量改造：
+
+| 时间 | 段位 | 技能卡 | 生成方式 |
+|---|---|---|---|
+| 0–8.6s | 钩子 | beat_pose_reel 系 | 13 秒爆款按帧号拆为 9 镜逐镜动作迁移；近/中/全身三档景别参考图由运镜视频抽帧预处理；沿用原片音轨，切点时序不变 |
+| 8.6–38.4s | 展示 | outdoor_narration ×3 | 樱花园、植物园、海滨三场景各 10 秒；声画分离，TTS 旁白与本地字幕 |
+
+开场 9 镜合成后切点位置帧级命中（检出 7/8，误差不超过 0.017 秒）；该开场为对既有正片的局部替换，演示框架对存量视频的改造能力。
+
+（量化小表待补：单片成本、生产耗时、口播准确率汇总。）
